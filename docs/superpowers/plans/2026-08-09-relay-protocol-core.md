@@ -215,8 +215,13 @@ Cover:
 
 ```kotlin
 assertEquals(SessionState.HELLO_SENT, session.onConnected())
-assertEquals(SessionState.ACTIVE, session.onFrame(PairedFrame(sessionId = "session", protocolVersion = null)).state)
-assertIs<Rejected>(session.onFrame(CommandFrame(id = "id", name = "telemetry.read", fields = emptyMap())))
+assertEquals(
+    SessionState.ACTIVE,
+    assertIs<Accepted<SessionTransition>>(
+        session.onFrame(PairedFrame(sessionId = "session", protocolVersion = null))
+    ).value.state,
+)
+assertIs<Rejected>(session.onFrame(CommandFrame(id = "id", name = "telemetry.read", fields = JsonObject(emptyMap()))))
 ```
 
 Also cover pairing before hello, duplicate pairing, unsupported version, and frames received after disconnect.
