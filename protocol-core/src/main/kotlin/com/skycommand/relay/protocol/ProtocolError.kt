@@ -1,6 +1,10 @@
 package com.skycommand.relay.protocol
 
 enum class ProtocolErrorCode {
+    INVALID_UTF8,
+    INVALID_JSON,
+    INVALID_FIELD,
+    INVALID_BASE64,
     INVALID_DEVICE_ID,
     INVALID_SESSION_ID,
     INVALID_MESSAGE_ID,

@@ -92,7 +92,7 @@ data class MissionResultFrame(
 ) : RelayFrame
 
 fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
-    val result = when (frame) {
+    val result: ProtocolResult<Unit> = when (frame) {
         is HelloFrame -> validateHello(frame)
         is PairedFrame -> validatePaired(frame)
         is TelemetryFrame -> Accepted(Unit)
@@ -103,8 +103,10 @@ fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
         is MissionCompleteFrame -> validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Mission ID is invalid")
         is MissionResultFrame -> validateResult(frame.id, frame.detail)
     }
-    @Suppress("UNCHECKED_CAST")
-    return result as ProtocolResult<RelayFrame>
+    return when (result) {
+        is Accepted -> Accepted(frame)
+        is Rejected -> result
+    }
 }
 
 private fun validateHello(frame: HelloFrame): ProtocolResult<Unit> {
