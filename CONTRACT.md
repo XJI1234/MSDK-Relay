@@ -52,6 +52,155 @@
 
 模块之间应通过清晰的接口协作。`relay-gateway` 不得直接依赖 DJI SDK；业务模块不得自己创建 WebSocket 连接。这样更换网络库、JSON 库或 DJI SDK 版本时，不需要同时修改所有模块。
 
+### 2.1 模块拆分原则
+
+一级模块代表一个完整的业务职责，二级模块代表该职责内部一个可以独立理解、独立测试和独立替换的工作单元。
+
+每个二级模块都必须满足：
+
+- 有一个明确的负责人：它只对一类结果负责；
+- 有一个小而稳定的外部接口：调用方不需要知道内部类、线程或第三方 SDK；
+- 有明确的输入、输出、前置条件、失败方式和生命周期；
+- 有自己的模块契约文件，先写契约再写实现；
+- 不直接访问兄弟模块的内部状态，只使用对方公开的接口；
+- 不重复保存另一模块已经拥有的状态；
+- 可以用内存替身或纯 JVM 测试验证主要业务规则。
+
+不要为了追求“模块数量多”而拆分。只有当一个职责可以在不改动调用方的情况下独立变化，或者确实需要独立测试、独立替换时，才建立二级模块。简单的纯函数可以留在所属二级模块内部，不必单独建模块。
+
+### 2.2 手机端二级模块地图
+
+下面的名称是手机端重构的规范名称。实现时目录名、包名和契约文件名应保持一致；每个二级模块目录都必须先创建 `CONTRACT.md`。
+
+#### `app-runtime`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `app-bootstrap` | 创建模块、连接依赖、定义启动顺序和关闭顺序 | 不实现连接、遥测、直播或航线业务 |
+| `foreground-service` | 让中继程序在 Android 前台服务中稳定运行，处理服务启停 | 不保存业务状态，不调用 DJI 业务接口 |
+| `permission-coordinator` | 请求和观察 Android 权限、USB 访问授权及其结果 | 不决定业务命令是否允许执行 |
+
+`app-runtime` 是组合根。其他模块不得反向依赖 `app-runtime`，也不得自己读取 Activity、Service 或 Android 全局对象。
+
+#### `relay-settings`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `settings-store` | 保存、读取、迁移和恢复本地设置 | 不解释设置对业务操作的影响 |
+| `endpoint-settings` | 管理电脑端地址、端口和连接参数的格式与合法性 | 不建立网络连接 |
+| `device-identity` | 创建并长期保存稳定的 `deviceId` | 不把 `deviceId` 当作认证密码，不管理会话 |
+
+`relay-settings` 不得依赖 `relay-gateway`。gateway 只读取已经校验好的设置。
+
+#### `relay-gateway`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `protocol-core` | 消息帧模型、编码、解码和协议字段校验 | 不建立网络，不调用 Android、DJI 或文件系统 |
+| `transport-adapter` | 把一种网络库的连接、接收、发送和关闭能力适配为统一传输接口 | 不解释消息类型，不执行业务命令 |
+| `connection-session` | 单个电脑会话的握手、状态、会话代次和断线失效 | 不决定遥测、直播或航线业务规则 |
+| `command-dispatcher` | 按命令名找到处理器、校验命令方向、关联命令 ID 和返回结果 | 不实现具体命令，不调用 DJI SDK |
+| `mission-transfer` | 管理航线帧的顺序、大小、摘要、替换和取消，并把完整字节交给暂存接口 | 不解析 DJI WPMZ 业务，不上传或执行航线 |
+| `outbound-publisher` | 对外发送帧、保持发送顺序、处理发送失败和旧会话隔离 | 不生成遥测内容，不决定发送什么业务数据 |
+
+`relay-gateway` 的详细二级模块契约见 [`relay-gateway/CONTRACT.md`](relay-gateway/CONTRACT.md)。gateway 是手机端唯一的电脑通信入口；任何业务模块都不得直接依赖 WebSocket 或网络库。
+
+#### `device-connection`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `sdk-lifecycle` | DJI SDK 注册、初始化、注销和 SDK 可用状态 | 不执行配对、直播或航线任务 |
+| `remote-controller-link` | 遥控器连接状态、型号和固件等遥控器侧信息 | 不判断飞行器是否连接 |
+| `aircraft-link` | 飞行器和飞控连接状态、机型和基础设备连接信息 | 不执行航线和直播命令 |
+| `pairing-controller` | 请求开始/停止配对并维护配对状态 | 不直接管理 WebSocket 会话，不发布完整遥测 |
+| `device-capability-reader` | 根据当前设备型号和连接状态判断设备能力 | 不执行能力对应的业务操作 |
+
+`device-connection` 是 DJI 设备连接事实的唯一来源。其他模块只能读取它提供的只读状态和能力接口，不能自己再次读取 DJI 连接状态。
+
+#### `telemetry`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `snapshot-assembler` | 从各公开状态接口收集一次一致的遥测快照 | 不发送网络消息，不调用 DJI 原始 API |
+| `capability-calculator` | 把设备状态转换为电脑端可理解的能力字段 | 不执行能力对应的操作 |
+| `telemetry-publisher` | 按状态变化或时间策略发布快照，处理合并、节流和断线后的恢复发布 | 不修改设备状态，不解释命令 |
+
+`telemetry` 不保存另一份设备真相。它只负责把状态转换成对外快照；`live-stream` 和 `wayline-mission` 必须通过只读状态接口提供自己的状态。
+
+#### `wayline-mission`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `wayline-command-handler` | 解释 `wayline.*` 命令、检查命令级前置条件并调用对应航线能力 | 不解析 WebSocket，不负责文件字节传输 |
+| `mission-staging` | 安全接收已校验的 KMZ 字节，临时写入、完整落盘、原子替换和清理 | 不调用 DJI 航线 SDK，不决定是否执行任务 |
+| `wpmz-generator` | 根据航点计划生成并校验 DJI WPMZ/KMZ | 不规划地图，不上传或执行任务 |
+| `mission-uploader` | 把当前暂存航线上传到 DJI 设备并报告上传进度 | 不生成航线，不开始飞行 |
+| `mission-executor` | 执行航线开始、暂停、恢复和停止操作 | 不接收文件，不决定用户是否确认 |
+| `mission-state-store` | 保存当前航线文件、上传进度、执行状态和任务说明 | 不直接调用 WebSocket，不调用 DJI 原始 API |
+
+航线模块必须把“文件已经完整暂存”“已经上传到 DJI”和“任务已经开始执行”作为三个不同状态，不能合并成一个成功标志。
+
+#### `live-stream`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `stream-command-handler` | 解释 `live-stream.*` 命令并调用直播能力 | 不接收电脑端视频，不播放视频 |
+| `stream-config-validator` | 校验 RTMP 地址和直播配置 | 不启动 DJI 直播 |
+| `dji-stream-adapter` | 把统一直播操作适配到 DJI SDK | 不决定电脑端媒体服务地址，不发布遥测 |
+| `stream-state-store` | 保存直播开关、地址状态、分辨率、帧率、码率和时延等状态 | 不发送 WebSocket，不修改设备连接状态 |
+
+视频数据走 RTMP 通道，命令和状态走 gateway 通道。两个通道不能互相代替。
+
+### 2.3 模块依赖方向
+
+依赖方向固定为：
+
+```text
+app-runtime
+  -> relay-settings
+  -> relay-gateway
+  -> device-connection
+  -> telemetry
+  -> wayline-mission
+  -> live-stream
+
+relay-gateway
+  -> protocol-core
+
+telemetry
+  -> device-connection 的只读状态接口
+  -> wayline-mission 的只读状态接口
+  -> live-stream 的只读状态接口
+  -> relay-gateway 的发布接口
+
+wayline-mission
+  -> device-connection 的只读状态接口
+  -> relay-gateway 的命令注册和任务接收接口
+
+live-stream
+  -> device-connection 的只读状态接口
+  -> relay-gateway 的命令注册和结果发布接口
+```
+
+以下依赖永远禁止：
+
+- `relay-gateway -> device-connection`；gateway 不能知道 DJI；
+- `telemetry -> relay-gateway` 的具体实现；只能依赖发布接口；
+- `wayline-mission <-> live-stream` 互相直接调用；
+- 任意业务模块 -> Android Activity、WebSocket 库或 DJI 全局单例；
+- 任意二级模块 -> 另一个二级模块的内部类或内部状态。
+
+### 2.4 二级模块之间的协作方式
+
+跨模块只允许使用以下四种方式：
+
+1. **命令处理器注册：** 业务模块把一个命令名和处理器注册到 gateway；gateway 只负责转发和回传结果。
+2. **只读状态接口：** telemetry 读取设备、直播和航线模块提供的不可变状态快照。
+3. **结果/事件发布接口：** 业务模块把状态变化交给 telemetry 或 gateway 的公开发布接口。
+4. **数据接收接口：** mission-transfer 把完成校验的任务内容交给 `mission-staging`，不把文件路径交给 gateway。
+
+禁止通过全局可变对象、静态单例、直接引用对方数据库或共享 Android 生命周期对象传递状态。
+
 ---
 
 ## 3. 手机端明确不做什么

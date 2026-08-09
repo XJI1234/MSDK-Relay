@@ -50,6 +50,94 @@ RelayGateway.onStateChanged(listener) -> Registration
 
 `transport` 和 `clock` 是内部 seam 的依赖注入点。生产环境使用 WebSocket adapter，测试使用内存 adapter。它们不得出现在业务模块的公开契约中。
 
+## 3.1 二级模块划分
+
+`relay-gateway` 只负责电脑通信。为了保持接口小、实现深，拆成以下二级模块：
+
+| 二级模块 | 唯一职责 | 输入 | 输出 | 不得负责 |
+| --- | --- | --- | --- | --- |
+| `protocol-core` | 定义、编码、解码和校验协议帧 | 原始字节或帧对象 | `Decoded`、`Rejected`、`Ignored` 或编码结果 | 网络、Android、DJI、文件 |
+| `transport-adapter` | 适配一次网络连接 | 连接地址、发送字节、网络回调 | 连接打开、收到字节、关闭、发送失败 | 握手、命令和业务状态 |
+| `connection-session` | 管理一个会话的代次、握手和生命周期 | transport 事件、设备身份 | `STOPPED`、`CONNECTING`、`AWAITING_PAIRING`、`ACTIVE`、`RECONNECT_WAIT` | 命令业务、遥测内容 |
+| `command-dispatcher` | 处理命令名到处理器的映射和结果关联 | `CommandFrame`、注册表 | `CommandResultFrame` | DJI 操作、线程创建、网络细节 |
+| `mission-transfer` | 管理任务帧顺序、大小、摘要和传输取消 | `mission-begin/chunk/complete` | 完整任务字节或失败结果 | WPMZ 业务校验、DJI 上传 |
+| `outbound-publisher` | 管理所有发送帧的顺序和会话归属 | 已构造的协议帧 | 发送结果 | 生成遥测和业务结果 |
+
+每个二级模块都必须有自己的 `CONTRACT.md`。`protocol-core` 的现有契约见 [`protocol-core/CONTRACT.md`](protocol-core/CONTRACT.md)。如果实现目录暂时与 Gradle 模块目录不同，必须在模块迁移记录中注明，不能让同一个模块出现两份互相矛盾的接口说明。
+
+当前仓库的过渡状态是：`protocol-core` 的实现暂时位于仓库根目录的 `protocol-core/` Gradle 模块，而它的二级模块契约位于 `relay-gateway/protocol-core/CONTRACT.md`。这不是两个模块。实现 gateway 之前必须统一目录，或补充明确的迁移记录；后续 agent 不得在两个位置各自创建一套协议实现。
+
+### 二级模块协作顺序
+
+```text
+transport-adapter
+  -> connection-session
+  -> protocol-core
+  -> command-dispatcher / mission-transfer
+  -> outbound-publisher
+```
+
+实际含义：
+
+- transport 只提供字节，不理解 JSON；
+- session 先确认当前连接和握手状态；
+- protocol-core 负责把字节变成合法帧；
+- command-dispatcher 只接收手机端允许的 `command` 帧；
+- mission-transfer 只接收手机端允许的三种任务传输帧；
+- outbound-publisher 只发送当前会话产生的帧，旧会话的异步结果必须被丢弃。
+
+### 二级模块边界规则
+
+- `connection-session` 不得把原始 `ByteArray` 交给业务模块；必须先经过 `protocol-core`。
+- `command-dispatcher` 不得直接解析 DJI 参数；业务模块处理器负责各自命令的字段校验。
+- `mission-transfer` 只负责传输完整性。它通过 `MissionSink` 把已校验的内容交给 `wayline-mission`，不得创建 DJI 航线任务。
+- `outbound-publisher` 不得允许不同线程直接调用 transport；所有发送必须经过同一个顺序出口。
+- 断线时必须依次停止接收、取消命令等待、取消任务传输、清空发送队列，最后通知状态监听器。
+- 任何异步回调都必须携带会话代次；代次不匹配时只能丢弃，不能发布结果。
+
+### 二级模块的最小接口
+
+以下是职责边界，不是要求使用这些具体 Kotlin 名称：
+
+```text
+Transport
+  connect(endpoint)
+  send(bytes)
+  close(reason)
+  onOpened / onBytes / onClosed / onFailure
+
+CommandRegistry
+  register(commandName, handler)
+  unregister(commandName)
+
+CommandHandler
+  handle(command) -> success(detail) | failure(error)
+
+MissionSink
+  begin(metadata)
+  append(bytes)
+  complete() -> stagedMission
+  abort(reason)
+
+OutboundPublisher
+  publish(frame) -> PublishResult
+```
+
+这些接口的共同要求是：不暴露 OkHttp、Android、DJI、文件绝对路径或线程池类型。测试时可以用内存 transport、记录型 publisher 和临时目录 sink 替换真实适配器。
+
+## 3.2 实现顺序
+
+实现必须按以下顺序推进：
+
+1. `protocol-core`：先完成协议模型、限制和纯 JVM 测试。
+2. `connection-session`：用内存 transport 验证握手、重连、旧会话失效和断线清理。
+3. `outbound-publisher`：验证发送顺序、发送失败和旧代次结果丢弃。
+4. `command-dispatcher`：验证注册、未知命令、异常转换和命令 ID 关联。
+5. `mission-transfer`：验证分块、摘要、替换、取消和 `MissionSink` 交接。
+6. `transport-adapter`：最后接入真实 WebSocket 库；不得把网络库反向带入前五个二级模块。
+
+每完成一个二级模块，都必须先通过该模块契约中的测试，再连接到下一个模块。
+
 ## 4. 连接状态
 
 ```text
