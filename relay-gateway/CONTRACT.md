@@ -1,7 +1,7 @@
 # relay-gateway 一级模块契约
 
-状态：待审阅
-版本：0.1.0
+状态：已修订，待审阅
+版本：0.2.0
 所属程序：MSDK Relay Android
 模块标识：`relay-gateway`
 
@@ -50,6 +50,14 @@ RelayGateway.onStateChanged(listener) -> Registration
 
 `transport` 和 `clock` 是内部 seam 的依赖注入点。生产环境使用 WebSocket adapter，测试使用内存 adapter。它们不得出现在业务模块的公开契约中。
 
+外部接口的共同规则：
+
+- `start()` 只启动连接流程，不代表 WebSocket 已连接，也不代表 DJI 设备已连接；
+- 只有进入 `ACTIVE` 后，命令和业务发布接口才允许生效；
+- `stop()` 返回后，不得再发布旧会话的异步结果；
+- `registerCommandHandler()` 只注册命令入口，不授予处理器访问 transport 或会话代次的权限；
+- `publishTelemetry()`、`publishCommandResult()` 和 `publishMissionResult()` 只负责把调用方已经构造好的结果发送出去，不生成业务内容。
+
 ## 3.1 二级模块划分
 
 `relay-gateway` 只负责电脑通信。为了保持接口小、实现深，拆成以下二级模块：
@@ -58,10 +66,10 @@ RelayGateway.onStateChanged(listener) -> Registration
 | --- | --- | --- | --- | --- |
 | `protocol-core` | 定义、编码、解码和校验协议帧 | 原始字节或帧对象 | `Decoded`、`Rejected`、`Ignored` 或编码结果 | 网络、Android、DJI、文件 |
 | `transport-adapter` | 适配一次网络连接 | 连接地址、发送字节、网络回调 | 连接打开、收到字节、关闭、发送失败 | 握手、命令和业务状态 |
-| `connection-session` | 管理一个会话的代次、握手和生命周期 | transport 事件、设备身份 | `STOPPED`、`CONNECTING`、`AWAITING_PAIRING`、`ACTIVE`、`RECONNECT_WAIT` | 命令业务、遥测内容 |
+| `connection-session` | 管理一个会话的唯一代次、握手和生命周期 | transport 事件、设备身份 | `STOPPED`、`CONNECTING`、`AWAITING_PAIRING`、`ACTIVE`、`RECONNECT_WAIT` | 命令业务、遥测内容、发送队列 |
 | `command-dispatcher` | 处理命令名到处理器的映射和结果关联 | `CommandFrame`、注册表 | `CommandResultFrame` | DJI 操作、线程创建、网络细节 |
 | `mission-transfer` | 管理任务帧顺序、大小、摘要和传输取消 | `mission-begin/chunk/complete` | 完整任务字节或失败结果 | WPMZ 业务校验、DJI 上传 |
-| `outbound-publisher` | 管理所有发送帧的顺序和会话归属 | 已构造的协议帧 | 发送结果 | 生成遥测和业务结果 |
+| `outbound-publisher` | 管理所有发送帧的顺序，并验证调用方提供的会话代次 | 已构造的协议帧、会话代次 | 发送结果 | 生成遥测和业务结果、创建或修改会话代次 |
 
 每个二级模块都必须有自己的 `CONTRACT.md`。`protocol-core` 的现有契约见 [`protocol-core/CONTRACT.md`](protocol-core/CONTRACT.md)。如果实现目录暂时与 Gradle 模块目录不同，必须在模块迁移记录中注明，不能让同一个模块出现两份互相矛盾的接口说明。
 
@@ -92,8 +100,24 @@ transport-adapter
 - `command-dispatcher` 不得直接解析 DJI 参数；业务模块处理器负责各自命令的字段校验。
 - `mission-transfer` 只负责传输完整性。它通过 `MissionSink` 把已校验的内容交给 `wayline-mission`，不得创建 DJI 航线任务。
 - `outbound-publisher` 不得允许不同线程直接调用 transport；所有发送必须经过同一个顺序出口。
+- `connection-session` 是会话代次的唯一创建者和失效者；`outbound-publisher` 只能验证代次，不得生成或修改代次。
 - 断线时必须依次停止接收、取消命令等待、取消任务传输、清空发送队列，最后通知状态监听器。
 - 任何异步回调都必须携带会话代次；代次不匹配时只能丢弃，不能发布结果。
+
+### 二级模块之间的交接数据
+
+`mission-transfer` 完成传输校验后，只能交给 `wayline-mission` 一个不包含手机绝对路径的暂存结果：
+
+```text
+StagedMission
+  transferId
+  fileName
+  size
+  sha256
+  readableByMissionModule
+```
+
+其中 `readableByMissionModule` 是抽象的可读取句柄或接口，不是 `String` 路径。`mission-transfer` 不得把临时文件名交给电脑端，`mission-state-store` 也不得复制文件字节。暂存结果只有在文件已经完整、摘要匹配、临时文件已原子替换后才能产生。
 
 ### 二级模块的最小接口
 

@@ -103,7 +103,7 @@ DISCONNECTED
 
 - 手机端只能在 `HELLO_SENT` 等待 `paired`；
 - `telemetry`、`command`、任务帧和结果帧不能在 `ACTIVE` 之前生效；
-- `paired` 缺少 session ID、版本不兼容或重复握手必须拒绝；当前 v1 对端可以省略 `protocolVersion`，省略时按 v1 处理；
+- `paired` 必须包含非空 session ID；版本不兼容或重复握手必须拒绝；当前 v1 对端可以省略 `protocolVersion`，省略时按 v1 处理；
 - 未知消息类型可以忽略，但已知消息的字段错误必须拒绝；
 - `mission-chunk` 必须先有相同 ID 的 `mission-begin`；
 - `mission-complete` 前收到的总字节数必须等于声明大小；

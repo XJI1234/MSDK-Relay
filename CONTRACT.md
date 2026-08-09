@@ -1,7 +1,7 @@
 # MSDK Relay 手机端程序契约
 
 **文档用途：** Sky Command 电脑端与 MSDK Relay 手机端共同使用的说明书
-**当前版本：** v1
+**当前版本：** v1.1
 **状态：** 手机端重构的总契约
 **适用范围：** `D:\Desktop\MSDK-relay` 中的新手机端项目
 
@@ -110,12 +110,14 @@
 | 二级模块 | 只负责 | 明确不负责 |
 | --- | --- | --- |
 | `sdk-lifecycle` | DJI SDK 注册、初始化、注销和 SDK 可用状态 | 不执行配对、直播或航线任务 |
+| `dji-operation-coordinator` | 为所有 DJI SDK 操作提供统一串行执行、超时和取消策略 | 不理解具体业务命令，不决定操作是否应该执行 |
+| `device-state-store` | 保存 SDK、遥控器、飞行器和配对的唯一设备状态快照 | 不生成遥测 JSON，不发送网络消息 |
 | `remote-controller-link` | 遥控器连接状态、型号和固件等遥控器侧信息 | 不判断飞行器是否连接 |
 | `aircraft-link` | 飞行器和飞控连接状态、机型和基础设备连接信息 | 不执行航线和直播命令 |
 | `pairing-controller` | 请求开始/停止配对并维护配对状态 | 不直接管理 WebSocket 会话，不发布完整遥测 |
 | `device-capability-reader` | 根据当前设备型号和连接状态判断设备能力 | 不执行能力对应的业务操作 |
 
-`device-connection` 是 DJI 设备连接事实的唯一来源。其他模块只能读取它提供的只读状态和能力接口，不能自己再次读取 DJI 连接状态。
+`device-connection` 是 DJI 设备连接事实和 DJI 操作执行入口的唯一来源。其他模块只能读取它提供的只读状态、能力和操作调度接口，不能自己再次读取 DJI 连接状态，也不能自己创建 DJI 操作线程。
 
 #### `telemetry`
 
@@ -123,9 +125,12 @@
 | --- | --- | --- |
 | `snapshot-assembler` | 从各公开状态接口收集一次一致的遥测快照 | 不发送网络消息，不调用 DJI 原始 API |
 | `capability-calculator` | 把设备状态转换为电脑端可理解的能力字段 | 不执行能力对应的操作 |
+| `telemetry-command-handler` | 处理 `telemetry.read`，立即生成并返回一次遥测快照 | 不负责持续发布，不解析其他业务命令 |
 | `telemetry-publisher` | 按状态变化或时间策略发布快照，处理合并、节流和断线后的恢复发布 | 不修改设备状态，不解释命令 |
 
 `telemetry` 不保存另一份设备真相。它只负责把状态转换成对外快照；`live-stream` 和 `wayline-mission` 必须通过只读状态接口提供自己的状态。
+
+`telemetry.read` 由 `telemetry-command-handler` 处理；持续遥测由 `telemetry-publisher` 处理。两者都读取同一个 `device-state-store` 和业务状态接口，不能各自维护一份状态。
 
 #### `wayline-mission`
 
@@ -139,6 +144,8 @@
 | `mission-state-store` | 保存当前航线文件、上传进度、执行状态和任务说明 | 不直接调用 WebSocket，不调用 DJI 原始 API |
 
 航线模块必须把“文件已经完整暂存”“已经上传到 DJI”和“任务已经开始执行”作为三个不同状态，不能合并成一个成功标志。
+
+`mission-staging` 只拥有 KMZ 文件字节和文件生命周期；`mission-state-store` 只拥有文件元数据、上传进度、执行状态和说明。状态仓库不得保存文件字节，暂存模块不得决定任务是否执行。
 
 #### `live-stream`
 
@@ -182,6 +189,8 @@ live-stream
   -> relay-gateway 的命令注册和结果发布接口
 ```
 
+`wayline-mission` 和 `live-stream` 执行 DJI 操作时，必须使用 `device-connection` 提供的统一 DJI 操作调度接口。它们不能各自创建执行器或直接并发调用 DJI SDK。
+
 以下依赖永远禁止：
 
 - `relay-gateway -> device-connection`；gateway 不能知道 DJI；
@@ -189,6 +198,9 @@ live-stream
 - `wayline-mission <-> live-stream` 互相直接调用；
 - 任意业务模块 -> Android Activity、WebSocket 库或 DJI 全局单例；
 - 任意二级模块 -> 另一个二级模块的内部类或内部状态。
+- `telemetry-command-handler` 自己保存设备状态或自己建立遥测发布定时器；
+- `mission-state-store` 保存 KMZ 文件字节；
+- `connection-session` 和 `outbound-publisher` 同时生成或修改会话代次。
 
 ### 2.4 二级模块之间的协作方式
 
@@ -199,7 +211,56 @@ live-stream
 3. **结果/事件发布接口：** 业务模块把状态变化交给 telemetry 或 gateway 的公开发布接口。
 4. **数据接收接口：** mission-transfer 把完成校验的任务内容交给 `mission-staging`，不把文件路径交给 gateway。
 
+5. **DJI 操作调度接口：** 设备连接模块提供统一的串行执行入口，直播和航线模块通过该入口调用 DJI 操作。
+
 禁止通过全局可变对象、静态单例、直接引用对方数据库或共享 Android 生命周期对象传递状态。
+
+### 2.5 业务覆盖检查表
+
+| 业务需求 | 负责一级模块 | 关键二级模块 |
+| --- | --- | --- |
+| 连接电脑 | `relay-gateway` | `transport-adapter`、`connection-session` |
+| 连接遥控器和飞行器 | `device-connection` | `sdk-lifecycle`、`remote-controller-link`、`aircraft-link`、`device-state-store` |
+| 遥控器与飞行器配对 | `device-connection` | `pairing-controller`、`dji-operation-coordinator` |
+| 持续发布遥测 | `telemetry` | `snapshot-assembler`、`capability-calculator`、`telemetry-publisher` |
+| 即时读取遥测 | `telemetry` | `telemetry-command-handler`、`snapshot-assembler` |
+| RTMP 图传 | `live-stream` | `stream-command-handler`、`stream-config-validator`、`dji-stream-adapter`、`stream-state-store` |
+| KMZ 接收和完整性校验 | `relay-gateway` + `wayline-mission` | `mission-transfer`、`mission-staging` |
+| 根据航点生成 KMZ | `wayline-mission` | `wayline-command-handler`、`wpmz-generator` |
+| 上传航线 | `wayline-mission` | `mission-uploader`、`mission-state-store` |
+| 开始/暂停/恢复/停止航线 | `wayline-mission` | `mission-executor`、`mission-state-store` |
+| Android 前台运行和权限 | `app-runtime` | `foreground-service`、`permission-coordinator` |
+
+没有列在表中的一级或二级模块不得自行增加新的业务能力；新增能力必须先更新本表和对应契约。
+
+### 2.6 二级模块契约的统一写法
+
+每个二级模块的 `CONTRACT.md` 都必须按同一套顺序说明，不能只写一句职责名称。统一模板见 [`docs/mobile-module-contract-template.md`](docs/mobile-module-contract-template.md)。
+
+每份二级模块契约至少要回答：
+
+1. 这个模块唯一负责的结果是什么，明确不负责什么。
+2. 调用方需要提供什么，模块会返回什么，哪些字段有单位、范围和长度限制。
+3. 调用前必须满足什么条件，模块启动、停止、重连和销毁时怎样变化。
+4. 超时、取消、重复调用、并发调用、设备断开和数据损坏时分别怎样处理。
+5. 哪个模块拥有状态和文件，当前模块只能读取哪些公开接口。
+6. 调用方和测试替身如何使用这个模块，不需要了解哪些 Android、DJI 或网络实现细节。
+7. 正常、失败、边界、断线和第三方回调异常分别由哪些测试覆盖。
+
+契约中可以使用语义化接口名称，不要求提前固定 Kotlin 类名；但接口的输入、输出、前置条件、失败方式和生命周期必须固定。没有契约的二级模块不得进入实现阶段。
+
+### 2.7 航线生成与航线文件传输的职责边界
+
+电脑端拥有航线规划、地图编辑和航点业务规则。手机端不规划航线，也不替电脑端决定航点。
+
+手机端保留 `wayline.generate` 的原因是旧项目已经具备这项能力：电脑端可以把已经确定好的完整航点计划交给手机端，由 `wpmz-generator` 调用 DJI WPMZ 能力生成并校验 KMZ。这个操作只是“格式生成适配”，不是“航线规划”。
+
+因此有两种等价的输入方式：
+
+- 电脑端已经生成 KMZ：通过 `mission-begin/chunk/complete` 传给手机端；
+- 电脑端只有完整航点计划：通过 `wayline.generate` 让手机端生成当前待上传 KMZ。
+
+两条路径最后都必须进入 `mission-staging`，再由 `wayline.upload` 单独上传。任何路径都不能自动开始飞行。
 
 ---
 
@@ -236,7 +297,8 @@ live-stream
 - 启动 WebSocket 服务，并把服务地址提供给手机端。
 - 生成唯一的命令 ID，等待并匹配相同 ID 的结果。
 - 在调用前检查是否选择了在线手机设备。
-- 负责航线规划、文件选择、KMZ 生成和电脑端文件管理。
+- 负责航线规划、地图编辑、文件选择和电脑端文件管理；也可以在电脑端先生成 KMZ。
+- 如果调用 `wayline.generate`，只向手机端提供已经确定的完整航点计划，不把手机端当作地图规划器。
 - 负责接收 RTMP、转码、播放和媒体状态展示。
 - 根据遥测和结果向用户展示可理解的状态和错误。
 - 不直接依赖手机端的 Kotlin 类、Android 类或 DJI SDK 类型。
@@ -410,12 +472,25 @@ sequenceDiagram
 要求：
 
 - `fileName` 必须是安全的 `.kmz` 文件名；
-- `waypoints` 至少包含一个航点；
+- `waypoints` 必须包含 `2` 到 `99` 个航点；
 - 每个航点必须包含经度、纬度和高度；
-- 速度必须是可接受的正数；
+- 经度范围是 `-180` 到 `180`，纬度范围是 `-90` 到 `90`，高度范围是 `1` 到 `500` 米；
+- `speedMetersPerSecond` 范围是 `0.1` 到 `15.0` 米/秒；
 - 生成能力或当前飞行器不支持时必须失败；
 - 生成成功后，下一次 `wayline.upload` 默认使用这份待上传航线；
 - 新的成功生成会替换旧的待上传航线，旧文件必须清理。
+
+成功结果的 `detail` 只能包含文件名、大小和 SHA-256，例如：
+
+```json
+{
+  "fileName": "survey.kmz",
+  "size": 2048,
+  "sha256": "小写的64位SHA-256摘要"
+}
+```
+
+不得把 Android 绝对路径、临时文件名或文件句柄直接放进电脑端可见的结果。
 
 ### 7.6 上传当前航线
 
@@ -619,7 +694,7 @@ mission-begin
   "type": "mission-result",
   "id": "任务传输ID",
   "ok": true,
-  "detail": "已暂存"
+  "detail": "{\"fileName\":\"survey.kmz\",\"size\":2048,\"sha256\":\"小写的64位SHA-256摘要\"}"
 }
 ```
 
