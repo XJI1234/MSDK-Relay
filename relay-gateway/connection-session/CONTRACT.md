@@ -1,6 +1,6 @@
 # relay-gateway.connection-session 二级模块契约
 
-状态：待审阅
+状态：已批准并实现
 版本：0.1.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 协议依赖：[`../protocol-core/CONTRACT.md`](../protocol-core/CONTRACT.md)
@@ -191,7 +191,7 @@ SessionEndReason {
 - 同一监听器的事件按会话转换顺序串行通知；慢监听器不得阻塞会话状态机；
 - 监听器回调不得在模块内部锁中执行。回调中允许同步调用 `start()` 或 `stop()`，该调用由独立的会话事件执行器处理，因此不得死锁或重入修改当前转换；
 - `start()` 和 `stop()` 返回时不要求对应状态事件已经实际送达监听器，只要求事件已按顺序进入通知器；
-- 注销 `Registration` 必须幂等，注销后不再收到新事件。
+- 注销 `Registration` 必须幂等；注销返回前，已经开始执行的该监听器回调必须结束（监听器在自身回调中注销时不得等待自己），注销后不再启动新回调。
 
 ## 5. 内部协作接口
 
@@ -251,6 +251,8 @@ OrderedStateNotifier.enqueue(event, listeners)
 - 三个清理接口必须对“该代次尚未产生任何工作”和重复清理返回幂等成功，不得要求连接曾经进入 `ACTIVE`；
 - 调度器必须使用单调时间，墙上时钟调整不得提前或延后超时和重连；
 - `OrderedStateNotifier` 与会话事件执行器相互独立，按事件顺序和监听器注册顺序调用，不得反向阻塞会话状态机；
+- `ScheduledCancellation.cancel()` 的生产适配器必须幂等且不得抛出异常；若异常依赖仍然抛出，本模块必须先用代次或等待令牌使迟到回调逻辑失效，再记录脱敏诊断并继续清理；
+- `ExecutorOrderedStateNotifier` 使用的 executor 必须把 drain 工作延后到独立执行上下文，不能以内联方式运行 listener；执行器暂时拒绝任务时，已入队事件必须保留，并在后续入队时继续尝试调度；
 - 所有依赖都在 `create` 时注入，本模块不得从全局单例获取依赖。
 
 `connection-session` 只依赖 `protocol-core` 已公开的帧模型和 `decode` 结果。字段格式、版本字段校验和 `Decoded / Rejected / Ignored` 的产生由 `protocol-core` 负责；当前连接处于五态中的哪一态、当前是否允许 `paired`，由本模块负责。出站 `hello` 以 `HelloFrame` 交给 `SessionOutbound`，由发送模块统一调用 `protocol-core.encode`，本模块不保存编码字节。
@@ -747,7 +749,9 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 - 断言顺序严格为：失效接收、取消定时器、关闭 transport、取消命令、取消任务、discard 发送、清除引用、准备后续动作、状态通知；
 - 同一代次同时收到 failure、closed、timeout 和 stop，只清理一次；
 - 每个 cleanup 依赖分别抛出异常时，其余步骤仍执行；
+- 握手或重连定时器的取消依赖抛出异常时，仍记录脱敏诊断、使迟到回调失效并完成停止或重连状态转换；
 - listener 抛出异常时其他 listener 仍收到通知；
+- listener 正在执行时并发注销必须等待其结束，listener 自注销不得死锁；
 - 清理开始后到达的业务字节不交给 consumer；
 - 状态 listener 执行时旧活动上下文和发送状态已经不可用；
 - 清理期间反复读取快照不会观察到非法字段组合；
@@ -761,6 +765,7 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 - listener 未被排空时 `stop()` 仍可完成；listener 中同步 `stop()` 由独立会话执行器完成；
 - active frame consumer 抛出异常时，会话事件序列继续工作且同一帧不重复交付；
 - 慢 listener 不导致同一 listener 的状态事件乱序；
+- 状态通知执行器暂时拒绝一次任务后，后续事件仍按原顺序送达且不丢失此前事件；
 - 随机生成长事件序列，持续断言 §6.3 的全部不变量；
 - 任意输入和依赖异常都不会向调用方泄漏 WebSocket 库异常；
 - 错误和诊断不包含原始字节、原始 JSON、完整 endpoint、token、完整标识或异常堆栈；
