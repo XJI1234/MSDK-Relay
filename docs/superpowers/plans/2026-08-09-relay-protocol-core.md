@@ -1,5 +1,7 @@
 # Relay Protocol Core Implementation Plan
 
+> **状态：已废弃。** 本计划对应旧版契约，包含已经移出 `protocol-core` 职责的运行状态机。不得继续按本文件实施；唯一有效依据是 `relay-gateway/protocol-core/CONTRACT.md` v0.2.0 或更高版本。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a pure Kotlin/JVM `relay-gateway.protocol-core` module that validates, encodes, decodes, and tracks the Sky Command to MSDK Relay protocol without depending on Android, DJI, WebSocket, or UI code.

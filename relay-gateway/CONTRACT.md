@@ -71,9 +71,7 @@ RelayGateway.onStateChanged(listener) -> Registration
 | `mission-transfer` | 管理任务帧顺序、大小、摘要和传输取消 | `mission-begin/chunk/complete` | 完整任务字节或失败结果 | WPMZ 业务校验、DJI 上传 |
 | `outbound-publisher` | 管理所有发送帧的顺序，并验证调用方提供的会话代次 | 已构造的协议帧、会话代次 | 发送结果 | 生成遥测和业务结果、创建或修改会话代次 |
 
-每个二级模块都必须有自己的 `CONTRACT.md`。`protocol-core` 的现有契约见 [`protocol-core/CONTRACT.md`](protocol-core/CONTRACT.md)。如果实现目录暂时与 Gradle 模块目录不同，必须在模块迁移记录中注明，不能让同一个模块出现两份互相矛盾的接口说明。
-
-当前仓库的过渡状态是：`protocol-core` 的实现暂时位于仓库根目录的 `protocol-core/` Gradle 模块，而它的二级模块契约位于 `relay-gateway/protocol-core/CONTRACT.md`。这不是两个模块。实现 gateway 之前必须统一目录，或补充明确的迁移记录；后续 agent 不得在两个位置各自创建一套协议实现。
+每个二级模块都必须把自己的 `CONTRACT.md`、构建文件、源码和测试放在同一模块目录。`protocol-core` 的契约和实现统一位于 `relay-gateway/protocol-core/`；不得在仓库根目录或其他位置再创建第二套协议实现。
 
 ### 二级模块协作顺序
 
@@ -232,12 +230,13 @@ INVALID_COMMAND
 COMMAND_TIMEOUT
 COMMAND_REJECTED
 TRANSFER_NOT_ACTIVE
+TRANSFER_ALREADY_ACTIVE
 TRANSFER_SUPERSEDED
 TRANSFER_FAILED
 PROTOCOL_VERSION_UNSUPPORTED
 ```
 
-错误对象至少包含 `code` 和适合用户显示的短消息；详细信息只能是受限、可脱敏的结构化字段。
+这是 gateway 全部二级模块共同使用的错误分类目录，不等同于 `protocol-core` 的单帧校验错误枚举。`TRANSFER_ALREADY_ACTIVE` 表示同一 ID 已在传输且现有传输保持不变；`TRANSFER_SUPERSEDED` 表示旧的不同 ID 传输被新传输替换。错误对象至少包含 `code` 和适合用户显示的短消息；详细信息只能是受限、可脱敏的结构化字段。
 
 ## 8. 不变量
 

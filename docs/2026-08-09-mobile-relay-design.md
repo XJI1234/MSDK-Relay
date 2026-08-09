@@ -182,7 +182,7 @@ stream-state-store        保存直播状态和指标
 
 每个二级模块都必须先完成自己的 `CONTRACT.md` 和纯规则测试，再接入真实 Android 或 DJI 适配器。推荐顺序如下：
 
-1. `relay-gateway/protocol-core`：稳定帧模型、限制、编码、解码和传输状态机。
+1. `relay-gateway/protocol-core`：稳定帧模型、固定限制、编码、解码和单帧字段校验；不保存会话或任务传输状态。
 2. `relay-gateway/connection-session`：握手、会话代次、断线和旧会话隔离。
 3. `relay-gateway/outbound-publisher`、`command-dispatcher`、`mission-transfer`：发送顺序、命令关联和 KMZ 传输交接。
 4. `device-connection`：SDK 生命周期、统一 DJI 操作调度、设备状态唯一来源和设备能力。

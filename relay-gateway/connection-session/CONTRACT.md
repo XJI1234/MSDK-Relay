@@ -259,24 +259,23 @@ OrderedStateNotifier.enqueue(event, listeners)
 
 本模块不得调用或维护任务传输状态机。`mission-begin/chunk/complete` 在 `ACTIVE` 后原样交给 gateway 后续路由，顺序、累计字节、摘要和取消只由 `mission-transfer` 拥有。这样不会在会话模块和任务模块之间形成两份传输状态。
 
-### 5.1 与 `protocol-core` 状态规则的关系
+### 5.1 与 `protocol-core` 的无状态边界
 
-`protocol-core` 契约 §4 描述的是所有调用方必须遵守的**协议转换规则**，以及可以由纯 JVM 代码实现和测试的规则算法；它不是“当前手机会话”或“当前任务传输”的运行状态仓库。
+`protocol-core` 只定义不可变帧、固定限制、字段校验和编解码结果，不提供或保存会话与任务传输状态。
 
 运行状态所有权固定为：
 
 | 运行中的事实 | 唯一拥有者 | `protocol-core` 的角色 |
 | --- | --- | --- |
 | 当前五态、当前代次、当前 `sessionId` | `connection-session` | 定义帧和字段是否合法，不保存全局或跨代次当前会话 |
-| 当前任务 ID、累计字节、摘要和传输阶段 | `mission-transfer` | 提供可复用的纯规则实现，不拥有 gateway 中的当前传输实例 |
+| 当前任务 ID、累计字节、摘要和传输阶段 | `mission-transfer` | 只校验单个任务帧的结构，不判断传输顺序 |
 
 因此：
 
-- 本模块只保存一份当前握手状态，不在 `protocol-core` 中建立第二个全局当前会话；
-- 本模块当前不依赖 `protocol-core` 契约尚未公开的有状态接口；
-- 若以后希望复用 `protocol-core` 的状态机实现，必须先在其契约中公开一个纯规则接口，再由本模块按代次私有持有实例；该实例仍属于本模块的实现，不改变状态所有权；
-- 任务传输状态机只能由未来 `mission-transfer` 契约决定如何持有，本模块不得实例化它；
-- `protocol-core` 的规则测试、`connection-session` 的生命周期测试和 `mission-transfer` 的传输测试验证不同层次，不得用其中一组替代另一组。
+- 本模块保存唯一一份当前握手和连接状态，`protocol-core` 中不得建立第二份；
+- 本模块不得依赖或要求 `protocol-core` 提供状态机接口；
+- 任务传输状态机只能由未来 `mission-transfer` 契约定义和持有，本模块不得实例化它；
+- `protocol-core` 的帧测试、`connection-session` 的生命周期测试和 `mission-transfer` 的传输测试验证不同职责，不得互相替代。
 
 `TransportConnector.open` 的网络连接超时由 `transport-adapter` 配置并以 `onFailure` 或 `OpenRejected` 报告；本模块只拥有握手超时，不能同时维护第二份连接超时规则。
 
