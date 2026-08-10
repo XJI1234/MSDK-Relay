@@ -1,6 +1,8 @@
 package com.skycommand.relay.protocol
 
+import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.core.StreamReadConstraints
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -20,7 +22,20 @@ sealed interface DecodeResult {
 }
 
 object RelayFrameCodec {
-    private val mapper = ObjectMapper()
+    private val mapper = ObjectMapper(
+        JsonFactory.builder()
+            .streamReadConstraints(
+                StreamReadConstraints.builder()
+                    .maxNestingDepth(ProtocolLimits.maxJsonNestingDepth)
+                    .maxDocumentLength(ProtocolLimits.maxFrameBytes.toLong())
+                    .maxTokenCount(ProtocolLimits.maxJsonTokens)
+                    .maxNumberLength(ProtocolLimits.maxJsonNumberChars)
+                    .maxStringLength(ProtocolLimits.maxParserStringChars)
+                    .maxNameLength(ProtocolLimits.maxParserFieldNameChars)
+                    .build()
+            )
+            .build()
+    )
         .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
 
@@ -29,22 +44,36 @@ object RelayFrameCodec {
         if (validation is Rejected) {
             return validation
         }
-        return runCatching { Accepted(mapper.writeValueAsBytes(toNode(frame))) }
-            .getOrElse { Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "Frame cannot be encoded")) }
+        return runCatching { mapper.writeValueAsBytes(toNode(frame)) }
+            .fold(
+                onSuccess = { bytes ->
+                    if (bytes.size > ProtocolLimits.maxFrameBytes) {
+                        Rejected(ProtocolError(ProtocolErrorCode.FRAME_TOO_LARGE, "Frame exceeds the allowed size"))
+                    } else {
+                        Accepted(bytes)
+                    }
+                },
+                onFailure = {
+                    Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "Frame cannot be encoded"))
+                },
+            )
     }
 
     fun decode(bytes: ByteArray): DecodeResult {
         if (bytes.isEmpty()) {
             return rejected(ProtocolErrorCode.INVALID_JSON, "Frame is empty")
         }
-        try {
+        if (bytes.size > ProtocolLimits.maxFrameBytes) {
+            return rejected(ProtocolErrorCode.FRAME_TOO_LARGE, "Frame exceeds the allowed size")
+        }
+        val json = try {
             decodeUtf8(bytes)
         } catch (_: CharacterCodingException) {
             return rejected(ProtocolErrorCode.INVALID_UTF8, "Frame is not valid UTF-8")
         }
 
         val root = try {
-            mapper.readTree(bytes)
+            mapper.readTree(json)
         } catch (_: Exception) {
             return rejected(ProtocolErrorCode.INVALID_JSON, "Frame is not valid JSON")
         }
@@ -53,6 +82,12 @@ object RelayFrameCodec {
         }
 
         return try {
+            val missionChunkData = if (root.get("type")?.textValue() == "mission-chunk") {
+                root.get("data")
+            } else {
+                null
+            }
+            validateJsonTree(root, missionChunkData)
             decodeKnownFrame(root)
         } catch (error: CodecFailure) {
             DecodeResult.Rejected(error.error)
@@ -61,8 +96,36 @@ object RelayFrameCodec {
         }
     }
 
+    private fun validateJsonTree(node: JsonNode, stringLimitExemption: JsonNode?) {
+        when {
+            node.isTextual -> {
+                val value = node.textValue()
+                if (
+                    node !== stringLimitExemption &&
+                    value.codePointCount(0, value.length) > ProtocolLimits.maxJsonStringCodePoints
+                ) {
+                    throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_JSON, "JSON string is too long"))
+                }
+            }
+
+            node.isArray -> node.elements().forEachRemaining { child ->
+                validateJsonTree(child, stringLimitExemption)
+            }
+            node.isObject -> node.fields().forEachRemaining { (name, child) ->
+                if (
+                    name.isBlank() ||
+                    name.codePointCount(0, name.length) > ProtocolLimits.maxJsonFieldNameCodePoints ||
+                    name.any(Char::isISOControl)
+                ) {
+                    throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "JSON field name is invalid"))
+                }
+                validateJsonTree(child, stringLimitExemption)
+            }
+        }
+    }
+
     private fun decodeKnownFrame(root: JsonNode): DecodeResult {
-        val type = requiredText(root, "type")
+        val type = requiredMessageType(root)
         return when (type) {
             "hello" -> decoded(
                 HelloFrame(
@@ -213,6 +276,18 @@ object RelayFrameCodec {
         return value.textValue()
     }
 
+    private fun requiredMessageType(node: JsonNode): String {
+        val type = requiredText(node, "type")
+        if (
+            type.isBlank() ||
+            type.codePointCount(0, type.length) > ProtocolLimits.maxMessageTypeCodePoints ||
+            type.any(Char::isISOControl)
+        ) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_MESSAGE_TYPE, "Message type is invalid"))
+        }
+        return type
+    }
+
     private fun optionalText(node: JsonNode, name: String): String? {
         val value = node.get(name) ?: return null
         if (!value.isTextual) {
@@ -231,7 +306,7 @@ object RelayFrameCodec {
 
     private fun requiredLong(node: JsonNode, name: String): Long {
         val value = node.get(name)
-        if (value == null || !value.isIntegralNumber) {
+        if (value == null || !value.isIntegralNumber || !value.canConvertToLong()) {
             throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name must be an integer"))
         }
         return value.longValue()
@@ -246,11 +321,21 @@ object RelayFrameCodec {
     }
 
     private fun decodeBase64(value: String): ByteArray {
-        return try {
+        if (value.length > ProtocolLimits.maxMissionChunkBase64Chars) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.CHUNK_TOO_LARGE, "Mission chunk is too large"))
+        }
+        if (value.length % 4 != 0) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_BASE64, "Mission chunk is not valid Base64"))
+        }
+        val decoded = try {
             Base64.getDecoder().decode(value)
         } catch (_: IllegalArgumentException) {
             throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_BASE64, "Mission chunk is not valid Base64"))
         }
+        if (Base64.getEncoder().encodeToString(decoded) != value) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_BASE64, "Mission chunk is not valid Base64"))
+        }
+        return decoded
     }
 
     private fun JsonNode.toJsonObject(): JsonObject =

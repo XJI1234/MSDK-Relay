@@ -1,6 +1,6 @@
 # relay-gateway.protocol-core 二级模块契约
 
-状态：已批准，待实现
+状态：已批准并实现
 版本：0.2.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 模块标识：`relay-protocol-core`

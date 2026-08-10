@@ -217,7 +217,7 @@ class ConnectionSession private constructor(
             null -> handleRejectedFrame(isUnsupportedVersion = false)
             is DecodeResult.Ignored -> Unit
             is DecodeResult.Rejected ->
-                handleRejectedFrame(decoded.error.code == ProtocolErrorCode.INVALID_PROTOCOL_VERSION)
+                handleRejectedFrame(decoded.error.code == ProtocolErrorCode.PROTOCOL_VERSION_UNSUPPORTED)
 
             is DecodeResult.Decoded -> handleDecodedFrame(decoded.frame)
         }

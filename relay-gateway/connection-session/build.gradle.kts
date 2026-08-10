@@ -8,7 +8,7 @@ kotlin {
 }
 
 dependencies {
-    api(project(":protocol-core"))
+    api(project(":relay-gateway:protocol-core"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }

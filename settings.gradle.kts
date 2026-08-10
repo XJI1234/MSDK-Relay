@@ -15,5 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "MSDKRelay"
-include(":protocol-core")
+include(":relay-gateway:protocol-core")
 include(":relay-gateway:connection-session")

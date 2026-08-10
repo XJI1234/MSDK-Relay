@@ -3,6 +3,7 @@ package com.skycommand.relay.protocol
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import java.util.Random
 
 class ProtocolFuzzTest {
 
@@ -27,6 +28,24 @@ class ProtocolFuzzTest {
             val result = runCatching { RelayFrameCodec.decode(input) }.getOrNull()
             assertNotNull(result)
             assertTrue(result is DecodeResult.Rejected || result is DecodeResult.Ignored || result is DecodeResult.Decoded)
+        }
+    }
+
+    @Test
+    fun seededRandomInputsNeverEscapeTheCodec() {
+        val random = Random(0x5A10L)
+
+        repeat(10_000) { index ->
+            val input = ByteArray(random.nextInt(2_049))
+            random.nextBytes(input)
+
+            val result = runCatching { RelayFrameCodec.decode(input) }.getOrNull()
+
+            assertNotNull(result, "codec threw for randomized input #$index")
+            assertTrue(
+                result is DecodeResult.Rejected || result is DecodeResult.Ignored || result is DecodeResult.Decoded,
+                "unexpected result for randomized input #$index",
+            )
         }
     }
 }

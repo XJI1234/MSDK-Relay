@@ -95,7 +95,7 @@ fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
     val result: ProtocolResult<Unit> = when (frame) {
         is HelloFrame -> validateHello(frame)
         is PairedFrame -> validatePaired(frame)
-        is TelemetryFrame -> Accepted(Unit)
+        is TelemetryFrame -> validateTelemetry(frame)
         is CommandFrame -> validateCommand(frame)
         is CommandResultFrame -> validateResult(frame.id, frame.detail)
         is MissionBeginFrame -> validateMissionBegin(frame)
@@ -119,16 +119,108 @@ private fun validatePaired(frame: PairedFrame): ProtocolResult<Unit> {
         .then { frame.protocolVersion?.let(::validateVersion) ?: Accepted(Unit) }
 }
 
+private fun validateTelemetry(frame: TelemetryFrame): ProtocolResult<Unit> {
+    val tokenBudget = JsonTokenBudget(initialTokens = 6)
+    return validateJsonValue(frame.payload, depth = 2, tokenBudget)
+        .then { validateJsonValue(frame.capabilities, depth = 2, tokenBudget) }
+}
+
 private fun validateCommand(frame: CommandFrame): ProtocolResult<Unit> {
+    val tokenBudget = JsonTokenBudget(initialTokens = 9)
     return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Command ID is invalid")
         .then {
-            if (frame.name.isBlank() || frame.name.codePointCount(0, frame.name.length) > ProtocolLimits.maxCommandNameCodePoints) {
+            if (
+                frame.name.isBlank() ||
+                frame.name.codePointCount(0, frame.name.length) > ProtocolLimits.maxCommandNameCodePoints ||
+                frame.name.any(Char::isISOControl)
+            ) {
                 Rejected(ProtocolError(ProtocolErrorCode.INVALID_COMMAND_NAME, "Command name is invalid"))
             } else {
                 Accepted(Unit)
             }
         }
+        .then {
+            if ("name" in frame.fields.fields) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Command fields contain a reserved name"))
+            } else {
+                validateJsonValue(frame.fields, depth = 2, tokenBudget)
+            }
+        }
 }
+
+private fun validateJsonValue(
+    value: JsonValue,
+    depth: Int,
+    tokenBudget: JsonTokenBudget,
+): ProtocolResult<Unit> {
+    if ((value is JsonArray || value is JsonObject) && depth > ProtocolLimits.maxJsonNestingDepth) {
+        return Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "JSON nesting is too deep"))
+    }
+    val tokens = when (value) {
+        is JsonArray -> 2L
+        is JsonObject -> 2L + value.fields.size
+        else -> 1L
+    }
+    if (!tokenBudget.consume(tokens)) {
+        return Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "JSON contains too many tokens"))
+    }
+    return when (value) {
+        JsonNull,
+        is JsonBoolean,
+        -> Accepted(Unit)
+
+        is JsonNumber -> {
+            if (
+                value.value.length > ProtocolLimits.maxJsonNumberChars ||
+                !value.value.matches(JSON_NUMBER_PATTERN)
+            ) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "JSON number is invalid"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+
+        is JsonString -> {
+            if (value.value.codePointCount(0, value.value.length) > ProtocolLimits.maxJsonStringCodePoints) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_JSON, "JSON string is too long"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+
+        is JsonArray -> value.values.firstNotNullOfOrNull { child ->
+            (validateJsonValue(child, depth + 1, tokenBudget) as? Rejected)
+        } ?: Accepted(Unit)
+
+        is JsonObject -> {
+            value.fields.forEach { (name, child) ->
+                if (
+                    name.isBlank() ||
+                    name.codePointCount(0, name.length) > ProtocolLimits.maxJsonFieldNameCodePoints ||
+                    name.any(Char::isISOControl)
+                ) {
+                    return Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "JSON field name is invalid"))
+                }
+                val childResult = validateJsonValue(child, depth + 1, tokenBudget)
+                if (childResult is Rejected) {
+                    return childResult
+                }
+            }
+            Accepted(Unit)
+        }
+    }
+}
+
+private class JsonTokenBudget(initialTokens: Long) {
+    private var tokens = initialTokens
+
+    fun consume(count: Long): Boolean {
+        tokens += count
+        return tokens <= ProtocolLimits.maxJsonTokens
+    }
+}
+
+private val JSON_NUMBER_PATTERN = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 
 private fun validateResult(id: String, detail: String): ProtocolResult<Unit> {
     return validateId(id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Message ID is invalid")
@@ -152,7 +244,7 @@ private fun validateMissionBegin(frame: MissionBeginFrame): ProtocolResult<Unit>
         }
         .then {
             if (frame.size !in 1..ProtocolLimits.maxMissionBytes) {
-                Rejected(ProtocolError(ProtocolErrorCode.MISSION_TOO_LARGE, "Mission size is outside the allowed range"))
+                Rejected(ProtocolError(ProtocolErrorCode.MISSION_SIZE_OUT_OF_RANGE, "Mission size is outside the allowed range"))
             } else {
                 Accepted(Unit)
             }
@@ -193,7 +285,7 @@ private fun validateVersion(version: String): ProtocolResult<Unit> {
     return if (version == ProtocolLimits.protocolVersion) {
         Accepted(Unit)
     } else {
-        Rejected(ProtocolError(ProtocolErrorCode.INVALID_PROTOCOL_VERSION, "Protocol version is unsupported"))
+        Rejected(ProtocolError(ProtocolErrorCode.PROTOCOL_VERSION_UNSUPPORTED, "Protocol version is unsupported"))
     }
 }
 

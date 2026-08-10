@@ -1,35 +1,38 @@
 package com.skycommand.relay.protocol
 
 enum class ProtocolErrorCode {
+    FRAME_TOO_LARGE,
     INVALID_UTF8,
     INVALID_JSON,
     INVALID_FIELD,
+    INVALID_MESSAGE_TYPE,
     INVALID_BASE64,
-    INVALID_SESSION_STATE,
-    HANDSHAKE_REQUIRED,
-    DUPLICATE_HANDSHAKE,
-    FRAME_NOT_ALLOWED,
-    TRANSFER_NOT_ACTIVE,
-    TRANSFER_SUPERSEDED,
-    TRANSFER_SIZE_MISMATCH,
-    TRANSFER_CHECKSUM_MISMATCH,
     INVALID_DEVICE_ID,
     INVALID_SESSION_ID,
     INVALID_MESSAGE_ID,
-    INVALID_PROTOCOL_VERSION,
+    PROTOCOL_VERSION_UNSUPPORTED,
     INVALID_COMMAND_NAME,
     INVALID_FILE_NAME,
     INVALID_SHA256,
-    MISSION_TOO_LARGE,
+    MISSION_SIZE_OUT_OF_RANGE,
     EMPTY_CHUNK,
     CHUNK_TOO_LARGE,
     INVALID_RESULT_DETAIL,
 }
 
-data class ProtocolError(
+@ConsistentCopyVisibility
+data class ProtocolError internal constructor(
     val code: ProtocolErrorCode,
     val message: String,
-)
+) {
+    init {
+        require(message.isNotBlank()) { "Protocol error message must not be blank" }
+        require(message.codePointCount(0, message.length) <= ProtocolLimits.maxErrorMessageCodePoints) {
+            "Protocol error message is too long"
+        }
+        require(message.none(Char::isISOControl)) { "Protocol error message contains a control character" }
+    }
+}
 
 sealed interface ProtocolResult<out T>
 
