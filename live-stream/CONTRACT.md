@@ -1,6 +1,6 @@
 # live-stream module contract
 
-Status: second-level implementation in progress
+Status: implemented and verified
 Version: 1.0.0
 Gradle path: :live-stream
 

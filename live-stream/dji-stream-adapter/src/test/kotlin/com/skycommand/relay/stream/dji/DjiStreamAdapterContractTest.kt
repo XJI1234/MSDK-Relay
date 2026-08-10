@@ -14,6 +14,18 @@ import kotlin.test.assertIs
 
 class DjiStreamAdapterContractTest {
     @Test
+    fun reportsOneSafeTerminalOutcomeAfterAnAcceptedOperation() {
+        val fixture = Fixture()
+        val outcomes = mutableListOf<StreamDjiTerminalOutcome>()
+
+        fixture.adapter.start(config(), StreamDjiTerminalListener { outcomes += it })
+        fixture.port.startCompletion!!.succeed()
+        fixture.port.startCompletion!!.succeed()
+
+        assertEquals(listOf(StreamDjiTerminalOutcome.SUCCEEDED), outcomes)
+    }
+
+    @Test
     fun reportsStartAndStopOnlyAfterDjiTerminalSuccess() {
         val fixture = Fixture()
         val start = assertIs<DjiStreamStartResult.Accepted>(fixture.adapter.start(config()))

@@ -21,6 +21,8 @@ adapter.stop() -> Accepted(cancellation) | Rejected(reason)
 
 `DjiStreamPort` is the only DJI seam. Its `start` receives a validated configuration, metric callback, and terminal completion callback; its `stop` receives terminal completion. `Accepted` means the operation was submitted, not that DJI succeeded. State becomes active/inactive only when the coordinator reports the terminal result.
 
+Both requests optionally accept `StreamDjiTerminalListener`. It receives exactly one safe outcome for an accepted operation: `SUCCEEDED`, `FAILED`, `TIMED_OUT`, or `CANCELLED`, after the corresponding state transition is attempted. Rejected preconditions and rejected submission return synchronously and do not invoke it.
+
 ## 3. Failure and concurrency
 
 State-store precondition failures and coordinator submission rejection return stable enum reasons. Adapter exceptions, DJI failure, timeout, cancellation, duplicate completion, late metrics, and late callbacks are converted to safe state transitions. The coordinator serializes all DJI calls and supplies cancellation and timeout. Every callback carries the operation generation returned by the state store; callbacks from an older start/stop cannot affect a newer operation.

@@ -29,6 +29,17 @@ interface DjiStreamPort {
     fun stop(completion: StreamDjiCompletion)
 }
 
+fun interface StreamDjiTerminalListener {
+    fun onCompleted(outcome: StreamDjiTerminalOutcome)
+}
+
+enum class StreamDjiTerminalOutcome {
+    SUCCEEDED,
+    FAILED,
+    TIMED_OUT,
+    CANCELLED,
+}
+
 sealed interface DjiStreamStartResult {
     data class Accepted(val cancellation: OperationCancellationHandle) : DjiStreamStartResult
 
@@ -54,7 +65,10 @@ class DjiStreamAdapter private constructor(
     private val coordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
 ) {
-    fun start(config: ValidatedStreamConfig): DjiStreamStartResult {
+    fun start(
+        config: ValidatedStreamConfig,
+        listener: StreamDjiTerminalListener = StreamDjiTerminalListener { },
+    ): DjiStreamStartResult {
         val state = stateStore.requestStart(config)
         val operationId = (state as? StreamStartResult.Accepted)?.operationId
             ?: return DjiStreamStartResult.Rejected(DjiStreamRejection.ALREADY_ACTIVE)
@@ -67,7 +81,10 @@ class DjiStreamAdapter private constructor(
                 )
             },
             timeoutMillis = timeoutMillis,
-            listener = OperationResultListener { outcome -> completeStart(operationId, outcome) },
+            listener = OperationResultListener { outcome ->
+                completeStart(operationId, outcome)
+                runCatching { listener.onCompleted(outcome.toTerminalOutcome()) }
+            },
         )
         val accepted = submission as? SubmissionResult.Accepted
         if (accepted == null) {
@@ -77,7 +94,7 @@ class DjiStreamAdapter private constructor(
         return DjiStreamStartResult.Accepted(accepted.cancellation)
     }
 
-    fun stop(): DjiStreamStopResult {
+    fun stop(listener: StreamDjiTerminalListener = StreamDjiTerminalListener { }): DjiStreamStopResult {
         val state = stateStore.requestStop()
         val operationId = (state as? StreamStopResult.Accepted)?.operationId
             ?: return DjiStreamStopResult.Rejected(
@@ -89,7 +106,10 @@ class DjiStreamAdapter private constructor(
         val submission = coordinator.submit(
             action = DjiOperation { completion -> djiPort.stop(completion.asDjiCompletion()) },
             timeoutMillis = timeoutMillis,
-            listener = OperationResultListener { outcome -> completeStop(operationId, outcome) },
+            listener = OperationResultListener { outcome ->
+                completeStop(operationId, outcome)
+                runCatching { listener.onCompleted(outcome.toTerminalOutcome()) }
+            },
         )
         val accepted = submission as? SubmissionResult.Accepted
         if (accepted == null) {
@@ -119,6 +139,13 @@ class DjiStreamAdapter private constructor(
         override fun succeed() = this@asDjiCompletion.succeed()
 
         override fun fail() = this@asDjiCompletion.fail()
+    }
+
+    private fun OperationOutcome.toTerminalOutcome(): StreamDjiTerminalOutcome = when (this) {
+        OperationOutcome.SUCCEEDED -> StreamDjiTerminalOutcome.SUCCEEDED
+        OperationOutcome.FAILED -> StreamDjiTerminalOutcome.FAILED
+        OperationOutcome.TIMED_OUT -> StreamDjiTerminalOutcome.TIMED_OUT
+        OperationOutcome.CANCELLED -> StreamDjiTerminalOutcome.CANCELLED
     }
 
     companion object {
