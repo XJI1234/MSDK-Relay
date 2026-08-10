@@ -4,7 +4,7 @@
 版本：0.2.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 模块标识：`relay-protocol-core`
-模块目录：`relay-gateway/protocol-core/`
+模块目录：`src/modules/relay-gateway/protocol-core/`
 Gradle 路径：`:relay-gateway:protocol-core`
 
 > 本文件是 `protocol-core` 唯一有效的设计、使用说明和验收依据。实现计划、历史讨论和代码注释都不得改变本文件规定的行为。

@@ -7,7 +7,7 @@
 会话依赖：[`../connection-session/CONTRACT.md`](../connection-session/CONTRACT.md)
 发送依赖：[`../outbound-publisher/CONTRACT.md`](../outbound-publisher/CONTRACT.md)
 模块标识：`relay-command-dispatcher`
-模块目录：`relay-gateway/command-dispatcher/`
+模块目录：`src/modules/relay-gateway/command-dispatcher/`
 Gradle 路径：`:relay-gateway:command-dispatcher`
 
 本文是 `command-dispatcher` 唯一有效的设计、使用说明和验收依据。实现和测试只能遵守本文；不允许把业务约定、线程行为或第三方 SDK 的细节隐藏在调用方中。

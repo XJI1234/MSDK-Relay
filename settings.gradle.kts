@@ -17,44 +17,62 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "MSDKRelay"
-include(":relay-gateway")
-include(":relay-gateway:protocol-core")
-include(":relay-gateway:connection-session")
-include(":relay-gateway:outbound-publisher")
-include(":relay-gateway:command-dispatcher")
-include(":relay-gateway:mission-transfer")
-include(":relay-gateway:transport-adapter")
-include(":device-connection")
-include(":device-connection:device-state-store")
-include(":device-connection:sdk-lifecycle")
-include(":device-connection:dji-operation-coordinator")
-include(":device-connection:pairing-controller")
-include(":device-connection:remote-controller-link")
-include(":device-connection:aircraft-link")
-include(":device-connection:device-capability-reader")
-include(":telemetry")
-include(":telemetry:snapshot-assembler")
-include(":telemetry:capability-calculator")
-include(":telemetry:telemetry-command-handler")
-include(":telemetry:telemetry-publisher")
-include(":wayline-mission")
-include(":wayline-mission:mission-staging")
-include(":wayline-mission:mission-state-store")
-include(":wayline-mission:wpmz-generator")
-include(":wayline-mission:mission-uploader")
-include(":wayline-mission:mission-executor")
-include(":wayline-mission:wayline-command-handler")
-include(":live-stream")
-include(":live-stream:stream-config-validator")
-include(":live-stream:stream-state-store")
-include(":live-stream:dji-stream-adapter")
-include(":live-stream:stream-command-handler")
-include(":relay-settings")
-include(":relay-settings:endpoint-settings")
-include(":relay-settings:device-identity")
-include(":relay-settings:settings-store")
-include(":relay-settings:android-settings-adapter")
-include(":app-runtime")
-include(":app-runtime:permission-coordinator")
-include(":app-runtime:foreground-service")
-include(":app-runtime:app-bootstrap")
+
+/**
+ * Business modules are physically grouped below src/modules, while their
+ * Gradle paths remain stable collaboration interfaces for every consumer.
+ */
+fun includeRelayModule(path: String) {
+    include(path)
+    project(path).projectDir = file(
+        "src/modules/${path.removePrefix(":").replace(':', '/')}",
+    )
+}
+
+includeRelayModule(":relay-gateway")
+includeRelayModule(":relay-gateway:protocol-core")
+includeRelayModule(":relay-gateway:connection-session")
+includeRelayModule(":relay-gateway:outbound-publisher")
+includeRelayModule(":relay-gateway:command-dispatcher")
+includeRelayModule(":relay-gateway:mission-transfer")
+includeRelayModule(":relay-gateway:transport-adapter")
+
+includeRelayModule(":device-connection")
+includeRelayModule(":device-connection:device-state-store")
+includeRelayModule(":device-connection:sdk-lifecycle")
+includeRelayModule(":device-connection:dji-operation-coordinator")
+includeRelayModule(":device-connection:pairing-controller")
+includeRelayModule(":device-connection:remote-controller-link")
+includeRelayModule(":device-connection:aircraft-link")
+includeRelayModule(":device-connection:device-capability-reader")
+
+includeRelayModule(":telemetry")
+includeRelayModule(":telemetry:snapshot-assembler")
+includeRelayModule(":telemetry:capability-calculator")
+includeRelayModule(":telemetry:telemetry-command-handler")
+includeRelayModule(":telemetry:telemetry-publisher")
+
+includeRelayModule(":wayline-mission")
+includeRelayModule(":wayline-mission:mission-staging")
+includeRelayModule(":wayline-mission:mission-state-store")
+includeRelayModule(":wayline-mission:wpmz-generator")
+includeRelayModule(":wayline-mission:mission-uploader")
+includeRelayModule(":wayline-mission:mission-executor")
+includeRelayModule(":wayline-mission:wayline-command-handler")
+
+includeRelayModule(":live-stream")
+includeRelayModule(":live-stream:stream-config-validator")
+includeRelayModule(":live-stream:stream-state-store")
+includeRelayModule(":live-stream:dji-stream-adapter")
+includeRelayModule(":live-stream:stream-command-handler")
+
+includeRelayModule(":relay-settings")
+includeRelayModule(":relay-settings:endpoint-settings")
+includeRelayModule(":relay-settings:device-identity")
+includeRelayModule(":relay-settings:settings-store")
+includeRelayModule(":relay-settings:android-settings-adapter")
+
+includeRelayModule(":app-runtime")
+includeRelayModule(":app-runtime:permission-coordinator")
+includeRelayModule(":app-runtime:foreground-service")
+includeRelayModule(":app-runtime:app-bootstrap")

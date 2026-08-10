@@ -6,7 +6,7 @@
 协议依赖：[`../protocol-core/CONTRACT.md`](../protocol-core/CONTRACT.md)
 会话依赖：[`../connection-session/CONTRACT.md`](../connection-session/CONTRACT.md)
 模块标识：`relay-outbound-publisher`
-模块目录：`relay-gateway/outbound-publisher/`
+模块目录：`src/modules/relay-gateway/outbound-publisher/`
 Gradle 路径：`:relay-gateway:outbound-publisher`
 
 本文是 `outbound-publisher` 唯一有效的设计、使用说明和验收依据。实现、测试和依赖只能遵守本文，不得通过调用顺序、线程行为或第三方库隐式扩展能力。

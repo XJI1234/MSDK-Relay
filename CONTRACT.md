@@ -10,8 +10,8 @@
 
 底层帧格式、字段长度限制和状态机见：
 
-- [`relay-gateway/CONTRACT.md`](relay-gateway/CONTRACT.md)
-- [`relay-gateway/protocol-core/CONTRACT.md`](relay-gateway/protocol-core/CONTRACT.md)
+- [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md)
+- [`src/modules/relay-gateway/protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)
 - [`docs/2026-08-09-mobile-relay-design.md`](docs/2026-08-09-mobile-relay-design.md)
 
 ---
@@ -103,7 +103,7 @@
 | `mission-transfer` | 管理航线帧的顺序、大小、摘要、替换和取消，并把完整字节交给暂存接口 | 不解析 DJI WPMZ 业务，不上传或执行航线 |
 | `outbound-publisher` | 对外发送帧、保持发送顺序、处理发送失败和旧会话隔离 | 不生成遥测内容，不决定发送什么业务数据 |
 
-`relay-gateway` 的详细二级模块契约见 [`relay-gateway/CONTRACT.md`](relay-gateway/CONTRACT.md)。gateway 是手机端唯一的电脑通信入口；任何业务模块都不得直接依赖 WebSocket 或网络库。
+`relay-gateway` 的详细二级模块契约见 [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md)。gateway 是手机端唯一的电脑通信入口；任何业务模块都不得直接依赖 WebSocket 或网络库。
 
 #### `device-connection`
 
@@ -712,7 +712,7 @@ mission-begin
 - 只有 `mission-result.ok=true` 后，该文件才成为当前待上传航线。
 - 传输成功不自动上传，不自动开始飞行。
 
-更严格的帧校验规则见 [`protocol-core/CONTRACT.md`](relay-gateway/protocol-core/CONTRACT.md)。
+更严格的帧校验规则见 [`protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)。
 
 ---
 
@@ -758,7 +758,7 @@ mission-begin
 
 手机端必须等待 DJI 操作的最终回调或明确超时后再返回结果。错误信息只保留必要的可诊断内容，不得返回堆栈和私有对象。
 
-当前 v1 的底层协议错误分类见 [`relay-gateway/CONTRACT.md`](relay-gateway/CONTRACT.md) 和 [`protocol-core/CONTRACT.md`](relay-gateway/protocol-core/CONTRACT.md)。这些分类用于实现和测试；跨 WebSocket 的最小兼容结果仍然是 `id`、`ok`、`detail`。
+当前 v1 的底层协议错误分类见 [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md) 和 [`protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)。这些分类用于实现和测试；跨 WebSocket 的最小兼容结果仍然是 `id`、`ok`、`detail`。
 
 ---
 
