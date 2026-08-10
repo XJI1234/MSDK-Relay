@@ -36,17 +36,20 @@
 ```text
 RelayGateway.create(config, transport, clock) -> RelayGateway
 
-RelayGateway.start() -> void
-RelayGateway.stop() -> void
-RelayGateway.connectionState() -> ConnectionState
+RelayGateway.start() -> StartAccepted | AlreadyRunning
+RelayGateway.stop() -> Stopped | AlreadyStopped
+RelayGateway.connectionState() -> SessionState
 
-RelayGateway.registerCommandHandler(name, handler) -> Registration
-RelayGateway.publishTelemetry(snapshot) -> PublishResult
-RelayGateway.publishCommandResult(result) -> PublishResult
-RelayGateway.publishMissionResult(result) -> PublishResult
+RelayGateway.registerCommandHandler(name, handler) -> Registered | RegistrationRejected
+RelayGateway.unregisterCommandHandler(name) -> Removed | NotRegistered
+RelayGateway.publishTelemetry(telemetryFrame) -> PublishResult
+RelayGateway.publishCommandResult(commandResultFrame) -> PublishResult
+RelayGateway.publishMissionResult(missionResultFrame) -> PublishResult
 
 RelayGateway.onStateChanged(listener) -> Registration
 ```
+
+`config` 包含 `endpoint`、`deviceId`、`missionSink`、握手超时和重连延迟。`missionSink` 是手机端航线模块提供的暂存接口；gateway 不读取 Android 文件路径或 DJI 类型。无效配置会在 `create` 时以 `IllegalArgumentException` 被拒绝。`start`、`stop` 和命令注册的具体结果类型均来自各自二级模块的稳定契约。
 
 `transport` 和 `clock` 是内部 seam 的依赖注入点。生产环境使用 WebSocket adapter，测试使用内存 adapter。它们不得出现在业务模块的公开契约中。
 

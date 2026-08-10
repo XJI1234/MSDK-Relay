@@ -99,6 +99,16 @@ class ConnectionSession private constructor(
 
     fun snapshot(): SessionSnapshot = currentSnapshot
 
+    /** Returns the session token owned by the current ACTIVE generation, if any. */
+    fun activeSession(): ActiveSession? = eventLoop.call {
+        if (currentSnapshot.state != SessionState.ACTIVE) {
+            return@call null
+        }
+        val generation = currentGeneration ?: return@call null
+        val sessionId = currentSnapshot.sessionId ?: return@call null
+        ActiveSession(generation, sessionId)
+    }
+
     fun onStateChanged(listener: SessionStateListener): Registration {
         val slot = ListenerSlot(listener)
         eventLoop.call { listeners += slot }
@@ -132,6 +142,7 @@ class ConnectionSession private constructor(
                     endCurrent(reason(SessionEndKind.NOT_CONNECTED, "Transport open failed"))
                 } else {
                     currentConnection = openResult.connection
+                    safeDependency("Transport callback activation failed") { openResult.connection.enableCallbacks() }
                 }
             }
 

@@ -51,6 +51,8 @@ connection.generation -> supplied generation
 connection.writer.write(bytes)
   -> WriteAccepted | WriteRejected
 
+connection.enableCallbacks()
+
 connection.close(reason)
   -> CloseRequested | AlreadyClosed
 ```
@@ -62,14 +64,15 @@ The application composition root constructs this adapter and gives it to `Connec
 1. `open` never throws a WebSocket, URI, or OkHttp exception to its caller.
 2. `open` accepts only syntactically valid `ws://` and `wss://` endpoint URLs. All other input returns `OpenRejected` with a fixed safe reason.
 3. Every successful `open` returns a distinct `TransportConnection` with the exact supplied generation.
-4. The adapter must not invoke `TransportListener.onOpened` before `open` has returned `OpenAccepted`.
-5. An OkHttp `onOpen` invokes `listener.onOpened(connection)` once.
-6. A binary WebSocket message invokes `listener.onBytes(generation, copiedBytes)` once, in library callback order.
-7. A text message is not a relay transport payload and is discarded without parsing or closing the connection.
-8. `onClosing` requests a normal close but does not itself create a terminal listener event.
-9. The first of `onClosed` or `onFailure` invokes the matching listener terminal callback. Later terminal callbacks are discarded.
-10. A callback for a connection is always delivered with its own generation. The adapter does not compare generations, decide staleness, or close a newer connection; `connection-session` owns that policy.
-11. Incoming byte arrays are copied before delivery. The adapter retains no received payload after callback return.
+4. The adapter must not invoke any `TransportListener` callback before `open` has returned `OpenAccepted`. It buffers callbacks that a WebSocket engine emits synchronously.
+5. `connection-session` calls `connection.enableCallbacks()` exactly once after it owns the accepted connection. The adapter then delivers buffered callbacks in order; a no-op implementation is valid for a simple test transport.
+6. An OkHttp `onOpen` invokes `listener.onOpened(connection)` once after callbacks are enabled.
+7. A binary WebSocket message invokes `listener.onBytes(generation, copiedBytes)` once, in library callback order after callbacks are enabled.
+8. A text message is not a relay transport payload and is discarded without parsing or closing the connection.
+9. `onClosing` requests a normal close but does not itself create a terminal listener event.
+10. The first of `onClosed` or `onFailure` invokes the matching listener terminal callback. Later terminal callbacks are discarded.
+11. A callback for a connection is always delivered with its own generation. The adapter does not compare generations, decide staleness, or close a newer connection; `connection-session` owns that policy.
+12. Incoming byte arrays are copied before delivery. The adapter retains no received payload after callback return.
 
 ## 5. Write and close rules
 
@@ -111,6 +114,8 @@ Tests must cover, at minimum:
 - write before open, normal binary write, rejected/throwing write, and write after terminal;
 - idempotent close and rejected/throwing close;
 - callback exceptions and listener exceptions cannot escape;
+- an engine that calls back synchronously from `open` is buffered until `enableCallbacks`;
+- a real local OkHttp WebSocket test covers open, binary receive and send, text discard, and one close terminal callback;
 - stale callbacks are forwarded only with their original generation and never affect another connection;
 - concurrency around writes, close, and terminal callbacks;
 - architecture scan proving this is the sole gateway module with an OkHttp import and it has no protocol, DJI, Android, command, telemetry, or mission dependency.

@@ -30,6 +30,7 @@ import com.skycommand.relay.protocol.TelemetryFrame
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class TransportAdapterContractTest {
 
@@ -75,6 +76,35 @@ class TransportAdapterContractTest {
     }
 
     @Test
+    fun defersSynchronousOpenedCallbacksUntilTheAcceptedConnectionIsActivated() {
+        val engine = RecordingSocketEngine().apply { openSynchronously = true }
+        val connector = EngineTransportConnector(engine)
+        var openReturned = false
+        val listener = object : TransportListener {
+            var opened = 0
+
+            override fun onOpened(connection: TransportConnection) {
+                assertTrue(openReturned, "onOpened must not run from TransportConnector.open")
+                opened += 1
+            }
+
+            override fun onBytes(generation: SessionGeneration, bytes: ByteArray) = Unit
+
+            override fun onClosed(generation: SessionGeneration, reason: String) = Unit
+
+            override fun onFailure(generation: SessionGeneration, reason: String) = Unit
+        }
+
+        val connection = assertIs<TransportOpenResult.OpenAccepted>(
+            connector.open("ws://desktop.example/relay", generationForTest(), listener),
+        ).connection
+        openReturned = true
+        connection.enableCallbacks()
+
+        assertEquals(1, listener.opened)
+    }
+
+    @Test
     fun enforcesWriterLifecycleAndDeliversOnlyOneTerminalCallback() {
         val engine = RecordingSocketEngine()
         val connector = EngineTransportConnector(engine)
@@ -84,6 +114,7 @@ class TransportAdapterContractTest {
             connector.open("wss://desktop.example/relay", generation, listener),
         ).connection
 
+        connection.enableCallbacks()
         assertEquals(TransportWriteResult.WriteRejected, connection.writer.write(byteArrayOf(1)))
         engine.openCurrent()
         engine.current.sendResult = false
@@ -114,6 +145,7 @@ class TransportAdapterContractTest {
         val connection = assertIs<TransportOpenResult.OpenAccepted>(
             EngineTransportConnector(engine).open("ws://desktop.example/relay", generation, ThrowingTransportListener()),
         ).connection
+        connection.enableCallbacks()
         engine.openCurrent()
         engine.current.closeFailure = true
         assertEquals(com.skycommand.relay.gateway.session.TransportCloseResult.CloseRequested, connection.close("secret"))
@@ -128,6 +160,7 @@ class TransportAdapterContractTest {
         val connection = assertIs<TransportOpenResult.OpenAccepted>(
             EngineTransportConnector(engine).open("ws://desktop.example/relay", generation, RecordingTransportListener()),
         ).connection
+        connection.enableCallbacks()
         engine.openCurrent()
         val bytes = byteArrayOf(7)
         assertEquals(TransportWriteResult.WriteAccepted, connection.writer.write(bytes))
@@ -164,12 +197,14 @@ class TransportAdapterContractTest {
         private lateinit var callbacks: SocketCallbacks
         var openCalls = 0
         var throwOnOpen = false
+        var openSynchronously = false
 
         override fun open(endpoint: String, callbacks: SocketCallbacks): SocketOpenResult {
             if (throwOnOpen) throw IllegalStateException("engine secret")
             openCalls += 1
             this.callbacks = callbacks
             current = RecordingSocket()
+            if (openSynchronously) callbacks.onOpened()
             return SocketOpenResult.Accepted(current)
         }
 

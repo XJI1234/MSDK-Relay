@@ -23,6 +23,12 @@ interface TransportConnection {
     val generation: SessionGeneration
     val writer: TransportWriter
 
+    /**
+     * Enables listener delivery after the owning session has accepted this
+     * connection. Plain test transports need no special behavior.
+     */
+    fun enableCallbacks() = Unit
+
     fun close(reason: String): TransportCloseResult
 }
 

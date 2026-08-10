@@ -14,6 +14,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.net.URI
+import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -95,14 +96,31 @@ private class AdapterConnection(
     private var opened = false
     private var closeRequested = false
     private var terminalDelivered = false
+    private var callbacksEnabled = false
+    private val pendingCallbacks = ArrayDeque<() -> Unit>()
 
     override val writer: TransportWriter
         get() = this
 
     fun attach(socket: SocketHandle) {
-        lock.withLock {
+        val closeImmediately = lock.withLock {
             this.socket = socket
+            closeRequested
         }
+        if (closeImmediately) {
+            runCatching { socket.close() }
+        }
+    }
+
+    override fun enableCallbacks() {
+        val callbacks = lock.withLock {
+            if (callbacksEnabled) {
+                return
+            }
+            callbacksEnabled = true
+            pendingCallbacks.toList().also { pendingCallbacks.clear() }
+        }
+        callbacks.forEach(::deliver)
     }
 
     override fun write(bytes: ByteArray): TransportWriteResult = lock.withLock {
@@ -135,14 +153,14 @@ private class AdapterConnection(
                 true
             }
         }
-        if (shouldDeliver) deliver { listener.onOpened(this) }
+        if (shouldDeliver) deliverWhenEnabled { listener.onOpened(this) }
     }
 
     override fun onBinary(bytes: ByteArray) {
         val shouldDeliver = lock.withLock { opened && !closeRequested && !terminalDelivered }
         if (shouldDeliver) {
             val copied = bytes.copyOf()
-            deliver { listener.onBytes(generation, copied) }
+            deliverWhenEnabled { listener.onBytes(generation, copied) }
         }
     }
 
@@ -153,11 +171,11 @@ private class AdapterConnection(
     }
 
     override fun onClosed() {
-        if (markTerminal()) deliver { listener.onClosed(generation, "Transport closed") }
+        if (markTerminal()) deliverWhenEnabled { listener.onClosed(generation, "Transport closed") }
     }
 
     override fun onFailure() {
-        if (markTerminal()) deliver { listener.onFailure(generation, "Transport failed") }
+        if (markTerminal()) deliverWhenEnabled { listener.onFailure(generation, "Transport failed") }
     }
 
     private fun markTerminal(): Boolean = lock.withLock {
@@ -171,6 +189,20 @@ private class AdapterConnection(
 
     private fun deliver(callback: () -> Unit) {
         runCatching(callback)
+    }
+
+    private fun deliverWhenEnabled(callback: () -> Unit) {
+        val shouldDeliver = lock.withLock {
+            if (callbacksEnabled) {
+                true
+            } else {
+                pendingCallbacks.addLast(callback)
+                false
+            }
+        }
+        if (shouldDeliver) {
+            deliver(callback)
+        }
     }
 }
 

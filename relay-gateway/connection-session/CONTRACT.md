@@ -205,6 +205,7 @@ TransportConnector.open(endpoint, generation, listener)
 TransportConnection
   generation
   writer
+  enableCallbacks()
   close(sanitizedReason)
     -> CloseRequested | AlreadyClosed
 
@@ -237,7 +238,8 @@ OrderedStateNotifier.enqueue(event, listeners)
 - `TransportConnector`、`TransportConnection` 和 `writer` 是抽象接口，不得暴露具体 WebSocket 库类型；
 - `OpenAccepted` 返回后，本模块立即拥有该 `TransportConnection`，直到代次结束；同一 handle 的 `close()` 必须幂等；
 - `TransportConnection.generation` 必须等于 `open` 收到的代次；`onOpened` 必须带回同一个 connection，而不是创建第二个 handle；
-- `TransportConnector.open` 返回前不得同步调用 listener。`OpenAccepted` 后的第一个回调只能是同一 connection 的 `onOpened`、`onClosed` 或 `onFailure`；
+- `OpenAccepted` 返回的 connection 在 `enableCallbacks()` 前必须缓存所有 transport 回调，不得同步调用 listener；本模块先保存并拥有 connection，再调用一次 `enableCallbacks()`；
+- `enableCallbacks()` 后的第一个回调只能是同一 connection 的 `onOpened`、`onClosed` 或 `onFailure`；普通测试 transport 可以将它实现为无操作；
 - `OpenRejected` 后不得再为该次 open 产生任何回调；
 - connection 中的 writer 只有在该 connection 的 `onOpened` 被接受后才能交给 `SessionOutbound`；若先收到 `onClosed` 或 `onFailure`，writer 永远不得使用；
 - `connection-session` 拥有 connection 的关闭权；`SessionOutbound` 只按代次借用 writer，不得自行关闭或跨代次保存它；
@@ -336,7 +338,7 @@ RECONNECT_WAIT
 
 1. 在进入 `CONNECTING` 前创建新代次；
 2. 用 endpoint、代次和 transport listener 请求打开连接；
-3. `open` 返回 `OpenAccepted` 后先保存并拥有 connection；只接受该 connection 第一次合法的 `onOpened`；
+3. `open` 返回 `OpenAccepted` 后先保存并拥有 connection，再调用一次 `enableCallbacks()`；只接受该 connection 第一次合法的 `onOpened`；
 4. 从 `onOpened` 携带的同一 connection 取得 writer，并把 writer 和代次交给 `SessionOutbound.attach`，只有 `AttachAccepted` 才继续；
 5. 使用 `protocol-core` 的帧模型构造：
 
@@ -657,7 +659,7 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 | 依赖 | 测试替身能力 |
 | --- | --- |
 | `TransportConnector` | 记录打开次数、代次和 endpoint，可返回具名 connection 或同步拒绝 |
-| `TransportConnection` | 暴露相同代次和 writer，记录幂等关闭，可在 open 返回后主动触发任意 transport 回调 |
+| `TransportConnection` | 暴露相同代次和 writer，记录幂等关闭；可在 open 返回后主动触发任意 transport 回调，或在 `enableCallbacks()` 前缓存同步回调 |
 | transport writer | 记录发送，可返回成功或失败 |
 | `SessionOutbound` | 记录 attach、握手发送和 discard 顺序，可模拟发送拒绝 |
 | `protocol-core` | 使用真实纯 JVM 编解码实现，不复制一套测试协议 |
@@ -695,7 +697,7 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 ### 17.3 正常握手
 
 - transport 打开后发送一次且只发送一次正确的 `hello(deviceId, "1")`；
-- `open` 返回前不能回调；`OpenAccepted` 返回的 connection 与 `onOpened` 携带的对象和代次相同；
+- `OpenAccepted` 返回前不能向 listener 回调；`connection-session` 保存 connection 后调用 `enableCallbacks()`；返回的 connection 与 `onOpened` 携带的对象和代次相同；
 - `hello` 被接受后才进入 `AWAITING_PAIRING` 并启动超时；
 - `paired(sessionId, "1")` 激活会话；
 - 缺少 `paired.protocolVersion` 时按 v1 激活会话；
