@@ -18,3 +18,4 @@ rootProject.name = "MSDKRelay"
 include(":relay-gateway:protocol-core")
 include(":relay-gateway:connection-session")
 include(":relay-gateway:outbound-publisher")
+include(":relay-gateway:command-dispatcher")
