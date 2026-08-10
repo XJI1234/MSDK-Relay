@@ -6,7 +6,7 @@ Gradle path: :app-runtime
 
 ## Single responsibility
 
-Own the Android relay runtime lifecycle and compose the three runtime modules in a fixed order: permissions, foreground service, then injected business modules. This is the only module allowed to combine those runtime responsibilities.
+Own the Android relay runtime lifecycle and compose runtime responsibilities in a fixed order: permissions, foreground service, then injected business modules. `android-permission-adapter` is supplied by the Android application composition layer as the concrete `PermissionPort`; it is not a dependency of this platform-neutral facade. This is the only module allowed to combine those runtime responsibilities.
 
 It does not implement Android permission APIs, notification channels, WebSocket sessions, DJI operations, settings, telemetry, live stream, or missions. Those concerns enter through the public interfaces of their owning modules or through adapters supplied by the application.
 

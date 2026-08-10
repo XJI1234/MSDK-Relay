@@ -46,6 +46,18 @@ class PermissionCoordinatorContractTest {
         assertTrue(port.requests == 1)
     }
 
+    @Test fun reportsPlatformCallbackFailureExactlyOnce() {
+        val port = FakePort(PermissionSnapshot.empty())
+        val coordinator = PermissionCoordinator.create(port)
+        val results = mutableListOf<PermissionRequestResult.Terminal>()
+        coordinator.request(setOf(PermissionKind.RUNTIME)) { results += it }
+
+        port.fail()
+        port.complete(PermissionSnapshot.granted(PermissionKind.RUNTIME))
+
+        assertEquals(listOf<PermissionRequestResult.Terminal>(PermissionRequestResult.Terminal.Failed), results)
+    }
+
     private class FakePort(initial: PermissionSnapshot) : PermissionPort {
         private var callback: PermissionPortCallback? = null
         private var current: PermissionSnapshot = initial
@@ -62,6 +74,10 @@ class PermissionCoordinatorContractTest {
         fun complete(snapshot: PermissionSnapshot) {
             current = snapshot
             callback?.completed(snapshot)
+        }
+
+        fun fail() {
+            callback?.failed()
         }
     }
 }

@@ -35,6 +35,7 @@ src/modules/
     app-bootstrap/                  start/stop ordering and dependency wiring
     foreground-service/             foreground-service lifecycle boundary
     permission-coordinator/         Android permission and USB authorisation state
+    android-permission-adapter/     Android implementation of the PermissionPort seam
 
   relay-settings/                   durable, validated relay configuration facade
     endpoint-settings/              desktop endpoint validation and normalisation

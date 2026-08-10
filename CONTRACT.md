@@ -79,6 +79,7 @@
 | `app-bootstrap` | 创建模块、连接依赖、定义启动顺序和关闭顺序 | 不实现连接、遥测、直播或航线业务 |
 | `foreground-service` | 让中继程序在 Android 前台服务中稳定运行，处理服务启停 | 不保存业务状态，不调用 DJI 业务接口 |
 | `permission-coordinator` | 请求和观察 Android 权限、USB 访问授权及其结果 | 不决定业务命令是否允许执行 |
+| `android-permission-adapter` | 将 Android 运行时权限、Activity Result 和 USB 广播适配到 `PermissionPort` | 不改变权限策略，不启动服务，不调用 DJI 或业务模块 |
 
 `app-runtime` 是组合根。其他模块不得反向依赖 `app-runtime`，也不得自己读取 Activity、Service 或 Android 全局对象。
 

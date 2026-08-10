@@ -39,6 +39,8 @@ fun interface PermissionCancellation {
 
 fun interface PermissionPortCallback {
     fun completed(snapshot: PermissionSnapshot)
+
+    fun failed() = Unit
 }
 
 interface PermissionPort {
@@ -110,7 +112,18 @@ class PermissionCoordinator private constructor(
         }
 
         val cancellation = try {
-            port.request(required) { snapshot -> complete(operation, snapshot) }
+            port.request(
+                required,
+                object : PermissionPortCallback {
+                    override fun completed(snapshot: PermissionSnapshot) {
+                        complete(operation, snapshot)
+                    }
+
+                    override fun failed() {
+                        complete(operation, null)
+                    }
+                },
+            )
         } catch (_: Exception) {
             complete(operation, null)
             return PermissionRequestResult.Rejected(PermissionRejection.PORT_FAILURE)
