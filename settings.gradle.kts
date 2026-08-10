@@ -2,6 +2,7 @@ import org.gradle.api.initialization.resolve.RepositoriesMode
 
 pluginManagement {
     repositories {
+        google()
         gradlePluginPortal()
         mavenCentral()
     }
@@ -10,6 +11,7 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        google()
         mavenCentral()
     }
 }
@@ -51,6 +53,7 @@ include(":relay-settings")
 include(":relay-settings:endpoint-settings")
 include(":relay-settings:device-identity")
 include(":relay-settings:settings-store")
+include(":relay-settings:android-settings-adapter")
 include(":app-runtime")
 include(":app-runtime:permission-coordinator")
 include(":app-runtime:foreground-service")
