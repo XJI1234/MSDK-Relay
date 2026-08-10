@@ -27,6 +27,17 @@ interface MissionControlPort {
     fun stop(completion: ControlCompletion)
 }
 
+fun interface ExecutionTerminalListener {
+    fun onCompleted(outcome: ExecutionTerminalOutcome)
+}
+
+enum class ExecutionTerminalOutcome {
+    SUCCEEDED,
+    FAILED,
+    TIMED_OUT,
+    CANCELLED,
+}
+
 sealed interface ExecutionRequestResult {
     data class Accepted(val cancellation: OperationCancellationHandle) : ExecutionRequestResult
     data class Rejected(val reason: ExecutionRejection) : ExecutionRequestResult
@@ -50,12 +61,12 @@ class MissionExecutor private constructor(
     private val sourceRevision = AtomicLong(0)
     private var active: ActiveCommand? = null
 
-    fun start(): ExecutionRequestResult = request(Command.START)
-    fun pause(): ExecutionRequestResult = request(Command.PAUSE)
-    fun resume(): ExecutionRequestResult = request(Command.RESUME)
-    fun stop(): ExecutionRequestResult = request(Command.STOP)
+    fun start(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.START, listener)
+    fun pause(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.PAUSE, listener)
+    fun resume(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.RESUME, listener)
+    fun stop(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.STOP, listener)
 
-    private fun request(command: Command): ExecutionRequestResult {
+    private fun request(command: Command, listener: ExecutionTerminalListener): ExecutionRequestResult {
         val snapshot = stateStore.snapshot()
         val missionRevision = snapshot.missionRevision
             ?: return ExecutionRequestResult.Rejected(ExecutionRejection.NO_MISSION)
@@ -70,7 +81,7 @@ class MissionExecutor private constructor(
             return ExecutionRequestResult.Rejected(ExecutionRejection.INVALID_STATE)
         }
 
-        val operation = ActiveCommand(Any(), missionRevision, command)
+        val operation = ActiveCommand(Any(), missionRevision, command, listener)
         lock.withLock {
             if (active != null) return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
             active = operation
@@ -109,6 +120,7 @@ class MissionExecutor private constructor(
         if (!clearIfActive(operation)) return
         val next = if (outcome == OperationOutcome.SUCCEEDED) operation.command.successState else ExecutionState.FAILED
         applyState(operation, next)
+        runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome()) }
     }
 
     private fun finishBeforeSubmission(operation: ActiveCommand) {
@@ -152,6 +164,7 @@ class MissionExecutor private constructor(
         val token: Any,
         val missionRevision: Long,
         val command: Command,
+        val listener: ExecutionTerminalListener,
     )
 
     companion object {
@@ -161,5 +174,12 @@ class MissionExecutor private constructor(
             coordinator: DjiOperationCoordinator,
             timeoutMillis: Long = 30_000,
         ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis)
+    }
+
+    private fun OperationOutcome.toTerminalOutcome(): ExecutionTerminalOutcome = when (this) {
+        OperationOutcome.SUCCEEDED -> ExecutionTerminalOutcome.SUCCEEDED
+        OperationOutcome.FAILED -> ExecutionTerminalOutcome.FAILED
+        OperationOutcome.TIMED_OUT -> ExecutionTerminalOutcome.TIMED_OUT
+        OperationOutcome.CANCELLED -> ExecutionTerminalOutcome.CANCELLED
     }
 }

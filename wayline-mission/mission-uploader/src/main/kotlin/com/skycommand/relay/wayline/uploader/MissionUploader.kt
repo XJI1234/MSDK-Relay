@@ -34,6 +34,17 @@ interface MissionUploadPort {
     )
 }
 
+fun interface UploadTerminalListener {
+    fun onCompleted(outcome: UploadTerminalOutcome)
+}
+
+enum class UploadTerminalOutcome {
+    SUCCEEDED,
+    FAILED,
+    TIMED_OUT,
+    CANCELLED,
+}
+
 sealed interface UploadStartResult {
     data class Accepted(val cancellation: OperationCancellationHandle) : UploadStartResult
     data class Rejected(val reason: UploadRejection) : UploadStartResult
@@ -58,7 +69,7 @@ class MissionUploader private constructor(
     private val sourceRevision = AtomicLong(0)
     private var active: ActiveUpload? = null
 
-    fun start(): UploadStartResult {
+    fun start(listener: UploadTerminalListener = UploadTerminalListener { }): UploadStartResult {
         val snapshot = stateStore.snapshot()
         val metadata = snapshot.file ?: return UploadStartResult.Rejected(UploadRejection.NO_MISSION)
         if (snapshot.upload == UploadState.UPLOADED) {
@@ -66,7 +77,11 @@ class MissionUploader private constructor(
         }
 
         val token = Any()
-        val activeUpload = ActiveUpload(token, snapshot.missionRevision ?: return UploadStartResult.Rejected(UploadRejection.NO_MISSION))
+        val activeUpload = ActiveUpload(
+            token = token,
+            missionRevision = snapshot.missionRevision ?: return UploadStartResult.Rejected(UploadRejection.NO_MISSION),
+            listener = listener,
+        )
         lock.withLock {
             if (active != null || snapshot.upload is UploadState.Uploading) {
                 return UploadStartResult.Rejected(UploadRejection.ALREADY_ACTIVE)
@@ -114,6 +129,7 @@ class MissionUploader private constructor(
         if (!clearIfActive(upload)) return
         val state = if (outcome == OperationOutcome.SUCCEEDED) UploadState.UPLOADED else UploadState.FAILED
         runCatching { applyUploadState(upload, state) }
+        runCatching { upload.listener.onCompleted(outcome.toTerminalOutcome()) }
     }
 
     private fun finishBeforeSubmission(upload: ActiveUpload, state: UploadState) {
@@ -143,6 +159,7 @@ class MissionUploader private constructor(
     private data class ActiveUpload(
         val token: Any,
         val missionRevision: Long,
+        val listener: UploadTerminalListener,
     )
 
     companion object {
@@ -159,5 +176,12 @@ class MissionUploader private constructor(
             operationCoordinator,
             timeoutMillis,
         )
+    }
+
+    private fun OperationOutcome.toTerminalOutcome(): UploadTerminalOutcome = when (this) {
+        OperationOutcome.SUCCEEDED -> UploadTerminalOutcome.SUCCEEDED
+        OperationOutcome.FAILED -> UploadTerminalOutcome.FAILED
+        OperationOutcome.TIMED_OUT -> UploadTerminalOutcome.TIMED_OUT
+        OperationOutcome.CANCELLED -> UploadTerminalOutcome.CANCELLED
     }
 }

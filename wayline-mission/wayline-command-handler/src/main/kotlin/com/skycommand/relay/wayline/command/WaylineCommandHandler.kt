@@ -16,11 +16,22 @@ import com.skycommand.relay.wayline.staging.StagingCompleteResult
 import com.skycommand.relay.wayline.staging.StagingRequestResult
 
 interface WaylineCommandActions {
-    fun upload(): WaylineActionResult
-    fun start(): WaylineActionResult
-    fun pause(): WaylineActionResult
-    fun resume(): WaylineActionResult
-    fun stop(): WaylineActionResult
+    fun upload(completion: WaylineActionCompletion): WaylineActionResult
+    fun start(completion: WaylineActionCompletion): WaylineActionResult
+    fun pause(completion: WaylineActionCompletion): WaylineActionResult
+    fun resume(completion: WaylineActionCompletion): WaylineActionResult
+    fun stop(completion: WaylineActionCompletion): WaylineActionResult
+}
+
+fun interface WaylineActionCompletion {
+    fun complete(outcome: WaylineActionTerminalOutcome)
+}
+
+enum class WaylineActionTerminalOutcome {
+    SUCCEEDED,
+    FAILED,
+    TIMED_OUT,
+    CANCELLED,
 }
 
 sealed interface WaylineActionResult {
@@ -48,13 +59,15 @@ class WaylineCommandHandler private constructor(
     private val actions: WaylineCommandActions,
     private val generator: WpmzGenerator,
 ) {
-    fun handle(command: CommandFrame): WaylineCommandResult = when (command.name) {
+    fun handle(command: CommandFrame): WaylineCommandResult = handle(command, WaylineActionCompletion { })
+
+    fun handle(command: CommandFrame, completion: WaylineActionCompletion): WaylineCommandResult = when (command.name) {
         "wayline.generate" -> generate(command.fields)
-        "wayline.upload" -> delegate(command.fields) { actions.upload() }
-        "wayline.start" -> delegate(command.fields) { actions.start() }
-        "wayline.pause" -> delegate(command.fields) { actions.pause() }
-        "wayline.resume" -> delegate(command.fields) { actions.resume() }
-        "wayline.stop" -> delegate(command.fields) { actions.stop() }
+        "wayline.upload" -> delegate(command.fields) { actions.upload(completion) }
+        "wayline.start" -> delegate(command.fields) { actions.start(completion) }
+        "wayline.pause" -> delegate(command.fields) { actions.pause(completion) }
+        "wayline.resume" -> delegate(command.fields) { actions.resume(completion) }
+        "wayline.stop" -> delegate(command.fields) { actions.stop(completion) }
         else -> WaylineCommandResult.Rejected(WaylineCommandRejection.UNKNOWN_COMMAND)
     }
 

@@ -22,6 +22,18 @@ import java.util.concurrent.Executors
 class MissionUploaderContractTest {
 
     @Test
+    fun reportsExactlyOneSafeTerminalOutcomeToTheAcceptedCaller() {
+        val fixture = Fixture()
+        val outcomes = mutableListOf<UploadTerminalOutcome>()
+
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener { outcomes += it }))
+        fixture.port.completion!!.succeed()
+        fixture.port.completion!!.succeed()
+
+        assertEquals(listOf(UploadTerminalOutcome.SUCCEEDED), outcomes)
+    }
+
+    @Test
     fun recordsProgressAndPublishesUploadedOnlyAfterCoordinatorSuccess() {
         val fixture = Fixture()
         val accepted = assertIs<UploadStartResult.Accepted>(fixture.uploader.start())

@@ -78,12 +78,12 @@ class WaylineCommandHandlerContractTest {
     private class Actions : WaylineCommandActions {
         var calls = 0
         var rejected = false
-        override fun upload() = invoke()
-        override fun start() = invoke()
-        override fun pause() = invoke()
-        override fun resume() = invoke()
-        override fun stop() = invoke()
-        private fun invoke(): WaylineActionResult {
+        override fun upload(completion: WaylineActionCompletion) = invoke(completion)
+        override fun start(completion: WaylineActionCompletion) = invoke(completion)
+        override fun pause(completion: WaylineActionCompletion) = invoke(completion)
+        override fun resume(completion: WaylineActionCompletion) = invoke(completion)
+        override fun stop(completion: WaylineActionCompletion) = invoke(completion)
+        private fun invoke(completion: WaylineActionCompletion): WaylineActionResult {
             calls += 1
             return if (rejected) WaylineActionResult.Rejected else WaylineActionResult.Accepted
         }

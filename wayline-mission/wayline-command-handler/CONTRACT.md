@@ -19,6 +19,8 @@ Generate requires fileName, waypoints, and speedMetersPerSecond. It validates 2.
 
 Upload and control commands require confirm=true. They delegate to WaylineCommandActions. Accepted means the operation was submitted; it is not a claim that DJI has completed it.
 
+For relay composition, `handle(command, completion)` additionally passes terminal upload/control outcomes to `WaylineActionCompletion`. Generation remains synchronous and is represented by `Succeeded`. The handler does not convert an accepted operation into a false success; its parent facade owns the relay command completion.
+
 ## 3. Ownership and failure behavior
 
 The handler does not retain command fields, byte arrays, paths, exceptions, or DJI objects. Generation failure, staging failure, missing fields, wrong types, invalid bounds, false confirmation, and delegated rejection become stable enum reasons. No raw detail is exposed.

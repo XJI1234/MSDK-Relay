@@ -32,3 +32,7 @@ Public rejection reasons are NO_MISSION, NOT_UPLOADED, INVALID_STATE, ALREADY_AC
 ## 5. Test requirements
 
 JVM tests cover all four commands, valid transitions, every precondition rejection, adapter failure and exception, coordinator rejection, timeout, cancellation, duplicate completion, stale callbacks after mission replacement, and concurrent command calls.
+
+## 6. Terminal completion listener
+
+Each control request accepts an optional `ExecutionTerminalListener`. It is invoked once only for an accepted operation after its terminal coordinator outcome: `SUCCEEDED`, `FAILED`, `TIMED_OUT`, or `CANCELLED`. The matching state update is attempted before listener delivery. Precondition and submission rejections return synchronously and do not invoke the listener. Listener failures are contained.

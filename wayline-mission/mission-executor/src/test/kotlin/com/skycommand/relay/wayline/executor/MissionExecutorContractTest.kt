@@ -19,6 +19,18 @@ import kotlin.test.assertIs
 class MissionExecutorContractTest {
 
     @Test
+    fun reportsExactlyOneSafeTerminalOutcomeToTheAcceptedCaller() {
+        val fixture = Fixture()
+        val outcomes = mutableListOf<ExecutionTerminalOutcome>()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start(ExecutionTerminalListener { outcomes += it }))
+        fixture.port.completeSuccess()
+        fixture.port.completeSuccess()
+
+        assertEquals(listOf(ExecutionTerminalOutcome.SUCCEEDED), outcomes)
+    }
+
+    @Test
     fun completesTheFullStartPauseResumeStopLifecycle() {
         val fixture = Fixture()
 

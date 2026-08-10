@@ -55,3 +55,7 @@ Public failures contain only stable enum values. No raw exception, path, DJI obj
 ## 6. Test requirements
 
 JVM tests cover successful upload, progress 0 and 100, no mission, duplicate start, reader failure, adapter failure, adapter exception, coordinator rejection, timeout, queued cancellation, running cancellation, duplicate completion, late progress after cancellation, replacement of the staged mission, and concurrent start calls.
+
+## 7. Terminal completion listener
+
+`start(listener = no-op)` accepts an optional `UploadTerminalListener`. The listener is invoked once only after an accepted upload reaches its terminal coordinator outcome: `SUCCEEDED`, `FAILED`, `TIMED_OUT`, or `CANCELLED`. It runs after the corresponding public state update is attempted. Submission and precondition rejections return synchronously and do not invoke the listener. Listener exceptions are contained and cannot change upload state or coordinator behavior.
