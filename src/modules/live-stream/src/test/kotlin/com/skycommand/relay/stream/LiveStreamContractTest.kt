@@ -94,7 +94,7 @@ class LiveStreamContractTest {
         var startCalls = 0
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
-        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             startCalls += 1
             startCompletion = completion
         }

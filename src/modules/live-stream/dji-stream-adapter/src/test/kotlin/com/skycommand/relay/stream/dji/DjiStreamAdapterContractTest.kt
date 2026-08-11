@@ -86,6 +86,23 @@ class DjiStreamAdapterContractTest {
         assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
     }
 
+    @Test
+    fun mapsRuntimeStreamFailureAndIgnoresItAfterReplacement() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+        fixture.port.startCompletion!!.succeed()
+        val staleFailure = fixture.port.runtimeFailure!!
+
+        staleFailure()
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+
+        fixture.adapter.start(config())
+        fixture.port.startCompletion!!.succeed()
+        assertEquals(StreamLifecycleState.STREAMING, fixture.store.snapshot().state)
+        staleFailure()
+        assertEquals(StreamLifecycleState.STREAMING, fixture.store.snapshot().state)
+    }
+
     private class Fixture(val timeoutMillis: Long = 30_000) {
         val store = StreamStateStore.create()
         val port = Port()
@@ -99,12 +116,14 @@ class DjiStreamAdapterContractTest {
 
     private class Port : DjiStreamPort {
         var metrics: ((StreamMetrics) -> Unit)? = null
+        var runtimeFailure: (() -> Unit)? = null
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
         var throwOnStart = false
-        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             if (throwOnStart) error("dji failure")
             this.metrics = metrics
+            this.runtimeFailure = runtimeFailure
             this.startCompletion = completion
         }
         override fun stop(completion: StreamDjiCompletion) { stopCompletion = completion }

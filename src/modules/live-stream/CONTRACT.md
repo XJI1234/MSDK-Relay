@@ -8,7 +8,7 @@ Gradle 路径：:live-stream
 
 `live-stream` 持有 RTMP 图传配置、DJI 图传启动/停止协调，以及向遥测暴露的不可变图传状态。它不接收、转码、播放或存储视频；视频路径始终是 DJI SDK 到电脑的 RTMP 服务。
 
-二级模块：`stream-config-validator` 校验 RTMP 配置；`dji-stream-adapter` 经共享操作协调器适配 DJI 操作；`stream-state-store` 持有图传状态和指标；`stream-command-handler` 解释 `live-stream.start`/`live-stream.stop` 并将结果映射为中继安全结果。
+二级模块：`stream-config-validator` 校验 RTMP 配置；`dji-stream-adapter` 经共享操作协调器适配 DJI 操作；`android-dji-stream-adapter` 实现真实 DJI MSDK v5 RTMP 接口；`stream-state-store` 持有图传状态和指标；`stream-command-handler` 解释 `live-stream.start`/`live-stream.stop` 并将结果映射为中继安全结果。
 
 `LiveStream` 门面只组合上述二级模块，并向 gateway 暴露命令处理器、不可变图传快照和状态订阅。它不接收、转码、播放或存储视频，不建立 RTMP Socket，不直接调用 DJI，也不保存第二份图传状态。
 

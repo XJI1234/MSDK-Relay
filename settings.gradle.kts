@@ -72,6 +72,7 @@ includeRelayModule(":live-stream:stream-config-validator")
 includeRelayModule(":live-stream:stream-state-store")
 includeRelayModule(":live-stream:dji-stream-adapter")
 includeRelayModule(":live-stream:stream-command-handler")
+includeRelayModule(":live-stream:android-dji-stream-adapter")
 
 includeRelayModule(":relay-settings")
 includeRelayModule(":relay-settings:endpoint-settings")

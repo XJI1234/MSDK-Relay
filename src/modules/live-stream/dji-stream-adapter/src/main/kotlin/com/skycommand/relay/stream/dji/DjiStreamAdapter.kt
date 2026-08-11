@@ -23,6 +23,7 @@ interface DjiStreamPort {
     fun start(
         config: ValidatedStreamConfig,
         metrics: (StreamMetrics) -> Unit,
+        runtimeFailure: () -> Unit,
         completion: StreamDjiCompletion,
     )
 
@@ -77,6 +78,7 @@ class DjiStreamAdapter private constructor(
                 djiPort.start(
                     config = config,
                     metrics = { metrics -> stateStore.updateMetrics(operationId, metrics) },
+                    runtimeFailure = { stateStore.markFailed(operationId, "Stream runtime failed") },
                     completion = completion.asDjiCompletion(),
                 )
             },

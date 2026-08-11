@@ -12,7 +12,7 @@ adapter.start(validatedConfig) -> Accepted(cancellation) | Rejected(reason)
 adapter.stop() -> Accepted(cancellation) | Rejected(reason)
 ```
 
-`DjiStreamPort` 是唯一 DJI 接缝：`start` 接收已校验配置、指标回调和终态完成回调；`stop` 接收终态完成回调。`Accepted` 只表示操作提交，状态只在协调器报告终态时变为活动/非活动。两个请求可接受 `StreamDjiTerminalListener`；对已接受操作，它在对应状态迁移尝试后恰好接收一次安全结果 `SUCCEEDED|FAILED|TIMED_OUT|CANCELLED`；前置条件或提交拒绝同步返回且不调用它。
+`DjiStreamPort` 是唯一 DJI 接缝：`start` 接收已校验配置、指标回调、运行期失效回调和终态完成回调；`stop` 接收终态完成回调。运行期失效只允许使对应启动代次进入失败，旧代次回调不得污染新图传。`Accepted` 只表示操作提交，状态只在协调器报告终态时变为活动/非活动。两个请求可接受 `StreamDjiTerminalListener`；对已接受操作，它在对应状态迁移尝试后恰好接收一次安全结果 `SUCCEEDED|FAILED|TIMED_OUT|CANCELLED`；前置条件或提交拒绝同步返回且不调用它。
 
 状态前置条件失败和协调器拒绝返回稳定枚举。适配器异常、DJI 失败、超时、取消、重复完成、延迟指标及延迟回调均转为安全状态迁移。协调器串行化 DJI 调用并提供取消/超时；每个回调携带状态存储返回的操作代际，旧启动/停止不得影响新操作。模块 JVM 线程安全且不持有可变业务状态；公开结果不得暴露 URL 凭据、DJI 对象、原始异常或堆栈。
 
