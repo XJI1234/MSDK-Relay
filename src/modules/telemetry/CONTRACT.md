@@ -13,7 +13,7 @@ Gradle 路径：`:telemetry`
 
 | 二级模块 | 唯一职责 |
 | --- | --- |
-| `snapshot-assembler` | 从同一设备快照产生安全遥测值，并组合公开能力值 |
+| `snapshot-assembler` | 从同一次采样的设备、飞行、直播和航线快照产生安全遥测值，并组合公开能力值 |
 | `capability-calculator` | 将内部设备能力转换为电脑端稳定能力字段 |
 | `telemetry-command-handler` | 提供一次性 `telemetry.read` 结果 |
 | `telemetry-publisher` | 去重、失败重试和发送顺序 |
@@ -21,7 +21,7 @@ Gradle 路径：`:telemetry`
 ## 3. 对外接口
 
 ```text
-Telemetry.create(store, sink) -> Telemetry
+Telemetry.create(source, sink) -> Telemetry
 telemetry.start() -> Started | AlreadyStarted
 telemetry.stop() -> Stopped | AlreadyStopped
 telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
@@ -29,7 +29,8 @@ telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
 
 ## 4. 规则
 
-- `start()` 订阅状态仓库，并对每次有效状态事件尝试发布；重复启动不得重复订阅。
+- `source` 是组合根提供的只读 `TelemetryStateSource`，负责在一个采样边界返回设备、飞行、直播和航线快照，并在任一来源变化时通知。telemetry 不持有或修改这些事实。
+- `start()` 订阅统一状态源，并对每次有效状态事件重新采样后尝试发布；重复启动不得重复订阅。
 - `stop()` 注销订阅并重置发布去重基线；停止后不得因已经排队的旧事件发布。
 - 启动不补发历史状态；连接建立后需要立即完整快照时，组合根显式调用当前发布接口。
 - 即时读取和持续发布都使用同一个 `SnapshotAssembler`，不存在两套字段规则。
@@ -38,4 +39,4 @@ telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
 
 ## 5. 测试要求
 
-覆盖启动/停止幂等、状态变化发布、相同快照去重、停止后不发布、重启后重新发布、即时读取、sink 失败和监听器并发注销。
+覆盖启动/停止幂等、四类来源任一变化发布、同一组合快照去重、停止后不发布、重启后重新发布、即时读取、采样失败、sink 失败和监听器并发注销。

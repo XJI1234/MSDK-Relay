@@ -1,11 +1,11 @@
 package com.skycommand.relay.telemetry.command
 
-import com.skycommand.relay.device.state.DeviceSnapshot
 import com.skycommand.relay.telemetry.snapshot.SnapshotAssembler
+import com.skycommand.relay.telemetry.snapshot.TelemetryInputs
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 
 fun interface SnapshotSource {
-    fun snapshot(): DeviceSnapshot
+    fun snapshot(): TelemetryInputs
 }
 
 sealed interface TelemetryReadResult {

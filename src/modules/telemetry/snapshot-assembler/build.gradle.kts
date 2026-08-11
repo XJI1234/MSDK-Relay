@@ -4,6 +4,8 @@ dependencies {
     api(project(":device-connection:device-state-store"))
     api(project(":device-connection:device-capability-reader"))
     api(project(":telemetry:capability-calculator"))
+    api(project(":live-stream:stream-state-store"))
+    api(project(":wayline-mission:mission-state-store"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }
