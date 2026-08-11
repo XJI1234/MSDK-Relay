@@ -1,7 +1,7 @@
 # wayline-mission 一级模块契约
 
-状态：按二级模块逐个实施
-版本：1.0.0
+状态：实施中
+版本：1.1.0
 所属程序：MSDK Relay Android
 Gradle 路径：`:wayline-mission`
 
@@ -27,3 +27,23 @@ Gradle 路径：`:wayline-mission`
 - 文件暂存成功不代表已上传，上传成功不代表任务已开始。
 - 同时只能存在一个活动暂存写入；失败、取消和重启必须清理半成品。
 - 所有对外结果不包含 Android 绝对路径、临时文件名、原始异常或文件全部内容。
+
+## 4. 门面对外接口与组合职责
+
+```text
+WaylineMission.create(dependencies) -> WaylineMission
+mission.commandHandler() -> CommandHandler
+mission.missionSink() -> MissionSink
+mission.snapshot() -> MissionSnapshot
+mission.onChanged(listener) -> Registration
+```
+
+`WaylineMission` 只组合 `MissionStaging`、`MissionStateStore`、`MissionUploader`、`MissionExecutor` 和 `WaylineCommandHandler`。它独占“暂存成功后写入任务状态”的原子交接，并为生成命令与 gateway 文件传输共用同一暂存锁；它不解析 WebSocket、不连接 DJI、不规划航点、不暴露路径或 DJI 对象。
+
+成功生成或完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
+
+依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、共享 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。
+
+## 5. 验证要求
+
+二级模块必须各自拥有中文 `CONTRACT.md`、独立 JVM 契约测试和严格单一职责。一级模块测试必须覆盖生成与传输暂存、状态写入先于 gateway 成功、上传/控制成功与失败、超时/取消、任务替换后的旧回调、重复完成、传输中止和并发暂存竞争。全仓回归成功后方可标为已验证。

@@ -50,6 +50,49 @@ class MissionStagingContractTest {
         assertIs<StagingRequestResult.Rejected>(staging.write(byteArrayOf(1)))
     }
 
+    @Test
+    fun cleansUpTemporaryStorageWhenBeginningTheTransferFails() {
+        val storage = MemoryStorage().apply { throwOnBegin = true }
+        val staging = MissionStaging.create(storage)
+
+        val result = staging.begin(MissionMetadata("survey.kmz", 1, sha256(byteArrayOf(1))))
+
+        assertEquals(StagingRejection.STORAGE_FAILURE, assertIs<StagingRequestResult.Rejected>(result).reason)
+        assertEquals(1, storage.deleteCalls)
+        assertEquals(null, staging.current())
+    }
+
+    @Test
+    fun cancellationCleansTemporaryDataAndPreservesTheCurrentMission() {
+        val storage = MemoryStorage().apply { current = "old".encodeToByteArray() }
+        val staging = MissionStaging.create(storage)
+
+        staging.begin(MissionMetadata("new.kmz", 1, sha256(byteArrayOf(1))))
+        staging.write(byteArrayOf(1))
+
+        assertEquals(StagingCancelResult.Cancelled, staging.cancel())
+        assertEquals("old".encodeToByteArray().toList(), storage.current.toList())
+        assertEquals(ByteArray(0).toList(), storage.temporary.toList())
+        assertEquals(StagingCancelResult.AlreadyFinished, staging.cancel())
+    }
+
+    @Test
+    fun atomicReplacementFailureKeepsThePreviousMissionAndCleansTemporaryData() {
+        val storage = MemoryStorage().apply {
+            current = "old".encodeToByteArray()
+            throwOnReplace = true
+        }
+        val staging = MissionStaging.create(storage)
+        val bytes = "new".encodeToByteArray()
+
+        staging.begin(MissionMetadata("new.kmz", bytes.size.toLong(), sha256(bytes)))
+        staging.write(bytes)
+
+        assertEquals(StagingRejection.STORAGE_FAILURE, assertIs<StagingCompleteResult.Rejected>(staging.complete()).reason)
+        assertEquals("old".encodeToByteArray().toList(), storage.current.toList())
+        assertEquals(ByteArray(0).toList(), storage.temporary.toList())
+    }
+
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
 
@@ -57,10 +100,23 @@ class MissionStagingContractTest {
         var current = ByteArray(0)
         var temporary = ByteArray(0)
         var replaceCalls = 0
-        override fun beginTemporary(metadata: MissionMetadata) { temporary = ByteArray(0) }
+        var deleteCalls = 0
+        var throwOnBegin = false
+        var throwOnReplace = false
+        override fun beginTemporary(metadata: MissionMetadata) {
+            temporary = ByteArray(0)
+            if (throwOnBegin) error("storage failure")
+        }
         override fun append(bytes: ByteArray) { temporary += bytes }
         override fun flush() = Unit
-        override fun replaceCurrent() { current = temporary; replaceCalls += 1 }
-        override fun deleteTemporary() { temporary = ByteArray(0) }
+        override fun replaceCurrent() {
+            if (throwOnReplace) error("replacement failure")
+            current = temporary
+            replaceCalls += 1
+        }
+        override fun deleteTemporary() {
+            deleteCalls += 1
+            temporary = ByteArray(0)
+        }
     }
 }

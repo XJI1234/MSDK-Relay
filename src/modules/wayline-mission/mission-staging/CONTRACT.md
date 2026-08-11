@@ -1,6 +1,6 @@
 # mission-staging 二级模块契约
 
-状态：设计完成，待实施
+状态：已实施并已验证
 版本：1.0.0
 所属一级模块：`wayline-mission`
 Gradle 路径：`:wayline-mission:mission-staging`

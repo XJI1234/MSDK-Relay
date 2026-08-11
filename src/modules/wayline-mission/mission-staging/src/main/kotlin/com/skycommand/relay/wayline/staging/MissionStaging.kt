@@ -59,6 +59,7 @@ class MissionStaging private constructor(
         try {
             storage.beginTemporary(metadata)
         } catch (_: Throwable) {
+            runCatching { storage.deleteTemporary() }
             return StagingRequestResult.Rejected(StagingRejection.STORAGE_FAILURE)
         }
         activeMetadata = metadata
