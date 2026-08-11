@@ -55,6 +55,7 @@ src/modules/
   device-connection/                DJI connection facade and device facts
     sdk-lifecycle/                  DJI SDK registration and availability lifecycle
     android-dji-sdk-adapter/        Android MSDK v5 registration adapter
+    android-remote-controller-adapter/ Android MSDK v5 remote-controller facts adapter
     dji-operation-coordinator/      serialised DJI operation execution policy
     device-state-store/             single source of immutable device-state snapshots
     remote-controller-link/         remote-controller facts
