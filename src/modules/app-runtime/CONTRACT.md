@@ -1,6 +1,6 @@
 # app-runtime 模块契约
 
-状态：门面实现进行中
+状态：已实施并已验证
 版本：1.0.0
 Gradle 路径：:app-runtime
 

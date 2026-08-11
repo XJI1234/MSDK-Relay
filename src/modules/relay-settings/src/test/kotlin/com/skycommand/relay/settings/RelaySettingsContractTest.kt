@@ -1,8 +1,10 @@
 package com.skycommand.relay.settings
 
 import com.skycommand.relay.settings.identity.DeviceIdentityGenerator
+import com.skycommand.relay.settings.store.EndpointSaveResult
 import com.skycommand.relay.settings.store.RelaySettingsBackend
 import com.skycommand.relay.settings.store.RelaySettingsRecord
+import com.skycommand.relay.settings.store.SettingsLoadResult
 import com.skycommand.relay.settings.store.SettingsStoreFailure
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,6 +35,30 @@ class RelaySettingsContractTest {
 
         val failedIdentity = RelaySettings.create(Backend(), DeviceIdentityGenerator { " " })
         assertIs<RelayConnectionSettingsResult.IdentityUnavailable>(failedIdentity.connectionSettings())
+    }
+
+    @Test fun endpointOperationsDoNotResolveDeviceIdentity() {
+        var generatorCalls = 0
+        val settings = RelaySettings.create(Backend(), DeviceIdentityGenerator {
+            generatorCalls += 1
+            "phone-1"
+        })
+
+        assertIs<EndpointSaveResult.Saved>(settings.saveEndpoint("wss://desktop/relay"))
+        assertEquals("wss://desktop/relay", assertIs<SettingsLoadResult.Available>(settings.loadEndpoint()).snapshot.endpoint?.value)
+        assertIs<EndpointSaveResult.Saved>(settings.clearEndpoint())
+
+        assertEquals(0, generatorCalls)
+    }
+
+    @Test fun connectionSettingsRetriesIdentityResolutionAfterATransientStoreFailure() {
+        val backend = Backend(failuresBeforeSuccess = 1)
+        val settings = RelaySettings.create(backend, DeviceIdentityGenerator { "phone-1" })
+
+        assertIs<RelayConnectionSettingsResult.StoreUnavailable>(settings.connectionSettings())
+        val recovered = assertIs<RelayConnectionSettingsResult.Available>(settings.connectionSettings())
+
+        assertEquals("phone-1", recovered.settings.deviceId.value)
     }
 
     private class Backend(

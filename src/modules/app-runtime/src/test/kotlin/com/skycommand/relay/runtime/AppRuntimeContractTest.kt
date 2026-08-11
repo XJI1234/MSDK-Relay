@@ -59,16 +59,34 @@ class AppRuntimeContractTest {
         assertEquals(RuntimeState.FAILED, runtime.snapshot())
     }
 
+    @Test fun reportsTheStableStopFailureReasonWhenAModuleCannotStop() {
+        val runtime = AppRuntime.create(
+            PermissionCoordinator.create(ImmediatePermissionPort()),
+            ForegroundServiceController.create(ImmediateServicePort()),
+            AppBootstrap.create(listOf(Module("gateway", mutableListOf(), failStop = true))),
+        )
+        runtime.start(setOf(PermissionKind.RUNTIME))
+
+        val result = assertIs<RuntimeStopResult.Rejected>(runtime.stop())
+
+        assertEquals(RuntimeStopFailure.STOP_FAILURE, result.reason)
+        assertEquals(RuntimeState.FAILED, runtime.snapshot())
+    }
+
     private class Module(
         override val name: String,
         private val events: MutableList<String>,
         private val failStart: Boolean = false,
+        private val failStop: Boolean = false,
     ) : BootstrapModule {
         override fun start() {
             events += "start:$name"
             if (failStart) error("module failure")
         }
-        override fun stop() { events += "stop:$name" }
+        override fun stop() {
+            events += "stop:$name"
+            if (failStop) error("module stop failure")
+        }
     }
 
     private class ImmediatePermissionPort : PermissionPort {

@@ -37,7 +37,11 @@ sealed interface RuntimeStopResult {
     data object Accepted : RuntimeStopResult
     data object AlreadyStopped : RuntimeStopResult
     data object TransitionInProgress : RuntimeStopResult
-    data object Rejected : RuntimeStopResult
+    data class Rejected(val reason: RuntimeStopFailure) : RuntimeStopResult
+}
+
+enum class RuntimeStopFailure {
+    STOP_FAILURE,
 }
 
 fun interface RuntimeCancellation {
@@ -135,7 +139,7 @@ class AppRuntime private constructor(
         val service = foregroundService.stop()
         if (modules is BootstrapResult.Rejected || service is ForegroundRequestResult.Rejected) {
             transitionTo(RuntimeState.FAILED)
-            return RuntimeStopResult.Rejected
+            return RuntimeStopResult.Rejected(RuntimeStopFailure.STOP_FAILURE)
         }
         if (foregroundService.snapshot() == ForegroundServiceState.STOPPED && snapshot() == RuntimeState.STOPPING) {
             transitionTo(RuntimeState.STOPPED)

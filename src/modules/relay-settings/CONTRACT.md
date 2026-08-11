@@ -1,6 +1,6 @@
 # relay-settings 模块契约
 
-状态：门面实现进行中；版本：1.0.0；Gradle 路径：:relay-settings
+状态：已实施并已验证；版本：1.0.0；Gradle 路径：:relay-settings
 
 `relay-settings` 持有持久化本地中继配置：已校验电脑端点与稳定移动端设备身份。它不创建网络会话、不将身份视为认证，也不持有 DJI/Android 业务事实。二级模块为 `endpoint-settings`（端点校验）、`device-identity`（稳定生成身份）和 `settings-store`（持久化读写、迁移、恢复）；gateway 只能消费本模块产生的已校验值。
 
