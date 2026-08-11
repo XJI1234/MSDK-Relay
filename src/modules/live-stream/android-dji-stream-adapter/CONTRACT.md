@@ -1,8 +1,8 @@
 # android-dji-stream-adapter 模块契约
 
-状态：实现中  
-版本：1.0.0  
-所属一级模块：live-stream  
+状态：已实现
+版本：1.0.0
+所属一级模块：live-stream
 逻辑 Gradle 路径：`:live-stream:android-dji-stream-adapter`
 
 ## 唯一职责
@@ -22,5 +22,7 @@ port.stop(completion) -> Unit
 固定使用 `LiveStreamType.RTMP`、主相机 `LEFT_OR_MAIN`、高清质量和自动码率。分辨率仅在宽高均为正数时输出 `宽x高`；FPS、DJI 5.17 定义的 kbps 和 RTT 毫秒值仅在非负时输出。调用方异常必须隔离。
 
 DJI 直播管理器只有一个状态监听槽位，本适配器必须进程内独占。每次开始建立一个代次；失败或成功停止时释放监听器。停止失败时保留当前监听器。模块仅依赖 `:live-stream:dji-stream-adapter` 和 DJI MSDK v5.17。
+
+DJI 开始或停止操作从提交到终态期间属于平台操作占用期。占用期内到达的任何新开始或停止请求必须立即失败且不得再次调用 DJI，避免旧停止在上层超时后误停新流。同步异常也必须结束占用期，使调用方可以重试。
 
 JVM 测试覆盖配置、开始/停止成功和失败、同步异常、重复终态、指标归一化、运行期错误、迟到回调及监听释放。Android Debug 构建必须编译真实 `ILiveStreamManager`；真机仍需验证 RTMP 推流、指标单位、断网错误和相机源可用性。

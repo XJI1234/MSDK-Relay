@@ -1,8 +1,8 @@
 # android-flight-telemetry-adapter 模块契约
 
-状态：实现中  
-版本：1.0.0  
-所属一级模块：telemetry  
+状态：已实现
+版本：1.0.0
+所属一级模块：telemetry
 逻辑 Gradle 路径：`:telemetry:android-flight-telemetry-adapter`
 
 ## 唯一职责
@@ -22,7 +22,7 @@ registration.unregister() -> Unit
 source.close() -> Unit
 ```
 
-`snapshot()` 始终返回最近一次完整、不可变且经过校验的快照。`onChanged` 最多建立一个 DJI 观察代次；重复订阅不得替换原监听器，并返回空操作注册。成功建立观察后，平台初始值形成一次有效变化通知。`unregister` 和 `close` 均幂等，并使该代次的全部迟到回调失效。
+`snapshot()` 始终返回最近一次完整、不可变且经过校验的快照。`onChanged` 最多建立一个 DJI 观察代次；重复订阅不得替换原监听器，并返回空操作注册。所有 KeyManager 监听必须关闭 DJI 的逐键自动首值回调，再由一次同步完整读取形成唯一初始变化通知，禁止先发布完整快照后又发布多帧部分初值。`unregister` 和 `close` 均幂等，并使该代次的全部迟到回调失效。
 
 ## 字段规则
 

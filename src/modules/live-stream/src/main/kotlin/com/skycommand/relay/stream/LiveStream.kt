@@ -35,7 +35,7 @@ data class LiveStreamDependencies(
     val diagnosticSink: StreamStateDiagnosticSink = StreamStateDiagnosticSink { },
 )
 
-class LiveStream private constructor(dependencies: LiveStreamDependencies) {
+class LiveStream private constructor(private val dependencies: LiveStreamDependencies) {
     private val lifecycleLock = ReentrantLock()
     private val activeOperations = mutableSetOf<TrackedOperation>()
     private val state = StreamStateStore.create(dependencies.diagnosticSink)
@@ -56,6 +56,14 @@ class LiveStream private constructor(dependencies: LiveStreamDependencies) {
     fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
         (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
+    }
+
+    fun close() {
+        lifecycleLock.withLock {
+            activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
+            state.markDeviceUnavailable()
+        }
+        runCatching { dependencies.djiPort.close() }
     }
 
     private fun handleCommand(command: CommandFrame, completion: CommandCompletion) {

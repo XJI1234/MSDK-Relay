@@ -34,9 +34,10 @@ class AndroidDjiStreamPort internal constructor(
     private val platform: DjiLiveStreamApi,
 ) : DjiStreamPort {
     private val lock = Any()
-    private val startStopLock = Any()
     private var generation = 0L
     private var active: Active? = null
+    private var platformOperationInFlight = false
+    private var closed = false
 
     override fun start(
         config: ValidatedStreamConfig,
@@ -44,49 +45,47 @@ class AndroidDjiStreamPort internal constructor(
         runtimeFailure: () -> Unit,
         completion: StreamDjiCompletion,
     ) {
-        synchronized(startStopLock) {
-            startLocked(config, metrics, runtimeFailure, completion)
+        val prepared = synchronized(lock) {
+            if (closed || platformOperationInFlight) null else {
+                platformOperationInFlight = true
+                val previous = active
+                val operation = Active(++generation, metrics, runtimeFailure, completion)
+                active = operation
+                operation.listener = listenerFor(operation)
+                PreparedStart(previous, operation)
+            }
         }
-    }
-
-    private fun startLocked(
-        config: ValidatedStreamConfig,
-        metrics: (StreamMetrics) -> Unit,
-        runtimeFailure: () -> Unit,
-        completion: StreamDjiCompletion,
-    ) {
-        val previous = synchronized(lock) { active?.also { active = null } }
-        previous?.let(::detach)
-        val operation = Active(++generation, metrics, runtimeFailure, completion)
-        synchronized(lock) { active = operation }
-        operation.listener = listenerFor(operation)
+        if (prepared == null) {
+            runCatching { completion.fail() }
+            return
+        }
+        prepared.previous?.let(::detach)
         try {
-            platform.start(config.rtmpUrl, operation.listener!!, completionForStart(operation))
+            platform.start(config.rtmpUrl, prepared.operation.listener!!, completionForStart(prepared.operation))
         } catch (_: Throwable) {
-            finishStart(operation, false)
+            finishStart(prepared.operation, false)
         }
     }
 
     override fun stop(completion: StreamDjiCompletion) {
-        synchronized(startStopLock) { stopLocked(completion) }
-    }
-
-    private fun stopLocked(completion: StreamDjiCompletion) {
-        val operation = synchronized(lock) { active }
+        val operation = synchronized(lock) {
+            if (closed || platformOperationInFlight) null else {
+                platformOperationInFlight = true
+                StopOperation(active)
+            }
+        }
+        if (operation == null) {
+            runCatching { completion.fail() }
+            return
+        }
         val once = OnceCompletion(completion)
         try {
             platform.stop(object : DjiLiveStreamCompletion {
-                override fun succeed() {
-                    if (operation != null && synchronized(lock) { active === operation }) {
-                        synchronized(lock) { if (active === operation) active = null }
-                        detach(operation)
-                    }
-                    once.succeed()
-                }
-                override fun fail() = once.fail()
+                override fun succeed() = finishStop(operation.active, once, true)
+                override fun fail() = finishStop(operation.active, once, false)
             })
         } catch (_: Throwable) {
-            once.fail()
+            finishStop(operation.active, once, false)
         }
     }
 
@@ -107,7 +106,15 @@ class AndroidDjiStreamPort internal constructor(
         }
 
         override fun onError() {
-            if (isActive(operation)) runCatching { operation.runtimeFailure() }
+            if (isActive(operation)) {
+                runCatching {
+                    stop(object : StreamDjiCompletion {
+                        override fun succeed() = Unit
+                        override fun fail() = Unit
+                    })
+                }
+                runCatching { operation.runtimeFailure() }
+            }
         }
     }
 
@@ -122,7 +129,37 @@ class AndroidDjiStreamPort internal constructor(
             synchronized(lock) { if (active === operation) active = null }
             detach(operation)
         }
-        runCatching { if (succeeded) operation.completion.succeed() else operation.completion.fail() }
+        val deliver = synchronized(lock) { platformOperationInFlight = false; !closed }
+        if (deliver) runCatching { if (succeeded) operation.completion.succeed() else operation.completion.fail() }
+    }
+
+    override fun close() {
+        val operation = synchronized(lock) {
+            if (closed) return
+            closed = true
+            active.also { active = null }
+        }
+        operation?.listener?.let { runCatching { platform.removeListener(it) } }
+        if (operation != null) runCatching {
+            platform.stop(object : DjiLiveStreamCompletion {
+                override fun succeed() = Unit
+                override fun fail() = Unit
+            })
+        }
+    }
+
+    private fun finishStop(operation: Active?, completion: OnceCompletion, succeeded: Boolean) {
+        val detach = synchronized(lock) {
+            if (succeeded && operation != null && active === operation) {
+                active = null
+                operation
+            } else null
+        }
+        detach?.let(::detach)
+        val deliver = synchronized(lock) { platformOperationInFlight = false; !closed }
+        if (deliver) {
+            if (succeeded) completion.succeed() else completion.fail()
+        }
     }
 
     private fun isActive(operation: Active): Boolean = synchronized(lock) { active === operation }
@@ -148,6 +185,9 @@ class AndroidDjiStreamPort internal constructor(
         private val lock = Any(); private var completed = false
         fun startCompleted(): Boolean = synchronized(lock) { if(completed) false else { completed=true; true } }
     }
+
+    private data class PreparedStart(val previous: Active?, val operation: Active)
+    private data class StopOperation(val active: Active?)
 
     companion object { fun create(): DjiStreamPort = AndroidDjiStreamPort(MsdkV5LiveStreamApi()) }
 }

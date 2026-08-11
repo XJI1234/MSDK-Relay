@@ -28,6 +28,8 @@ interface DjiStreamPort {
     )
 
     fun stop(completion: StreamDjiCompletion)
+
+    fun close() = Unit
 }
 
 fun interface StreamDjiTerminalListener {

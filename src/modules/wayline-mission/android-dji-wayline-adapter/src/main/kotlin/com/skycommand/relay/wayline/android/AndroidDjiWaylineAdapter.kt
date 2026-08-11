@@ -31,68 +31,121 @@ class AndroidDjiWaylineAdapter internal constructor(
     private val dji: DjiWaypointMissionApi,
 ) : MissionUploadPort, MissionControlPort {
     private val lock = Any()
-    private var generation = 0L
+    private val submissionLock = Any()
+    private var uploadGeneration = 0L
+    private var controlGeneration = 0L
     private var closed = false
     private var uploadedName: String? = null
-    private var activeFile: StoredMissionFile? = null
+    private val uploadFiles = mutableMapOf<Long, StoredMissionFile>()
 
     override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
         if (!metadata.fileName.isSafeKmzName()) return safeFail(completion)
         val file = runCatching { files.write(metadata.fileName, bytes) }.getOrElse { return safeFail(completion) }
-        val operationGeneration = synchronized(lock) {
-            if (closed) null else (++generation).also { activeFile?.delete(); activeFile = file }
-        } ?: run { file.delete(); return safeFail(completion) }
         val once = OnceUpload(completion)
-        try {
-            dji.upload(file.path, object : DjiUploadCompletion {
-                override fun progress(value: Double) {
-                    if (value.isFinite() && isCurrent(operationGeneration)) runCatching { progress(value.roundToInt().coerceIn(0, 100)) }
+        val operationGeneration = synchronized(lock) {
+            if (closed) null else (++uploadGeneration).also { uploadFiles[it] = file }
+        }
+        if (operationGeneration == null) {
+            file.delete()
+            safeFail(completion)
+            return
+        }
+        val callback = object : DjiUploadCompletion {
+            override fun progress(value: Double) {
+                if (value.isFinite() && isCurrentUpload(operationGeneration)) {
+                    runCatching { progress(value.roundToInt().coerceIn(0, 100)) }
                 }
-                override fun succeed() = finishUpload(operationGeneration, file, once, true)
-                override fun fail() = finishUpload(operationGeneration, file, once, false)
-            })
-        } catch (_: Throwable) {
-            finishUpload(operationGeneration, file, once, false)
+            }
+            override fun succeed() = finishUpload(operationGeneration, file, once, true)
+            override fun fail() = finishUpload(operationGeneration, file, once, false)
+        }
+        synchronized(submissionLock) {
+            if (isCurrentUpload(operationGeneration)) {
+                try {
+                    dji.upload(file.path, callback)
+                } catch (_: Throwable) {
+                    finishUpload(operationGeneration, file, once, false)
+                }
+            }
         }
     }
 
     override fun start(completion: ControlCompletion) = withName(completion) { name, done -> dji.start(name, done) }
     override fun stop(completion: ControlCompletion) = withName(completion) { name, done -> dji.stop(name, done) }
-    override fun pause(completion: ControlCompletion) = control(completion) { dji.pause(it) }
-    override fun resume(completion: ControlCompletion) = control(completion) { dji.resume(it) }
+    override fun pause(completion: ControlCompletion) = control(completion) { _, done -> dji.pause(done) }
+    override fun resume(completion: ControlCompletion) = control(completion) { _, done -> dji.resume(done) }
 
     fun close() {
-        val file = synchronized(lock) { if (closed) null else { closed = true; generation++; activeFile.also { activeFile = null } } }
-        file?.delete(); runCatching { dji.close() }
+        synchronized(submissionLock) {
+            val files = synchronized(lock) {
+                if (closed) return
+                closed = true
+                uploadGeneration++
+                controlGeneration++
+                uploadFiles.values.toList().also { uploadFiles.clear() }
+            }
+            files.forEach(StoredMissionFile::delete)
+            runCatching { dji.close() }
+        }
     }
 
     private fun finishUpload(generation: Long, file: StoredMissionFile, completion: OnceUpload, success: Boolean) {
-        if (!completion.claim()) return
-        val accepted = synchronized(lock) {
-            if (closed || this.generation != generation) false else {
+        val (shouldDelete, accepted) = synchronized(lock) {
+            val ownedFile = uploadFiles.remove(generation) === file
+            if (!ownedFile || !completion.claim() || closed || uploadGeneration != generation) ownedFile to false else {
                 if (success) uploadedName = file.fileName
-                if (activeFile === file) activeFile = null
-                this.generation += 1
-                true
+                uploadGeneration++
+                true to true
             }
         }
-        file.delete()
+        if (shouldDelete) file.delete()
         if (accepted) completion.deliver(success)
     }
 
     private fun withName(completion: ControlCompletion, action: (String, DjiControlCompletion) -> Unit) {
-        val name = synchronized(lock) { if (closed) null else uploadedName } ?: return safeFail(completion)
-        control(completion) { action(name, it) }
+        control(completion, true) { name, done -> action(requireNotNull(name), done) }
     }
 
-    private fun control(completion: ControlCompletion, action: (DjiControlCompletion) -> Unit) {
-        if (synchronized(lock) { closed }) return safeFail(completion)
+    private fun control(completion: ControlCompletion, requireName: Boolean = false, action: (String?, DjiControlCompletion) -> Unit) {
         val once = OnceControl(completion)
-        try { action(object : DjiControlCompletion { override fun succeed()=once.succeed(); override fun fail()=once.fail() }) }
-        catch (_: Throwable) { once.fail() }
+        val prepared = synchronized(lock) {
+            val name = uploadedName
+            if (closed || (requireName && name == null)) {
+                null
+            } else {
+                val operationGeneration = ++controlGeneration
+                val callback = object : DjiControlCompletion {
+                    override fun succeed() = finishControl(operationGeneration, once, true)
+                    override fun fail() = finishControl(operationGeneration, once, false)
+                }
+                PreparedControl(operationGeneration, name, callback)
+            }
+        }
+        if (prepared == null) {
+            once.fail()
+            return
+        }
+        synchronized(submissionLock) {
+            if (isCurrentControl(prepared.generation)) {
+                try {
+                    action(prepared.name, prepared.callback)
+                } catch (_: Throwable) {
+                    finishControl(prepared.generation, once, false)
+                }
+            }
+        }
     }
 
-    private fun isCurrent(value: Long) = synchronized(lock) { !closed && generation == value }
+    private fun finishControl(generation: Long, completion: OnceControl, success: Boolean) {
+        val accepted = synchronized(lock) {
+            if (closed || controlGeneration != generation || !completion.claim()) false
+            else { controlGeneration++; true }
+        }
+        if (accepted) completion.deliver(success)
+    }
+
+    private fun isCurrentUpload(value: Long) = synchronized(lock) { !closed && uploadGeneration == value }
+    private fun isCurrentControl(value: Long) = synchronized(lock) { !closed && controlGeneration == value }
     private fun safeFail(completion: UploadCompletion) { runCatching { completion.fail() } }
     private fun safeFail(completion: ControlCompletion) { runCatching { completion.fail() } }
 
@@ -100,7 +153,15 @@ class AndroidDjiWaylineAdapter internal constructor(
         fun claim():Boolean=synchronized(lock){if(done)false else{done=true;true}}
         fun deliver(success:Boolean)=runCatching{if(success)delegate.succeed()else delegate.fail()}}
     private class OnceControl(private val delegate: ControlCompletion) { private val lock=Any();private var done=false
-        fun succeed()=complete{delegate.succeed()};fun fail()=complete{delegate.fail()};private fun complete(a:()->Unit){if(synchronized(lock){if(done)false else{done=true;true}})runCatching(a)}}
+        fun claim():Boolean=synchronized(lock){if(done)false else{done=true;true}}
+        fun deliver(success:Boolean)=runCatching{if(success)delegate.succeed()else delegate.fail()}
+        fun fail(){if(claim())deliver(false)}}
+
+    private data class PreparedControl(
+        val generation: Long,
+        val name: String?,
+        val callback: DjiControlCompletion,
+    )
 
     companion object {
         fun create(context: Context): AndroidDjiWaylineAdapter = AndroidDjiWaylineAdapter(AndroidMissionFileStore(context.applicationContext), MsdkV5WaypointMissionApi())
@@ -113,10 +174,24 @@ private fun String.isSafeKmzName(): Boolean = isNotBlank() && codePointCount(0, 
 
 private class AndroidMissionFileStore(context: Context) : MissionFileStore {
     private val directory = File(context.cacheDir, "dji-waylines")
-    override fun write(fileName: String, content: ByteArray): StoredMissionFile {
-        check(directory.exists() || directory.mkdirs())
-        val file = File(directory, "${UUID.randomUUID()}-$fileName")
-        file.outputStream().use { it.write(content) }
-        return StoredMissionFile(file.absolutePath, fileName) { file.delete() }
+    override fun write(fileName: String, content: ByteArray): StoredMissionFile = writeMissionFile(directory, fileName, content)
+}
+
+internal fun writeMissionFile(
+    directory: File,
+    fileName: String,
+    content: ByteArray,
+    writer: (File, ByteArray) -> Unit = { file, bytes -> file.outputStream().use { it.write(bytes) } },
+): StoredMissionFile {
+    check(directory.exists() || directory.mkdirs())
+    val operationDirectory = File(directory, UUID.randomUUID().toString())
+    check(operationDirectory.mkdir())
+    val file = File(operationDirectory, fileName)
+    return try {
+        writer(file, content)
+        StoredMissionFile(file.absolutePath, fileName) { operationDirectory.deleteRecursively() }
+    } catch (failure: Throwable) {
+        operationDirectory.deleteRecursively()
+        throw failure
     }
 }

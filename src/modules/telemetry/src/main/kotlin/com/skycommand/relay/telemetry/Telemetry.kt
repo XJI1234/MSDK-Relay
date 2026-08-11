@@ -89,6 +89,11 @@ class Telemetry private constructor(
 
     fun read(): TelemetryReadResult = commandHandler.read()
 
+    fun publishCurrent(): PublishTelemetryResult {
+        val currentGeneration = lock.withLock { activeGeneration } ?: return PublishTelemetryResult.Rejected
+        return publishCurrent(currentGeneration)
+    }
+
     private fun publishCurrent(callbackGeneration: Long): PublishTelemetryResult = lock.withLock {
         if (activeGeneration != callbackGeneration) return PublishTelemetryResult.Rejected
         runCatching {

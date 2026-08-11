@@ -5,12 +5,15 @@ import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import java.nio.file.Files
 
 class AndroidDjiWaylineAdapterContractTest {
     @Test fun uploadsTemporaryFileAndControlsTheSuccessfulName() {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji); val progress=mutableListOf<Int>(); val done=UploadDone()
         adapter.upload(metadata("one.kmz"), byteArrayOf(1,2), { progress+=it }, done)
-        assertEquals(files.path,dji.uploadPath); requireNotNull(dji.uploadCompletion).progress(45.4); requireNotNull(dji.uploadCompletion).succeed(); requireNotNull(dji.uploadCompletion).succeed()
+        assertEquals(files.paths.single(),dji.uploadPath); requireNotNull(dji.uploadCompletion).progress(45.4); requireNotNull(dji.uploadCompletion).succeed(); requireNotNull(dji.uploadCompletion).succeed()
         assertEquals(listOf(45),progress); assertEquals(listOf("success"),done.events); assertEquals(1,files.deletes)
         val start=ControlDone(); adapter.start(start); assertEquals("one.kmz",dji.controlName); requireNotNull(dji.controlCompletion).succeed(); assertEquals(listOf("success"),start.events)
     }
@@ -30,16 +33,68 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.pause(ControlDone()); assertEquals("pause",dji.command); adapter.resume(ControlDone()); assertEquals("resume",dji.command)
     }
 
+    @Test fun retryKeepsPreviousUploadInputUntilItsOwnTerminalCallback() {
+        val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji)
+        adapter.upload(metadata("first.kmz"), byteArrayOf(1), {}, UploadDone())
+        val first = dji.uploadCompletions.single()
+        adapter.upload(metadata("second.kmz"), byteArrayOf(2), {}, UploadDone())
+
+        assertEquals(0, files.deleteCounts[0])
+        assertEquals(0, files.deleteCounts[1])
+        first.succeed()
+        assertEquals(1, files.deleteCounts[0])
+        assertEquals(0, files.deleteCounts[1])
+
+        dji.uploadCompletions.last().succeed()
+        val start=ControlDone(); adapter.start(start)
+        assertEquals("second.kmz", dji.controlName)
+    }
+
+    @Test fun closeInvalidatesSubmittedControlAndCleansEveryUploadInput() {
+        val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji)
+        adapter.upload(metadata("one.kmz"), byteArrayOf(1), {}, UploadDone())
+        adapter.upload(metadata("two.kmz"), byteArrayOf(2), {}, UploadDone())
+        dji.uploadCompletions.last().succeed()
+        val control=ControlDone(); adapter.start(control)
+        val late = requireNotNull(dji.controlCompletion)
+
+        adapter.close()
+        late.succeed()
+
+        assertEquals(emptyList(), control.events)
+        assertEquals(listOf(1, 1), files.deleteCounts)
+        assertEquals(1, dji.closeCalls)
+    }
+
+    @Test fun physicalStorePreservesOriginalBasenameAndRemovesPartialWrites() {
+        val root = Files.createTempDirectory("wayline-store").toFile()
+        try {
+            val stored = writeMissionFile(root, "mission.kmz", byteArrayOf(1, 2, 3))
+            assertEquals("mission.kmz", java.io.File(stored.path).name)
+            assertTrue(java.io.File(stored.path).isFile)
+            stored.delete()
+            assertFalse(requireNotNull(java.io.File(stored.path).parentFile).exists())
+
+            val failedRoot = java.io.File(root, "failed")
+            runCatching {
+                writeMissionFile(failedRoot, "broken.kmz", byteArrayOf(1)) { _, _ -> error("write failed") }
+            }
+            assertFalse(failedRoot.walkTopDown().drop(1).any())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun metadata(name:String)=MissionMetadata(name,1,"a".repeat(64))
     private class UploadDone:UploadCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
     private class ControlDone:ControlCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
-    private class FakeFiles:MissionFileStore{val path="C:/cache/file.kmz";var writes=0;var deletes=0
-        override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;return StoredMissionFile(path,fileName){deletes++}}}
-    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null
-        override fun upload(path:String,completion:DjiUploadCompletion){uploadPath=path;uploadCompletion=completion}
+    private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>()
+        override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;val index=deleteCounts.size;deleteCounts+=0;val path="C:/cache/$index/$fileName";paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++}}}
+    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0
+        override fun upload(path:String,completion:DjiUploadCompletion){uploadPath=path;uploadCompletion=completion;uploadCompletions+=completion}
         override fun start(name:String,completion:DjiControlCompletion){command="start";controlName=name;controlCompletion=completion}
         override fun pause(completion:DjiControlCompletion){command="pause";controlCompletion=completion}
         override fun resume(completion:DjiControlCompletion){command="resume";controlCompletion=completion}
         override fun stop(name:String,completion:DjiControlCompletion){command="stop";controlName=name;controlCompletion=completion}
-        override fun close(){} }
+        override fun close(){closeCalls++} }
 }

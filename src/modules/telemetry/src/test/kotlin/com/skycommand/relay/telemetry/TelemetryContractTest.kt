@@ -133,6 +133,15 @@ class TelemetryContractTest {
         assertEquals(1, sink.values.size)
     }
 
+    @Test
+    fun explicitlyPublishesCurrentSnapshotOnlyWhileStarted() {
+        val source=UnifiedSource();val sink=RecordingSink();val telemetry=Telemetry.create(source,sink)
+        assertEquals(PublishTelemetryResult.Rejected,telemetry.publishCurrent())
+        telemetry.start();assertEquals(PublishTelemetryResult.Published,telemetry.publishCurrent())
+        assertEquals(PublishTelemetryResult.SkippedUnchanged,telemetry.publishCurrent())
+        telemetry.stop();assertEquals(PublishTelemetryResult.Rejected,telemetry.publishCurrent())
+    }
+
     private class RecordingSink : TelemetrySink {
         val values = mutableListOf<TelemetrySnapshot>()
         var next: PublishTelemetryResult = PublishTelemetryResult.Published

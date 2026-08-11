@@ -36,19 +36,21 @@ private class KeyManagerFlightTelemetryObservation(
     private val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
     private val locationKey = KeyTools.createKey(FlightControllerKey.KeyAircraftLocation)
     private var active = true
+    private var initializing = true
     private var fact = FlightTelemetryFact()
+    private val pendingInitialUpdates = mutableListOf<FlightTelemetryFact.() -> FlightTelemetryFact>()
 
     fun start() {
         try {
-            manager.listen(isFlyingKey, owner) { _, next -> update { copy(isFlying = next) } }
-            manager.listen(motorsOnKey, owner) { _, next -> update { copy(motorsOn = next) } }
-            manager.listen(flightModeKey, owner) { _, next -> update { copy(flightMode = next.toStableName()) } }
-            manager.listen(batteryKey, owner) { _, next -> update { copy(batteryPercent = next) } }
-            manager.listen(remainingFlightTimeKey, owner) { _, next ->
+            manager.listen(isFlyingKey, owner, false) { _, next -> update { copy(isFlying = next) } }
+            manager.listen(motorsOnKey, owner, false) { _, next -> update { copy(motorsOn = next) } }
+            manager.listen(flightModeKey, owner, false) { _, next -> update { copy(flightMode = next.toStableName()) } }
+            manager.listen(batteryKey, owner, false) { _, next -> update { copy(batteryPercent = next) } }
+            manager.listen(remainingFlightTimeKey, owner, false) { _, next ->
                 update { copy(remainingFlightTimeSeconds = next?.remainingFlightTime) }
             }
-            manager.listen(altitudeKey, owner) { _, next -> update { copy(altitudeMeters = next) } }
-            manager.listen(locationKey, owner) { _, next -> update { withLocation(next) } }
+            manager.listen(altitudeKey, owner, false) { _, next -> update { copy(altitudeMeters = next) } }
+            manager.listen(locationKey, owner, false) { _, next -> update { withLocation(next) } }
             publishInitial()
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
@@ -63,21 +65,35 @@ private class KeyManagerFlightTelemetryObservation(
     }
 
     private fun publishInitial() {
-        update {
-            FlightTelemetryFact(
-                isFlying = manager.getValue(isFlyingKey),
-                motorsOn = manager.getValue(motorsOnKey),
-                flightMode = manager.getValue<FCFlightMode>(flightModeKey).toStableName(),
-                batteryPercent = manager.getValue(batteryKey),
-                remainingFlightTimeSeconds = manager.getValue<LowBatteryRTHInfo>(remainingFlightTimeKey)?.remainingFlightTime,
-                altitudeMeters = manager.getValue(altitudeKey),
-            ).withLocation(manager.getValue(locationKey))
+        val initial = FlightTelemetryFact(
+            isFlying = manager.getValue(isFlyingKey),
+            motorsOn = manager.getValue(motorsOnKey),
+            flightMode = manager.getValue<FCFlightMode>(flightModeKey).toStableName(),
+            batteryPercent = manager.getValue(batteryKey),
+            remainingFlightTimeSeconds = manager.getValue<LowBatteryRTHInfo>(remainingFlightTimeKey)?.remainingFlightTime,
+            altitudeMeters = manager.getValue(altitudeKey),
+        ).withLocation(manager.getValue(locationKey))
+        val next = synchronized(lock) {
+            if (!active) null else {
+                fact = pendingInitialUpdates.fold(initial) { current, transform -> current.transform() }
+                pendingInitialUpdates.clear()
+                initializing = false
+                fact
+            }
         }
+        next?.let(listener::onChanged)
     }
 
     private fun update(transform: FlightTelemetryFact.() -> FlightTelemetryFact) {
         val next = synchronized(lock) {
-            if (!active) null else fact.transform().also { fact = it }
+            when {
+                !active -> null
+                initializing -> {
+                    pendingInitialUpdates += transform
+                    null
+                }
+                else -> fact.transform().also { fact = it }
+            }
         }
         next?.let(listener::onChanged)
     }

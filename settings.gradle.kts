@@ -18,6 +18,9 @@ dependencyResolutionManagement {
 
 rootProject.name = "MSDKRelay"
 
+include(":app")
+project(":app").projectDir = file("src/app")
+
 /**
  * Business modules are physically grouped below src/modules, while their
  * Gradle paths remain stable collaboration interfaces for every consumer.

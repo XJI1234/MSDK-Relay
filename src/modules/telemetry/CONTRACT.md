@@ -26,6 +26,7 @@ Telemetry.create(source, sink) -> Telemetry
 telemetry.start() -> Started | AlreadyStarted
 telemetry.stop() -> Stopped | AlreadyStopped
 telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
+telemetry.publishCurrent() -> Published | SkippedUnchanged | Rejected
 ```
 
 ## 4. 规则
@@ -33,7 +34,7 @@ telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
 - `source` 是组合根提供的只读 `TelemetryStateSource`，负责在一个采样边界返回设备、飞行、直播和航线快照，并在任一来源变化时通知。telemetry 不持有或修改这些事实。
 - `start()` 订阅统一状态源，并对每次有效状态事件重新采样后尝试发布；重复启动不得重复订阅。
 - `stop()` 注销订阅并重置发布去重基线；停止后不得因已经排队的旧事件发布。
-- 启动不补发历史状态；连接建立后需要立即完整快照时，组合根显式调用当前发布接口。
+- 启动不补发历史状态；连接建立后需要立即完整快照时，组合根调用 `publishCurrent()`。未启动或采样/发送失败时返回 `Rejected`。
 - 即时读取和持续发布都使用同一个 `SnapshotAssembler`，不存在两套字段规则。
 - `TelemetrySnapshot.capabilities` 只能是 `TelemetryCapabilities`，不得暴露 `DeviceCapabilities` 或其他设备连接层内部类型。
 - sink 失败不影响状态仓库或后续状态变化。
