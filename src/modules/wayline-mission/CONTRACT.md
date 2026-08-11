@@ -1,6 +1,6 @@
 # wayline-mission 一级模块契约
 
-状态：实施中
+状态：已实施并已验证
 版本：1.1.0
 所属程序：MSDK Relay Android
 Gradle 路径：`:wayline-mission`
@@ -36,6 +36,7 @@ mission.commandHandler() -> CommandHandler
 mission.missionSink() -> MissionSink
 mission.snapshot() -> MissionSnapshot
 mission.onChanged(listener) -> Registration
+mission.markDeviceUnavailable() -> MissionSnapshot
 ```
 
 `WaylineMission` 只组合 `MissionStaging`、`MissionStateStore`、`MissionUploader`、`MissionExecutor` 和 `WaylineCommandHandler`。它独占“暂存成功后写入任务状态”的原子交接，并为生成命令与 gateway 文件传输共用同一暂存锁；它不解析 WebSocket、不连接 DJI、不规划航点、不暴露路径或 DJI 对象。
@@ -44,6 +45,8 @@ mission.onChanged(listener) -> Registration
 
 依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、共享 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。
 
+`markDeviceUnavailable()` 是设备连接生命周期唯一调用的安全入口。它保留已安全暂存的 KMZ，取消全部已接受但尚未终态的上传和控制操作，并使当前设备侧上传与执行事实进入 `FAILED`；恢复连接后必须重新上传，不能把断开前的 `UPLOADED` 当作仍然有效。该动作建立新的设备运行代际，因此断开前的上传进度、DJI 成功、失败、超时或取消回调均不得改变当前快照，也不得将已拒绝的 relay 命令重新报告为成功。门面在同一生命周期锁内提交操作、追踪取消句柄和失效设备，避免断开与新命令交错时遗漏取消；重复调用幂等地维持安全状态。
+
 ## 5. 验证要求
 
-二级模块必须各自拥有中文 `CONTRACT.md`、独立 JVM 契约测试和严格单一职责。一级模块测试必须覆盖生成与传输暂存、状态写入先于 gateway 成功、上传/控制成功与失败、超时/取消、任务替换后的旧回调、重复完成、传输中止和并发暂存竞争。全仓回归成功后方可标为已验证。
+二级模块必须各自拥有中文 `CONTRACT.md`、独立 JVM 契约测试和严格单一职责。一级模块测试必须覆盖生成与传输暂存、状态写入先于 gateway 成功、上传/控制成功与失败、超时/取消、设备断开后的旧成功回调、任务替换后的旧回调、重复完成、传输中止和并发暂存竞争。全仓回归成功后方可标为已验证。

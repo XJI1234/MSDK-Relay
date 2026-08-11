@@ -81,7 +81,7 @@ class MissionExecutor private constructor(
             return ExecutionRequestResult.Rejected(ExecutionRejection.INVALID_STATE)
         }
 
-        val operation = ActiveCommand(Any(), missionRevision, command, listener)
+        val operation = ActiveCommand(Any(), missionRevision, snapshot.deviceGeneration, command, listener)
         lock.withLock {
             if (active != null) return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
             active = operation
@@ -134,6 +134,7 @@ class MissionExecutor private constructor(
                 MissionStateEvent.ExecutionChanged(
                     sourceRevision = sourceRevision.incrementAndGet(),
                     missionRevision = operation.missionRevision,
+                    deviceGeneration = operation.deviceGeneration,
                     state = state,
                 ),
             )
@@ -163,6 +164,7 @@ class MissionExecutor private constructor(
     private data class ActiveCommand(
         val token: Any,
         val missionRevision: Long,
+        val deviceGeneration: Long,
         val command: Command,
         val listener: ExecutionTerminalListener,
     )

@@ -80,6 +80,7 @@ class MissionUploader private constructor(
         val activeUpload = ActiveUpload(
             token = token,
             missionRevision = snapshot.missionRevision ?: return UploadStartResult.Rejected(UploadRejection.NO_MISSION),
+            deviceGeneration = snapshot.deviceGeneration,
             listener = listener,
         )
         lock.withLock {
@@ -142,6 +143,7 @@ class MissionUploader private constructor(
             MissionStateEvent.UploadChanged(
                 sourceRevision = sourceRevision.incrementAndGet(),
                 missionRevision = upload.missionRevision,
+                deviceGeneration = upload.deviceGeneration,
                 state = state,
             ),
         )
@@ -159,6 +161,7 @@ class MissionUploader private constructor(
     private data class ActiveUpload(
         val token: Any,
         val missionRevision: Long,
+        val deviceGeneration: Long,
         val listener: UploadTerminalListener,
     )
 

@@ -31,6 +31,7 @@ enum class ExecutionState {
 data class MissionSnapshot(
     val revision: Long,
     val missionRevision: Long?,
+    val deviceGeneration: Long,
     val file: MissionMetadata?,
     val upload: UploadState,
     val execution: ExecutionState,
@@ -51,12 +52,14 @@ sealed interface MissionStateEvent {
     data class UploadChanged(
         override val sourceRevision: Long,
         val missionRevision: Long,
+        val deviceGeneration: Long,
         val state: UploadState,
     ) : MissionStateEvent
 
     data class ExecutionChanged(
         override val sourceRevision: Long,
         val missionRevision: Long,
+        val deviceGeneration: Long,
         val state: ExecutionState,
     ) : MissionStateEvent
 }
@@ -139,19 +142,46 @@ class MissionStateStore private constructor(
                     )
                 }
                 is MissionStateEvent.UploadChanged -> {
-                    if (event.missionRevision != current.missionRevision) {
+                    if (event.missionRevision != current.missionRevision || event.deviceGeneration != current.deviceGeneration) {
                         return ApplyResult.IgnoredStale(event.sourceRevision)
                     }
                     current.copy(revision = current.revision + 1, upload = event.state)
                 }
                 is MissionStateEvent.ExecutionChanged -> {
-                    if (event.missionRevision != current.missionRevision || !canApplyExecution(event.state)) {
+                    if (
+                        event.missionRevision != current.missionRevision ||
+                        event.deviceGeneration != current.deviceGeneration ||
+                        !canApplyExecution(event.state)
+                    ) {
                         return ApplyResult.IgnoredStale(event.sourceRevision)
                     }
                     current.copy(revision = current.revision + 1, execution = event.state)
                 }
             }
             val previous = current
+            current = next
+            appliedSnapshot = next
+            pendingEvents.addLast(PendingEvent(MissionStateEventRecord(previous, next), listeners.toList()))
+            if (draining) false else {
+                draining = true
+                true
+            }
+        }
+        if (shouldDrain) drain()
+        return ApplyResult.Applied(requireNotNull(appliedSnapshot))
+    }
+
+    fun markDeviceUnavailable(): ApplyResult.Applied {
+        var appliedSnapshot: MissionSnapshot? = null
+        val shouldDrain = lock.withLock {
+            val previous = current
+            val hasMission = current.file != null
+            val next = current.copy(
+                revision = current.revision + 1,
+                deviceGeneration = current.deviceGeneration + 1,
+                upload = if (hasMission) UploadState.FAILED else UploadState.NOT_UPLOADED,
+                execution = if (hasMission) ExecutionState.FAILED else ExecutionState.NOT_STARTED,
+            )
             current = next
             appliedSnapshot = next
             pendingEvents.addLast(PendingEvent(MissionStateEventRecord(previous, next), listeners.toList()))
@@ -268,6 +298,7 @@ class MissionStateStore private constructor(
         private fun initialSnapshot() = MissionSnapshot(
             revision = 0,
             missionRevision = null,
+            deviceGeneration = 0,
             file = null,
             upload = UploadState.NOT_UPLOADED,
             execution = ExecutionState.NOT_STARTED,
@@ -280,11 +311,13 @@ class MissionStateStore private constructor(
                 is MissionStateEvent.FileCleared -> Unit
                 is MissionStateEvent.UploadChanged -> {
                     require(event.missionRevision > 0) { "Mission revision must be positive" }
+                    require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
                     val progress = (event.state as? UploadState.Uploading)?.progress
                     require(progress == null || progress in 0..100) { "Upload progress must be between 0 and 100" }
                 }
-                is MissionStateEvent.ExecutionChanged -> require(event.missionRevision > 0) {
-                    "Mission revision must be positive"
+                is MissionStateEvent.ExecutionChanged -> {
+                    require(event.missionRevision > 0) { "Mission revision must be positive" }
+                    require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
                 }
             }
         }

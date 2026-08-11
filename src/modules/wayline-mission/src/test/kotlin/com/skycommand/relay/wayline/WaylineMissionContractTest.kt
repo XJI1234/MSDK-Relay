@@ -15,6 +15,8 @@ import com.skycommand.relay.protocol.JsonNumber
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.state.ExecutionState
+import com.skycommand.relay.wayline.state.UploadState
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
@@ -67,6 +69,25 @@ class WaylineMissionContractTest {
     }
 
     @Test
+    fun deviceUnavailabilityCancelsAnUploadAndDropsItsLateSuccess() {
+        val fixture = Fixture()
+        stageGenerated(fixture)
+        val completion = Completion()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), completion)
+        fixture.mission.markDeviceUnavailable()
+        fixture.mission.markDeviceUnavailable()
+
+        assertEquals("survey.kmz", fixture.mission.snapshot().file?.fileName)
+        assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
+        assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
+        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        fixture.upload.completeSuccess()
+        assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
+        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+    }
+
+    @Test
     fun reportsControlFailureAfterTheAircraftRejectsIt() {
         val fixture = Fixture()
         stageGenerated(fixture)
@@ -78,6 +99,25 @@ class WaylineMissionContractTest {
         assertEquals(emptyList(), completion.events)
         fixture.control.completeFailure()
 
+        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+    }
+
+    @Test
+    fun deviceUnavailabilityCancelsAControlOperationAndDropsItsLateSuccess() {
+        val fixture = Fixture()
+        stageGenerated(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        val completion = Completion()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), completion)
+        fixture.mission.markDeviceUnavailable()
+
+        assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
+        assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
+        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        fixture.control.completeSuccess()
+        assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
         assertEquals(listOf("reject:Mission operation failed"), completion.events)
     }
 
@@ -207,6 +247,7 @@ class WaylineMissionContractTest {
         override fun pause(completion: ControlCompletion) { this.completion = completion }
         override fun resume(completion: ControlCompletion) { this.completion = completion }
         override fun stop(completion: ControlCompletion) { this.completion = completion }
+        fun completeSuccess() { requireNotNull(completion).succeed() }
         fun completeFailure() { requireNotNull(completion).fail() }
     }
 

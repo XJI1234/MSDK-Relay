@@ -141,7 +141,14 @@ class MissionExecutorContractTest {
         init {
             if (ready) {
                 stageOnly()
-                store.apply(MissionStateEvent.UploadChanged(1, store.snapshot().missionRevision!!, UploadState.UPLOADED))
+                store.apply(
+                    MissionStateEvent.UploadChanged(
+                        1,
+                        store.snapshot().missionRevision!!,
+                        store.snapshot().deviceGeneration,
+                        UploadState.UPLOADED,
+                    ),
+                )
             }
         }
 

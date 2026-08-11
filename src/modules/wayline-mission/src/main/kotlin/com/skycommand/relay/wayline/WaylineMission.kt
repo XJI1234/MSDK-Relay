@@ -1,6 +1,7 @@
 package com.skycommand.relay.wayline
 
 import com.skycommand.relay.device.operation.DjiOperationCoordinator
+import com.skycommand.relay.device.operation.OperationCancellationHandle
 import com.skycommand.relay.gateway.command.CommandCompletion
 import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.gateway.mission.MissionAbortReason
@@ -58,6 +59,8 @@ data class WaylineMissionDependencies(
 
 class WaylineMission private constructor(dependencies: WaylineMissionDependencies) {
     private val stagingLock = ReentrantLock()
+    private val lifecycleLock = ReentrantLock()
+    private val activeOperations = mutableSetOf<TrackedOperation>()
     private val stagingRevision = AtomicLong(0)
     private val staging = MissionStaging.create(dependencies.stagingStorage)
     private val state = MissionStateStore.create(dependencies.diagnosticSink)
@@ -84,6 +87,12 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     fun snapshot(): MissionSnapshot = state.snapshot()
 
     fun onChanged(listener: MissionStateListener): Registration = state.onChanged(listener)
+
+    fun markDeviceUnavailable(): MissionSnapshot = lifecycleLock.withLock {
+        val snapshot = state.markDeviceUnavailable().snapshot
+        activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
+        snapshot
+    }
 
     private fun handleCommand(command: CommandFrame, completion: CommandCompletion) {
         if (command.name == "wayline.generate") {
@@ -127,20 +136,66 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     }
 
     private inner class Actions : WaylineCommandActions {
-        override fun upload(completion: WaylineActionCompletion): WaylineActionResult =
-            uploader.start(UploadTerminalListener { completion.complete(it.toWaylineOutcome()) }).toActionResult()
+        override fun upload(completion: WaylineActionCompletion): WaylineActionResult = lifecycleLock.withLock {
+            val tracked = TrackedOperation()
+            track(uploader.start(UploadTerminalListener {
+                completeTrackedOperation(tracked)
+                completion.complete(it.toWaylineOutcome())
+            }), tracked)
+        }
 
-        override fun start(completion: WaylineActionCompletion): WaylineActionResult =
-            executor.start(ExecutionTerminalListener { completion.complete(it.toWaylineOutcome()) }).toActionResult()
+        override fun start(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.start(listener) }
 
-        override fun pause(completion: WaylineActionCompletion): WaylineActionResult =
-            executor.pause(ExecutionTerminalListener { completion.complete(it.toWaylineOutcome()) }).toActionResult()
+        override fun pause(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.pause(listener) }
 
-        override fun resume(completion: WaylineActionCompletion): WaylineActionResult =
-            executor.resume(ExecutionTerminalListener { completion.complete(it.toWaylineOutcome()) }).toActionResult()
+        override fun resume(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.resume(listener) }
 
-        override fun stop(completion: WaylineActionCompletion): WaylineActionResult =
-            executor.stop(ExecutionTerminalListener { completion.complete(it.toWaylineOutcome()) }).toActionResult()
+        override fun stop(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.stop(listener) }
+    }
+
+    private fun requestControl(
+        completion: WaylineActionCompletion,
+        request: (ExecutionTerminalListener) -> ExecutionRequestResult,
+    ): WaylineActionResult = lifecycleLock.withLock {
+        val tracked = TrackedOperation()
+        track(request(ExecutionTerminalListener {
+            completeTrackedOperation(tracked)
+            completion.complete(it.toWaylineOutcome())
+        }), tracked)
+    }
+
+    private fun track(result: UploadStartResult, tracked: TrackedOperation): WaylineActionResult = when (result) {
+        is UploadStartResult.Accepted -> {
+            tracked.install(result.cancellation)
+            if (!tracked.completed.get()) activeOperations += tracked
+            WaylineActionResult.Accepted
+        }
+
+        is UploadStartResult.Rejected -> WaylineActionResult.Rejected
+    }
+
+    private fun track(result: ExecutionRequestResult, tracked: TrackedOperation): WaylineActionResult = when (result) {
+        is ExecutionRequestResult.Accepted -> {
+            tracked.install(result.cancellation)
+            if (!tracked.completed.get()) activeOperations += tracked
+            WaylineActionResult.Accepted
+        }
+
+        is ExecutionRequestResult.Rejected -> WaylineActionResult.Rejected
+    }
+
+    private fun completeTrackedOperation(tracked: TrackedOperation) {
+        tracked.completed.set(true)
+        lifecycleLock.withLock { activeOperations.remove(tracked) }
+    }
+
+    private class TrackedOperation {
+        val completed = AtomicBoolean(false)
+        lateinit var cancellation: OperationCancellationHandle
+
+        fun install(cancellation: OperationCancellationHandle) {
+            this.cancellation = cancellation
+        }
     }
 
     private inner class GatewayMissionSink : MissionSink {
@@ -218,16 +273,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
             "wayline.stop" -> "Mission stopped"
             else -> "Mission operation completed"
         }
-    }
-
-    private fun UploadStartResult.toActionResult(): WaylineActionResult = when (this) {
-        is UploadStartResult.Accepted -> WaylineActionResult.Accepted
-        is UploadStartResult.Rejected -> WaylineActionResult.Rejected
-    }
-
-    private fun ExecutionRequestResult.toActionResult(): WaylineActionResult = when (this) {
-        is ExecutionRequestResult.Accepted -> WaylineActionResult.Accepted
-        is ExecutionRequestResult.Rejected -> WaylineActionResult.Rejected
     }
 
     private fun UploadTerminalOutcome.toWaylineOutcome(): WaylineActionTerminalOutcome = when (this) {
