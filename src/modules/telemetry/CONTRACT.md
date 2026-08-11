@@ -1,6 +1,6 @@
 # telemetry 一级模块契约
 
-状态：已实施，待完整回归验证
+状态：已实施并已验证
 版本：1.0.0
 所属程序：MSDK Relay Android
 Gradle 路径：`:telemetry`
@@ -13,8 +13,8 @@ Gradle 路径：`:telemetry`
 
 | 二级模块 | 唯一职责 |
 | --- | --- |
-| `snapshot-assembler` | 从同一设备快照产生安全遥测值 |
-| `capability-calculator` | 转换电脑端公开能力字段 |
+| `snapshot-assembler` | 从同一设备快照产生安全遥测值，并组合公开能力值 |
+| `capability-calculator` | 将内部设备能力转换为电脑端稳定能力字段 |
 | `telemetry-command-handler` | 提供一次性 `telemetry.read` 结果 |
 | `telemetry-publisher` | 去重、失败重试和发送顺序 |
 
@@ -33,6 +33,7 @@ telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
 - `stop()` 注销订阅并重置发布去重基线；停止后不得因已经排队的旧事件发布。
 - 启动不补发历史状态；连接建立后需要立即完整快照时，组合根显式调用当前发布接口。
 - 即时读取和持续发布都使用同一个 `SnapshotAssembler`，不存在两套字段规则。
+- `TelemetrySnapshot.capabilities` 只能是 `TelemetryCapabilities`，不得暴露 `DeviceCapabilities` 或其他设备连接层内部类型。
 - sink 失败不影响状态仓库或后续状态变化。
 
 ## 5. 测试要求

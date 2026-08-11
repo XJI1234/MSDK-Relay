@@ -41,11 +41,31 @@ class TelemetryContractTest {
         assertEquals(LinkState.CONNECTED, read.snapshot.remoteController)
     }
 
+    @Test
+    fun keepsOneSubscriptionAndRecoversAfterARejectedPublication() {
+        val store = DeviceStateStore.create()
+        val sink = RecordingSink()
+        val telemetry = Telemetry.create(store, sink)
+
+        assertIs<TelemetryStartResult.Started>(telemetry.start())
+        assertIs<TelemetryStartResult.AlreadyStarted>(telemetry.start())
+        sink.next = PublishTelemetryResult.Rejected
+        store.apply(DeviceStatePatch.remoteController(1, LinkState.CONNECTED, "RC"))
+        assertEquals(0, sink.values.size)
+
+        sink.next = PublishTelemetryResult.Published
+        store.apply(DeviceStatePatch.aircraft(1, LinkState.CONNECTED, LinkState.CONNECTED, "Aircraft"))
+        assertEquals(1, sink.values.size)
+        assertIs<TelemetryStopResult.Stopped>(telemetry.stop())
+        assertIs<TelemetryStopResult.AlreadyStopped>(telemetry.stop())
+    }
+
     private class RecordingSink : TelemetrySink {
         val values = mutableListOf<TelemetrySnapshot>()
+        var next: PublishTelemetryResult = PublishTelemetryResult.Published
         override fun publish(snapshot: TelemetrySnapshot): PublishTelemetryResult {
-            values += snapshot
-            return PublishTelemetryResult.Published
+            if (next == PublishTelemetryResult.Published) values += snapshot
+            return next
         }
     }
 }

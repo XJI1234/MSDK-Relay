@@ -4,8 +4,10 @@ import com.skycommand.relay.device.state.DeviceSnapshot
 import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.state.PairingState
 import com.skycommand.relay.device.state.SdkAvailability
+import com.skycommand.relay.telemetry.capability.TelemetryCapabilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 class SnapshotAssemblerContractTest {
     @Test
@@ -26,7 +28,7 @@ class SnapshotAssemblerContractTest {
         assertEquals(7, result.deviceRevision)
         assertEquals(SdkAvailability.READY, result.sdkAvailability)
         assertEquals("Matrice 4", result.aircraftModel)
-        assertEquals(true, result.capabilities.canReadTelemetry)
+        assertIs<TelemetryCapabilities>(result.capabilities)
         assertEquals(result, SnapshotAssembler.assemble(input))
     }
 
@@ -47,6 +49,6 @@ class SnapshotAssemblerContractTest {
 
         assertEquals(null, result.aircraftModel)
         assertEquals(PairingState.UNKNOWN, result.pairing)
-        assertEquals(false, result.capabilities.canRunWayline)
+        assertEquals(false, result.capabilities.waypointMission)
     }
 }
