@@ -1,30 +1,17 @@
-# stream-config-validator module contract
+# stream-config-validator 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: live-stream
-Gradle path: :live-stream:stream-config-validator
+状态：已批准实现；版本：1.0.0；所属一级模块：live-stream；Gradle 路径：:live-stream:stream-config-validator
 
-## 1. Single responsibility
+## 唯一职责与接口
 
-This module validates one RTMP destination configuration. It does not start or stop streaming, access DJI or Android, resolve DNS, open sockets, persist the URL, or publish telemetry.
-
-## 2. Public interface
+本模块只校验一个 RTMP 目标配置；不启动/停止图传、不访问 DJI 或 Android、不解析 DNS、不建立 Socket、不持久化 URL，也不发布遥测。
 
 ```text
 StreamConfigValidator.validate(rtmpUrl) -> Valid(ValidatedStreamConfig) | Invalid(reason)
 ```
 
-`rtmpUrl` must be a nonblank string of at most 2048 Unicode code points. A valid value uses the `rtmp` scheme, has a host, has no user information, has an optional port from 1 through 65535, and has a nonblank path beginning with `/`. Query parameters are preserved for DJI authentication compatibility; URL fragments are rejected. The validator does not normalize or log secrets.
+`rtmpUrl` 必须非空白、最多 2048 个 Unicode 码点，scheme 必须为 `rtmp`，必须有主机、不得有用户信息，端口可省略或为 1..65535，且必须具有以 `/` 开头的非空白路径。查询参数为 DJI 认证兼容性保留，fragment 必须拒绝。校验器不得标准化或记录秘密。`ValidatedStreamConfig` 不可变且只含原 URL，是未来 DJI 图传适配器唯一可接受的配置。
 
-`ValidatedStreamConfig` is immutable and contains the original URL only. It is the only value accepted by the future DJI stream adapter.
+失败只能为 `EMPTY`、`TOO_LONG`、`MALFORMED`、`INVALID_SCHEME`、`MISSING_HOST`、`INVALID_PORT`、`MISSING_PATH`、`USER_INFO_NOT_ALLOWED`、`FRAGMENT_NOT_ALLOWED` 或 `CONTROL_CHARACTER`；失败不得含原 URL 或解析异常。校验同步、无状态、线程安全、确定且无副作用。
 
-## 3. Stable failures
-
-Invalid inputs return only one of these reasons: `EMPTY`, `TOO_LONG`, `MALFORMED`, `INVALID_SCHEME`, `MISSING_HOST`, `INVALID_PORT`, `MISSING_PATH`, `USER_INFO_NOT_ALLOWED`, `FRAGMENT_NOT_ALLOWED`, or `CONTROL_CHARACTER`. The original URL and parser exception are never included in a failure.
-
-Validation is synchronous, stateless, thread-safe, and deterministic. Calling it repeatedly has no side effects. No Android or network runtime is required.
-
-## 4. Tests
-
-Tests cover valid hostnames, IPv4, IPv6, ports, paths, query parameters, empty input, whitespace, length boundary, wrong schemes, missing host/path, invalid ports, credentials, fragments, malformed percent escapes, control characters, and concurrent calls.
+测试必须覆盖主机名、IPv4、IPv6、端口、路径、查询、空输入、空白、长度边界、错误 scheme、缺主机/路径、无效端口、凭据、fragment、畸形百分号转义、控制字符和并发调用。

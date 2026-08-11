@@ -1,66 +1,57 @@
-# settings-store module contract
+# settings-store 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: relay-settings
-Gradle path: :relay-settings:settings-store
+状态：已批准实现
+版本：1.0.0
+所属一级模块：relay-settings
+Gradle 路径：:relay-settings:settings-store
 
-## Single responsibility
+## 唯一职责
 
-Own the durable relay-settings record: its schema version, atomic updates, migration, endpoint recovery, and the persistence port used by `device-identity`. It is the only module allowed to know the durable record layout.
+本模块持有持久化中继设置记录：schema 版本、原子更新、迁移、端点恢复及 `device-identity` 使用的持久化端口。它是唯一允许了解持久化记录布局的模块。
 
-It does not open a relay connection, generate a device identity, validate an endpoint itself, use Android persistence APIs, observe settings changes, log raw settings, or decide application lifecycle.
+它不建立中继连接、不生成设备身份、不自行校验端点、不使用 Android 持久化 API、不观察设置变化、不记录原始设置，也不决定应用生命周期。
 
-## Interface
+## 对外接口
 
 ```text
 RelaySettingsStore.create(backend) -> RelaySettingsStore
-
 store.load() -> Available(RelaySettingsSnapshot) | Unavailable(SettingsStoreFailure)
-store.setEndpoint(value)
-  -> Saved(snapshot)
-  | Rejected(EndpointRejection)
-  | Unavailable(SettingsStoreFailure)
+store.setEndpoint(value) -> Saved(snapshot) | Rejected(EndpointRejection) | Unavailable(SettingsStoreFailure)
 store.clearEndpoint() -> Saved(snapshot) | Unavailable(SettingsStoreFailure)
-
-store.readOrCreate(candidate) -> stored device ID
+store.readOrCreate(candidate) -> 已存储设备 ID
 ```
 
-`RelaySettingsStore` implements `DeviceIdentityStorage`; only `device-identity` should call `readOrCreate` in production. `RelaySettingsSnapshot` exposes a validated endpoint or `null`; it never exposes the device identity. The root facade will compose the snapshot with `DeviceIdentity.identity()`.
+`RelaySettingsStore` 实现 `DeviceIdentityStorage`，生产中只有 `device-identity` 应调用 `readOrCreate`。`RelaySettingsSnapshot` 只暴露已校验端点或 `null`，绝不暴露设备身份；根门面将其与 `DeviceIdentity.identity()` 组合。
 
-`RelaySettingsBackend` is the sole Android/persistence boundary. Its `update` operation must be atomic and linearizable across every process using the same storage. It supplies the current nullable record to a transformation, durably commits the returned record once, and returns that committed record. Backends may throw only to signal an unsuccessful read/write/transaction; the store maps the error to `BACKEND_FAILURE` and never exposes its details.
+`RelaySettingsBackend` 是唯一 Android/持久化接缝。其 `update` 必须对同一存储的所有进程原子且线性化：向转换函数提供当前可空记录，持久化提交一次返回记录并返回已提交记录。后端只能以抛出表示读/写/事务未成功；存储必须映射为 `BACKEND_FAILURE` 且不暴露细节。
 
-The durable record is `RelaySettingsRecord(schemaVersion, endpoint, deviceId)`. Current schema is version `1`; version `0` is the supported legacy form with the same fields and is migrated to version `1`. Unknown, negative, or future versions return `UNSUPPORTED_SCHEMA` and are never overwritten.
+持久化记录为 `RelaySettingsRecord(schemaVersion, endpoint, deviceId)`。当前 schema 为版本 `1`；支持相同字段的版本 `0` 并迁移至版本 `1`。未知、负数或未来版本返回 `UNSUPPORTED_SCHEMA`，且绝不覆盖。
 
-## Data and recovery rules
+## 数据、恢复与失败规则
 
-1. A missing record represents empty settings. `load` returns an empty snapshot without creating a record.
-2. Every mutation first normalizes the existing record. Version `0` becomes version `1` in the same atomic write.
-3. A stored endpoint is validated through `endpoint-settings`. An invalid, unsafe, or malformed endpoint is cleared during normalization and never reaches a snapshot.
-4. `setEndpoint` validates its argument before opening a backend transaction. Invalid input returns its exact `EndpointRejection` and changes nothing.
-5. `clearEndpoint` persists `endpoint = null` while preserving any device identity.
-6. `readOrCreate` requires a protocol-valid candidate. It atomically returns the existing valid device ID, or replaces a missing/invalid stored ID with the candidate. This is the required corruption recovery for `device-identity`.
-7. A device ID is valid exactly when it is nonblank, control-character-free, and 1 through 128 Unicode code points. It is not included in snapshots or failures.
+1. 缺失记录表示空设置；`load` 返回空快照且不创建记录。
+2. 每次变更必须先标准化现有记录；版本 `0` 在同一原子写入中变为版本 `1`。
+3. 已存端点必须经 `endpoint-settings` 校验；无效、不安全或畸形端点在标准化时清除，绝不进入快照。
+4. `setEndpoint` 必须在开启后端事务前校验参数；无效输入返回其原始 `EndpointRejection`，且不改变任何内容。
+5. `clearEndpoint` 持久化 `endpoint = null`，同时保留设备身份。
+6. `readOrCreate` 要求协议有效候选值，原子返回既有有效设备 ID，或用候选值替换缺失/无效已存 ID；这是 `device-identity` 所需的损坏恢复。
+7. 设备 ID 有效当且仅当非空白、无控制字符且为 1 至 128 个 Unicode 码点；不得出现在快照或失败中。
 
-All public methods are synchronous, deterministic for a given backend result, and safe for concurrent calls. The store does not cache reads or write failures: another process's update is visible to the next call, and a later caller may retry after a backend failure. Last successfully committed endpoint mutation wins according to backend linearization order.
+所有公开方法同步、对给定后端结果确定且可安全并发调用。存储不缓存读取或写失败：其他进程更新必须对下一次调用可见，后端失败后允许后续调用重试。按后端线性化顺序，最后成功提交的端点变更胜出。
 
-## Failure handling
-
-| Condition | Result | Durable state |
+| 条件 | 结果 | 持久化状态 |
 | --- | --- | --- |
-| Invalid submitted endpoint | `Rejected(reason)` | unchanged; backend not called |
-| Backend exception | `Unavailable(BACKEND_FAILURE)` | no local state/caching |
-| Unsupported schema | `Unavailable(UNSUPPORTED_SCHEMA)` | unchanged; no destructive recovery |
-| Missing record | empty successful snapshot | no record created by `load` |
-| Invalid saved endpoint | cleared by successful normalization | recovered version-1 record |
-| Missing/invalid saved device ID on `readOrCreate` | candidate stored atomically | recovered version-1 record |
+| 提交端点无效 | `Rejected(reason)` | 不变；不调用后端 |
+| 后端异常 | `Unavailable(BACKEND_FAILURE)` | 无本地状态/缓存 |
+| 不支持 schema | `Unavailable(UNSUPPORTED_SCHEMA)` | 不变；不破坏性恢复 |
+| 缺失记录 | 空成功快照 | `load` 不创建记录 |
+| 已存端点无效 | 成功标准化时清除 | 恢复后的版本 1 记录 |
+| `readOrCreate` 中设备 ID 缺失/无效 | 原子存储候选值 | 恢复后的版本 1 记录 |
 
-No result, thrown validation exception, or diagnostic may contain the endpoint, query, device ID, raw record, backend exception text, or stack trace.
+结果、校验异常或诊断不得包含端点、查询、设备 ID、原始记录、后端异常文字或堆栈。
 
-## Tests
+## 测试与兼容性
 
-JVM tests cover missing data; write, clear, and reload; valid endpoint preservation; all validation rejections without backend access; schema-0 migration; invalid endpoint recovery; unknown schema protection; backend read/write errors and retries; identity read-or-create behavior including corrupt records; endpoint preservation during identity recovery; concurrent endpoint writes and concurrent identity contenders.
+JVM 测试必须覆盖缺失数据、写入/清除/重新加载、有效端点保留、全部无需后端访问的校验拒绝、schema-0 迁移、无效端点恢复、未知 schema 保护、后端读写错误和重试、含损坏记录的身份 read-or-create、身份恢复期间端点保留、并发端点写入及并发身份竞争。
 
-## Compatibility rules
-
-`RelaySettingsSnapshot`, result/failure enums, backend atomicity, schema-version meanings, and the opaque-record boundary are stable. Any schema change must add a migration and tests before it is written. Removing a supported migration, exposing `deviceId` through a snapshot, or allowing a raw endpoint outside this module requires a contract and consumer update first.
+`RelaySettingsSnapshot`、结果/失败枚举、后端原子性、schema 版本含义和不透明记录接缝均为稳定接口。任何 schema 变更必须先增加迁移和测试；移除支持的迁移、通过快照暴露 `deviceId`，或允许原始端点离开本模块前，必须先更新契约和消费者。

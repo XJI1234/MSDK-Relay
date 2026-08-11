@@ -1,16 +1,16 @@
-# app-runtime module contract
+# app-runtime 模块契约
 
-Status: facade implementation in progress
-Version: 1.0.0
-Gradle path: :app-runtime
+状态：门面实现进行中
+版本：1.0.0
+Gradle 路径：:app-runtime
 
-## Single responsibility
+## 唯一职责
 
-Own the Android relay runtime lifecycle and compose runtime responsibilities in a fixed order: permissions, foreground service, then injected business modules. `android-permission-adapter` is supplied by the Android application composition layer as the concrete `PermissionPort`; it is not a dependency of this platform-neutral facade. This is the only module allowed to combine those runtime responsibilities.
+本模块持有 Android 中继运行时生命周期，并按固定顺序组合运行时职责：权限、前台服务、随后是注入的业务模块。`android-permission-adapter` 由 Android 应用组合层作为具体 `PermissionPort` 提供，并不是该平台无关门面的依赖。本模块是唯一允许组合这些运行时职责的模块。
 
-It does not implement Android permission APIs, notification channels, WebSocket sessions, DJI operations, settings, telemetry, live stream, or missions. Those concerns enter through the public interfaces of their owning modules or through adapters supplied by the application.
+它不实现 Android 权限 API、通知渠道、WebSocket 会话、DJI 操作、设置、遥测、图传或航线任务。这些职责只通过所属模块的对外接口或由应用提供的适配器进入。
 
-## Interface
+## 对外接口
 
 ```text
 AppRuntime.create(permissionCoordinator, foregroundService, bootstrap) -> AppRuntime
@@ -24,10 +24,10 @@ runtime.snapshot() -> STOPPED | WAITING_PERMISSIONS | STARTING_SERVICE | STARTIN
 runtime.onChanged(listener) -> Registration
 ```
 
-`start` is accepted when work has begun, not when the service or business modules are ready. It requests the supplied permission set, starts the foreground service only after permissions complete successfully, then starts `AppBootstrap`. `stop` stops business modules before the foreground service. A permission denial/cancellation, service failure, or module failure leaves `FAILED` or `STOPPED` according to the terminal result and never reports `RUNNING`.
+`start` 被接受只表示已开始工作，不表示服务或业务模块已经就绪。它先请求给定权限集，只有权限成功完成后才启动前台服务，随后启动 `AppBootstrap`。`stop` 必须先停止业务模块，再停止前台服务。权限被拒绝/取消、服务失败或模块失败时，按终态进入 `FAILED` 或 `STOPPED`，且绝不报告 `RUNNING`。
 
-Only one lifecycle transition is active. Repeated and concurrent calls are deterministic. Cancellation is effective while waiting for permissions; late permission/service callbacks are ignored after the runtime leaves their operation. Listener failures are isolated. No result exposes Android objects, permission names, exception messages, notification data, or business state.
+任一时刻只能有一个生命周期迁移。重复和并发调用必须确定性处理。取消仅在等待权限时有效；运行时离开该操作后，延迟权限/服务回调必须忽略。监听器失败必须隔离。任何结果不得暴露 Android 对象、权限名、异常消息、通知数据或业务状态。
 
-## Tests
+## 测试
 
-Cover startup with already-granted permissions, asynchronous permission completion, denial/cancellation, service failure and synchronous callbacks, module failure with service cleanup, normal reverse shutdown, duplicate/concurrent calls, late callbacks, listener failure, and registration.
+必须覆盖已授予权限启动、异步权限完成、拒绝/取消、服务失败与同步回调、模块失败时清理服务、正常逆序停止、重复/并发调用、延迟回调、监听器失败及注册。

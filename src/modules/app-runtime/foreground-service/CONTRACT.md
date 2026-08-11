@@ -1,17 +1,17 @@
-# foreground-service module contract
+# foreground-service 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: app-runtime
-Gradle path: :app-runtime:foreground-service
+状态：已批准实现
+版本：1.0.0
+所属一级模块：app-runtime
+Gradle 路径：:app-runtime:foreground-service
 
-## Single responsibility
+## 唯一职责
 
-Own the lifecycle state of the Android foreground service that keeps the relay process alive. It translates start/stop requests to a platform port and accepts only terminal callbacks for the current operation.
+本模块持有保持中继进程存活的 Android 前台服务生命周期状态，将启动/停止请求转换为平台端口调用，并且只接受当前操作的终态回调。
 
-It does not create or stop WebSocket sessions, call DJI, own settings or business state, request permissions, create notification text, or read Activity/Service globals. The Android adapter owns notification channels, service intents, and actual `startForeground` calls.
+它不创建或停止 WebSocket 会话，不调用 DJI，不持有设置或业务状态，不请求权限，不创建通知文字，也不读取 Activity/Service 全局对象。Android 适配器独占通知渠道、服务 Intent 和实际 `startForeground` 调用。
 
-## Interface
+## 对外接口
 
 ```text
 ForegroundServiceController.create(port, diagnosticSink?) -> controller
@@ -21,10 +21,10 @@ controller.snapshot() -> STOPPED | STARTING | RUNNING | STOPPING | FAILED
 controller.onChanged(listener) -> Registration
 ```
 
-`ForegroundServicePort.start(callback)` and `stop(callback)` are the only platform seam. The port must call a callback at most once in normal operation, but the controller defensively ignores duplicate, late, and cross-operation callbacks. Start/stop acceptance means only that the platform request was submitted; `RUNNING` or `STOPPED` is reported only after the matching terminal callback.
+`ForegroundServicePort.start(callback)` 与 `stop(callback)` 是唯一平台接缝。端口正常情况下最多调用一次回调，但控制器必须防御性忽略重复、延迟和跨操作回调。接受启动/停止只表示平台请求已提交；只有匹配的终态回调才能报告 `RUNNING` 或 `STOPPED`。
 
-The controller is synchronous and thread-safe. One transition can exist at a time. A port throw maps to `PORT_FAILURE` and moves the controller to `FAILED`; a later `start` may retry. Listener exceptions are isolated and never roll back a committed state.
+控制器同步且线程安全，同时只能有一个迁移。端口抛出映射为 `PORT_FAILURE` 并进入 `FAILED`；后续 `start` 可重试。监听器异常必须隔离，不能回滚已提交状态。
 
-## Tests
+## 测试
 
-Cover every state, duplicate start/stop, accepted transitions, port failures, successful and failed callbacks, late callbacks from an old operation, duplicate callbacks, concurrent calls, listener failures and registration.
+必须覆盖全部状态、重复启动/停止、接受迁移、端口失败、成功及失败回调、旧操作延迟回调、重复回调、并发调用、监听器失败和注册。

@@ -1,23 +1,17 @@
-# android-dji-sdk-adapter module contract
+# android-dji-sdk-adapter 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: device-connection
-Logical Gradle path: :device-connection:android-dji-sdk-adapter
+状态：已实现并已验证
+版本：1.0.0
+所属一级模块：device-connection
+逻辑 Gradle 路径：:device-connection:android-dji-sdk-adapter
 
-## Single responsibility
+## 唯一职责
 
-This module is the Android DJI MSDK v5 implementation of the `DjiSdkPort`
-seam owned by `sdk-lifecycle`. It initializes DJI MSDK, requests application
-registration after MSDK initialization completes, and reports only whether
-that registration became usable or failed.
+本模块是由 `sdk-lifecycle` 持有的 `DjiSdkPort` 接缝的 Android DJI MSDK v5 实现。它初始化 DJI MSDK，在 MSDK 初始化完成后请求应用注册，并只报告该注册是否可用或失败。
 
-It does not observe remote-controller, aircraft, flight-controller, camera,
-or battery state. It does not start pairing, execute DJI operations, publish
-telemetry, control live streaming or missions, open relay connections, persist
-settings, own an Activity, or render user interface.
+它不观察遥控器、飞行器、飞控、相机或电池状态，不发起配对，不执行 DJI 操作，不发布遥测数据，不控制图传或航线任务，不建立中继连接，不持久化设置，不拥有 Activity，也不渲染用户界面。
 
-## Public interface
+## 对外接口
 
 ```text
 AndroidDjiSdkPort.create(applicationContext) -> DjiSdkPort
@@ -26,74 +20,42 @@ port.initialize(callbacks) -> PortStartResult
 port.close() -> Unit
 ```
 
-`create` requires an application context. It returns the existing
-platform-neutral `DjiSdkPort`; no Android context, `SDKManager`, DJI error,
-product identifier, exception, or MSDK callback is exposed to the caller.
+`create` 必须接收应用级 Context。它返回既有的平台无关 `DjiSdkPort`；不得向调用方暴露 Android Context、`SDKManager`、DJI 错误、产品标识、异常或 MSDK 回调。
 
-The adapter has one direct collaborator, an internal MSDK manager bridge. The
-bridge is not public API and may be replaced when DJI changes its API without
-requiring changes to `sdk-lifecycle` or other business modules.
+本适配器仅有一个直接协作者，即内部 MSDK 管理器桥接层。该桥接层不是对外接口；DJI 变更 API 时可以替换它，而无需修改 `sdk-lifecycle` 或其他业务模块。
 
-## Host application prerequisites
+## 宿主应用前置条件
 
-Before `create` or `initialize` is used, the final Android application must:
+最终 Android 应用在调用 `create` 或 `initialize` 前必须：
 
-1. Declare `com.dji.sdk.API_KEY` in its merged application manifest, with the
-   application-specific DJI App Key as its value.
-2. Invoke DJI's required runtime installer from `Application.attachBaseContext`
-   before any DJI MSDK API is accessed.
-3. Package the native libraries and ABI configuration required by the chosen
-   DJI MSDK v5 distribution.
-4. Request network and device permissions through the separate app-runtime
-   permission flow. This adapter neither requests nor interprets permissions.
+1. 在合并后的应用 Manifest 中声明 `com.dji.sdk.API_KEY`，并将应用专用 DJI App Key 作为其值。
+2. 在访问任何 DJI MSDK API 前，于 `Application.attachBaseContext` 调用 DJI 要求的运行时安装器。
+3. 打包所选 DJI MSDK v5 发行版要求的原生库和 ABI 配置。
+4. 通过独立的 app-runtime 权限流程请求网络和设备权限。本适配器既不请求也不解释权限。
 
-The adapter does not store an App Key, log it, or create a default key. A
-missing, invalid, or unavailable host configuration becomes a safe
-initialization failure, never a fabricated ready state.
+本适配器不得存储、记录或创建默认 App Key。宿主配置缺失、无效或不可用时必须成为安全的初始化失败，绝不能伪造就绪状态。
 
-## Lifecycle rules
+## 生命周期规则
 
-1. Each `initialize` creates one callback generation and delegates once to the
-   MSDK manager bridge.
-2. MSDK initialization completion triggers `registerApp`; only an MSDK
-   registration success calls `DjiSdkCallbacks.onReady`.
-3. Any MSDK initialization or registration failure calls
-   `DjiSdkCallbacks.onFailure` at most once for the active generation.
-4. A bridge rejection or synchronous bridge exception becomes
-   `PortStartResult.Rejected` with a stable safe reason. Raw DJI errors,
-   exception messages, and stack traces never cross `DjiSdkPort`.
-5. Duplicate MSDK callbacks, callbacks for an older generation, and callbacks
-   after `close` are ignored.
-6. `close` is idempotent. It invalidates the active callback generation and
-   releases adapter-local listener references. It does not attempt to globally
-   shut down DJI MSDK, because MSDK is process-wide and may be shared by later
-   application work.
-7. A new `initialize` after `close` uses a new generation. It must not accept
-   a registration result captured by a previous generation.
-8. User callbacks run outside adapter locks. A user callback exception is
-   contained and cannot prevent cleanup or affect another generation.
+1. 每次 `initialize` 创建一个回调代际，并且只向 MSDK 管理器桥接层委托一次。
+2. MSDK 初始化完成会触发 `registerApp`；只有 MSDK 注册成功才能调用 `DjiSdkCallbacks.onReady`。
+3. 任一 MSDK 初始化或注册失败，对有效代际最多调用一次 `DjiSdkCallbacks.onFailure`。
+4. 桥接层拒绝或同步异常必须成为带稳定安全原因的 `PortStartResult.Rejected`。原始 DJI 错误、异常消息和堆栈不得越过 `DjiSdkPort`。
+5. 重复 MSDK 回调、旧代际回调和 `close` 后回调必须忽略。
+6. `close` 是幂等操作。它使有效回调代际失效并释放适配器本地监听器引用。它不得尝试全局关闭 DJI MSDK，因为 MSDK 是进程级资源，可能被后续应用工作共享。
+7. `close` 后的下一次 `initialize` 使用新代际，且不得接受旧代际捕获的注册结果。
+8. 用户回调在适配器锁外运行。用户回调异常必须被隔离，不能阻止清理或影响其他代际。
 
-## Security and dependency rules
+## 安全与依赖规则
 
-- Direct DJI MSDK dependencies exist only in this Android module.
-- The module uses the application context only and retains no Activity,
-  Fragment, View, Intent, product ID, serial number, App Key, or device model.
-- The module reports only `ready`, `failure`, and safe rejection reasons.
-- No network endpoint, desktop protocol, telemetry payload, mission content,
-  video frame, or pairing identity may enter this module.
-- `sdk-lifecycle`, `device-connection`, telemetry, live-stream, wayline,
-  relay-gateway, and app-runtime must not depend on DJI classes.
+- 直接 DJI MSDK 依赖只能存在于此 Android 模块。
+- 本模块只使用应用级 Context，且不得保留 Activity、Fragment、View、Intent、产品 ID、序列号、App Key 或设备型号。
+- 本模块只报告 `ready`、`failure` 和安全拒绝原因。
+- 网络端点、桌面协议、遥测载荷、任务内容、视频帧或配对身份不得进入本模块。
+- `sdk-lifecycle`、`device-connection`、遥测、图传、航线、relay-gateway 和 app-runtime 不得依赖 DJI 类。
 
-## Verification requirements
+## 验证要求
 
-JVM tests must cover initial acceptance, bridge rejection and throws,
-synchronous and asynchronous success/failure, duplicate callbacks, stale
-callbacks after close, repeated close, callback isolation, and reinitializing
-with a new generation.
+JVM 测试必须覆盖初始接受、桥接层拒绝和抛出、同步和异步成功/失败、重复回调、`close` 后的过期回调、重复 `close`、回调隔离以及使用新代际重新初始化。
 
-The Android Debug build must compile the MSDK v5 bridge and merged manifest.
-Real-device integration verification is required for valid App Key
-registration, missing/invalid App Key, unavailable network, delayed MSDK
-registration, app recreation, and physical remote-controller/aircraft
-connection. Product-state verification belongs to the later device-observer
-adapter, not this module.
+Android Debug 构建必须编译 MSDK v5 桥接层和合并后的 Manifest。真实设备集成验证必须覆盖有效 App Key 注册、缺失/无效 App Key、网络不可用、MSDK 延迟注册、应用重建以及物理遥控器/飞行器连接。产品状态验证属于后续设备观察适配器，不属于本模块。

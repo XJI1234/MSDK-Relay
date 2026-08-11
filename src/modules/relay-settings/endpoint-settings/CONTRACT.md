@@ -1,22 +1,22 @@
-# endpoint-settings module contract
+# endpoint-settings 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: relay-settings
-Gradle path: :relay-settings:endpoint-settings
+状态：已批准实现
+版本：1.0.0
+所属一级模块：relay-settings
+Gradle 路径：:relay-settings:endpoint-settings
 
-## Single responsibility
+## 唯一职责
 
-Validate one computer relay WebSocket destination. This module does not persist settings, resolve DNS, connect sockets, log endpoint data, or know device identity.
+本模块校验一个电脑中继 WebSocket 目标。它不持久化设置、不解析 DNS、不连接 Socket、不记录端点数据，也不了解设备身份。
 
-## Interface
+## 对外接口
 
-`EndpointSettings.validate(value) -> Valid(ValidatedRelayEndpoint) | Invalid(reason)`.
+`EndpointSettings.validate(value) -> Valid(ValidatedRelayEndpoint) | Invalid(reason)`。
 
-A valid endpoint is at most 2048 Unicode code points, uses `ws` or `wss`, has a host, has no user information or fragment, and has either no port or a port from 1 through 65535. The path may be empty or begin with `/`; query parameters are preserved for future compatible authentication but never appear in failure data. The valid result retains the original value unchanged.
+有效端点最多 2048 个 Unicode 码点，使用 `ws` 或 `wss`，必须含主机，不得含用户信息或 fragment，端口只能省略或在 1 至 65535。路径可以为空或以 `/` 开头；查询参数为未来兼容认证而保留，但不得出现在失败数据中。有效结果原样保留输入值。
 
-Failures are only `EMPTY`, `TOO_LONG`, `MALFORMED`, `INVALID_SCHEME`, `MISSING_HOST`, `INVALID_PORT`, `USER_INFO_NOT_ALLOWED`, `FRAGMENT_NOT_ALLOWED`, and `CONTROL_CHARACTER`. Validation is synchronous, pure, deterministic, and thread-safe.
+失败只能是 `EMPTY`、`TOO_LONG`、`MALFORMED`、`INVALID_SCHEME`、`MISSING_HOST`、`INVALID_PORT`、`USER_INFO_NOT_ALLOWED`、`FRAGMENT_NOT_ALLOWED` 和 `CONTROL_CHARACTER`。校验同步、纯函数、确定且线程安全。
 
-## Tests
+## 测试
 
-Cover ws/wss, DNS/IPv4/IPv6, optional path/query and port boundaries; empty, wrong scheme, missing host, malformed port/percent escape, credentials, fragment, controls, length boundary, and concurrent calls.
+必须覆盖 ws/wss、DNS/IPv4/IPv6、可选路径/查询及端口边界；空值、错误 scheme、缺少主机、畸形端口/百分号转义、凭据、fragment、控制字符、长度边界和并发调用。

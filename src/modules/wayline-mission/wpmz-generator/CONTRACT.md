@@ -1,75 +1,18 @@
-# wpmz-generator module contract
+# wpmz-generator 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: wayline-mission
-Gradle path: :wayline-mission:wpmz-generator
+状态：已实现并已验证；版本：1.0.0；所属一级模块：wayline-mission；Gradle 路径：:wayline-mission:wpmz-generator
 
-## 1. Single responsibility
+## 唯一职责与接口
 
-This module converts a complete, already-decided waypoint plan into a valid DJI-compatible WPMZ/KMZ byte sequence and safe metadata.
+本模块将完整且已决定的航点计划转换为兼容 DJI 的 WPMZ/KMZ 字节序列和安全元数据。电脑端持有路径规划、地图编辑、航点选择、相机动作策略和面向用户的命名；本模块不规划、不改航点顺序、不上传/执行、不访问 DJI 对象/Android 文件、不发送网络，也不写入 `mission-staging`。
 
-The computer side owns route planning, map editing, waypoint selection, camera-action policy, and user-facing naming. This module does not plan routes, alter waypoint order, upload, execute, access DJI objects, access Android files, or send network traffic. It does not write to mission-staging; the composition layer passes its result to that module.
-
-## 2. Public interface
-
+```text
 WpmzGenerator.create() -> WpmzGenerator
 generator.generate(plan) -> Generated(artifact) | Rejected(reason)
+```
 
-Input:
+`WaylinePlan`：安全 `.kmz` 基名 1..255 字符、1..10,000 个有序航点、有限速度 0.1..15.0 m/s；航点经度 -180..180、纬度 -90..90、有限高度 0..10,000 米。`Generated` 含文件名、完整 KMZ 字节而非路径、小写 64 字符 SHA-256 和精确字节数。归档必须且只能包含 `wpmz/template.kml` 与 `wpmz/waylines.wpml`；后者使用 DJI 命名空间 `http://www.dji.com/wpmz/1.0.6`，保持航点顺序，写入坐标、高度、文档和航点速度，并 XML 转义文本。
 
-WaylinePlan(
-  fileName: safe .kmz basename, 1..255 characters
-  waypoints: 1..10,000 ordered points
-  speedMetersPerSecond: finite number in 0.1..15.0
-)
-Waypoint(
-  longitude: finite number in -180.0..180.0
-  latitude: finite number in -90.0..90.0
-  altitudeMeters: finite number in 0.0..10,000.0
-)
+模块创建后无状态；成功结果自包含，调用方拥有并交给 `mission-staging`。调用同步，受 10,000 航点限制，无生命周期、回调或取消；后台执行/取消由外部持有。
 
-Output:
-
-Generated(
-  artifact.fileName
-  artifact.bytes              // a complete KMZ archive, never a path
-  artifact.sha256              // lowercase 64-character SHA-256
-  artifact.sizeBytes           // exact byte count
-)
-Rejected(reason)
-
-The archive must contain exactly the generated mission documents under:
-
-wpmz/template.kml
-wpmz/waylines.wpml
-
-waylines.wpml uses DJI namespace http://www.dji.com/wpmz/1.0.6, preserves waypoint order, writes longitude/latitude/altitude, writes the requested speed at document and waypoint level, and XML-escapes all text values.
-
-## 3. Lifecycle and ownership
-
-The generator is stateless after create(). A successful call returns a self-contained artifact; the generator retains no plan or bytes. The caller owns the returned bytes and must hand them to mission-staging.
-
-Calls are synchronous and bounded by the 10,000-waypoint limit. The module has no Android lifecycle, no connection lifecycle, no callback registration, and no cancellation handle. A caller that needs background execution or cancellation owns that policy outside this module.
-
-## 4. Validation and failure behavior
-
-- Blank names, path separators, control characters, names longer than 255 characters, and non-.kmz names return INVALID_PLAN.
-- Empty plans, more than 10,000 points, non-finite coordinates, out-of-range coordinates, non-finite altitude, out-of-range altitude, non-finite speed, and out-of-range speed return INVALID_PLAN.
-- A ZIP/XML generation failure returns GENERATION_FAILED; the result contains no exception, path, partial archive, or input bytes.
-- Invalid input never invokes the encoder and never produces bytes.
-- Generation is deterministic for the same input except for ZIP metadata that is not exposed as business state; entry names and XML content are stable.
-- The returned byte array is defensively copied when exposed. A caller cannot mutate the artifact held by the result.
-- Concurrent calls are independent and must not corrupt one another.
-
-## 5. Integration seam
-
-The module depends only on Kotlin/JVM and standard library ZIP/XML escaping. It exposes no Android, DJI SDK, WebSocket, filesystem, or thread-pool types. The generated artifact is consumed by mission-staging; device validation and upload are owned by mission-uploader.
-
-## 6. Test requirements
-
-JVM tests must cover a valid one-point plan, waypoint order, requested speeds, archive entry names, XML escaping, all numeric boundaries, invalid metadata, invalid coordinates, invalid counts, non-finite values, deterministic metadata, no output on rejection, defensive byte-array copying, and concurrent generation.
-
-## 7. Change rules
-
-Changing the archive entry names, namespace, numeric limits, input units, XML semantics, or output metadata requires updating this contract and the computer/mobile integration contract before implementation changes.
+空白/含分隔符或控制字符/超 255/非 `.kmz` 名称，以及空/超量计划、非有限或越界坐标/高度/速度均返回 `INVALID_PLAN`；ZIP/XML 生成失败返回 `GENERATION_FAILED`，不含异常、路径、部分归档或输入字节。无效输入不得调用编码器或产生字节；同输入生成确定（未暴露的 ZIP 元数据除外）；暴露字节必须防御复制，并发调用互不污染。模块只依赖 Kotlin/JVM 和标准 ZIP/XML 转义，不暴露 Android、DJI、WebSocket、文件系统或线程池类型。测试覆盖有效单点、顺序、速度、条目、XML 转义、全部数值边界、无效元数据/坐标/数量/非有限值、确定性、拒绝无输出、字节防御复制和并发。改变条目名、命名空间、数值限制、输入单位、XML 语义或输出元数据必须先更新本契约及电脑/手机集成契约。

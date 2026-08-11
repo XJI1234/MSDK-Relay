@@ -1,23 +1,17 @@
-# android-aircraft-adapter module contract
+# android-aircraft-adapter 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: device-connection
-Logical Gradle path: :device-connection:android-aircraft-adapter
+状态：已实现并已验证
+版本：1.0.0
+所属一级模块：device-connection
+逻辑 Gradle 路径：:device-connection:android-aircraft-adapter
 
-## Single responsibility
+## 唯一职责
 
-This module is the Android DJI MSDK v5 implementation of the existing
-`AircraftPort` seam. It observes only aircraft connection, flight-controller
-connection, and an optional non-sensitive aircraft display model, then
-publishes normalized `AircraftSignal` values.
+本模块是既有 `AircraftPort` 接缝的 Android DJI MSDK v5 实现。它只观察飞行器连接、飞行控制器连接和可选的非敏感飞行器展示型号，并发布已标准化的 `AircraftSignal`。
 
-It does not own DJI SDK registration, persist device state, observe the remote
-controller, infer pairing, execute DJI operations, publish telemetry, manage
-streaming or missions, open relay connections, request permissions, or render
-user interface.
+它不负责 DJI SDK 注册，不保存设备状态，不观察遥控器，不推断配对状态，不执行 DJI 操作，不发布遥测数据，不管理图传或航线任务，不建立中继连接，不请求权限，也不渲染用户界面。
 
-## Public interface
+## 对外接口
 
 ```text
 AndroidAircraftPort.create() -> AircraftPort
@@ -27,78 +21,42 @@ port.stop() -> Unit
 subscription.cancel() -> Unit
 ```
 
-The factory returns the existing platform-neutral `AircraftPort`. No DJI key,
-manager, callback, error, Android object, serial number, product ID, or raw
-exception detail is exposed through the port or its signals.
+工厂方法返回既有的平台无关 `AircraftPort`。端口及其信号不得暴露 DJI 键、管理器、回调、错误、Android 对象、序列号、产品 ID 或原始异常细节。
 
-`start` establishes at most one active MSDK observation. A repeated start
-creates no extra MSDK listener, does not replace the original listener, and
-returns a no-op subscription. `stop` and `subscription.cancel` are idempotent;
-both invalidate the active callback generation and release its platform
-listeners.
+`start` 最多建立一个有效的 MSDK 观察。重复调用不会额外注册 MSDK 监听器，也不会替换原监听器，并返回空操作订阅。`stop` 与 `subscription.cancel` 均为幂等操作；二者都会使当前回调代际失效并释放平台监听器。
 
-## Signal rules
+## 信号规则
 
-Each accepted platform fact becomes:
+每个被接受的平台事实转换为：
 
 ```text
 AircraftSignal(sourceRevision, aircraftConnected, flightControllerConnected, displayModel?)
 ```
 
-1. `sourceRevision` is strictly positive, increases for every published
-   signal, and never resets while the process is alive.
-2. `aircraftConnected` reflects only the MSDK product connection fact.
-3. `flightControllerConnected` reflects only the MSDK flight-controller
-   connection fact when the aircraft is connected. It is forcibly `false` when
-   `aircraftConnected` is `false`; contradictory signals are forbidden.
-4. `displayModel` is present only for a stable non-sensitive MSDK product-type
-   value. It is never derived from a serial number, firmware version, remote
-   controller type, product ID, or exception. It is `null` when unavailable
-   and always `null` when the aircraft is disconnected.
-5. The initial snapshot may arrive synchronously inside `start`; callers must
-   treat it as a normal signal.
-6. A duplicate platform value may be published with a newer revision. Cross-
-   source ordering and deduplication remain the responsibility of the state
-   store.
+1. `sourceRevision` 必须严格为正，对每个已发布信号递增，且在进程存活期间不重置。
+2. `aircraftConnected` 只反映 MSDK 产品连接事实。
+3. `flightControllerConnected` 只在飞行器已连接时反映 MSDK 飞控连接事实。飞行器未连接时必须强制为 `false`，禁止发布相互矛盾的信号。
+4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`，飞行器未连接时始终为 `null`。
+5. 初始快照可以在 `start` 内同步到达；调用方必须将其视为普通信号。
+6. 相同的平台值可以带着更新的版本号再次发布。跨来源排序和去重由状态存储负责，而非本模块。
 
-## Lifecycle and failure rules
+## 生命周期与失败规则
 
-1. Every successful platform registration receives one callback generation.
-   Callbacks from a cancelled, stopped, superseded, or failed generation are
-   ignored.
-2. User listeners run outside adapter locks. A listener exception is contained
-   and cannot prevent cleanup or later signals.
-3. If platform registration cannot be established, `start` fails with only the
-   stable reason `aircraft listener unavailable`. Raw DJI exceptions, messages,
-   and stack traces never cross the seam. The existing `AircraftLink` converts
-   this into its documented rejection.
-4. Platform listener-release failures are contained. They never keep a
-   generation active or permit late callbacks to reach a caller.
-5. The adapter uses no Activity, Fragment, View, Context, network endpoint,
-   desktop protocol data, App Key, or process-wide SDK shutdown operation.
+1. 每次成功的平台注册对应一个回调代际。来自已取消、已停止、已被替代或已失败代际的回调必须忽略。
+2. 用户监听器在适配器锁外运行。监听器抛出的异常必须被隔离，不能阻止清理或后续信号。
+3. 无法建立平台注册时，`start` 只能以稳定原因 `aircraft listener unavailable` 失败。原始 DJI 异常、消息和堆栈不得越过接缝。既有 `AircraftLink` 负责将该原因转换为其已声明的拒绝结果。
+4. 平台监听器释放失败必须被隔离，不能使代际继续有效，也不能让延迟回调到达调用方。
+5. 本适配器不使用 Activity、Fragment、View、Context、网络端点、桌面协议数据、App Key 或进程级 SDK 关闭操作。
 
-## Dependency rules
+## 依赖规则
 
-- Direct DJI MSDK dependencies exist only in this Android adapter.
-- The adapter depends on `:device-connection:aircraft-link` only for
-  `AircraftPort`, `AircraftSignal`, and `AircraftPortSubscription`.
-- It must not depend on `device-state-store`, `remote-controller-link`,
-  `pairing-controller`, `sdk-lifecycle`, telemetry, live-stream,
-  wayline-mission, relay-gateway, app-runtime, or Android UI types.
-- The final Android composition root starts this port only after DJI SDK
-  registration is usable. Ordering is not inferred or enforced here.
+- 直接 DJI MSDK 依赖只能存在于此 Android 适配器。
+- 本适配器仅为 `AircraftPort`、`AircraftSignal` 和 `AircraftPortSubscription` 依赖 `:device-connection:aircraft-link`。
+- 它不得依赖 `device-state-store`、`remote-controller-link`、`pairing-controller`、`sdk-lifecycle`、遥测、图传、航线任务、relay-gateway、app-runtime 或 Android UI 类型。
+- 最终 Android 组合根仅在 DJI SDK 注册可用后启动此端口；本模块不推断也不强制该顺序。
 
-## Verification requirements
+## 验证要求
 
-JVM tests must cover initial connected/disconnected facts, model
-normalization, flight-controller normalization when the aircraft disconnects,
-increasing revisions across changes and restart, duplicate start, cancel,
-stop, duplicate stop, synchronous registration callbacks, stale callbacks
-after cancel/stop/new generation, platform registration and release failures,
-and user-listener exception isolation.
+JVM 测试必须覆盖初始连接和断开事实、型号标准化、飞行器断开时的飞控标准化、变更及重启后的递增版本、重复启动、取消、停止、重复停止、同步注册回调、取消/停止/新代际后的过期回调、平台注册和释放失败，以及用户监听器异常隔离。
 
-The Android Debug build must compile the MSDK v5.17 listener wrapper. A real
-device must verify aircraft and flight-controller attach/detach, product-model
-availability, app recreation, and listener cleanup. Remote-controller,
-pairing, telemetry, streaming, and mission verification are outside this
-module.
+Android Debug 构建必须编译 MSDK v5.17 监听器封装。真实设备必须验证飞行器和飞控的接入/断开、产品型号可用性、应用重建和监听器清理。遥控器、配对、遥测、图传及航线验证均不属于本模块。

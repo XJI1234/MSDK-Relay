@@ -1,197 +1,48 @@
-# relay-gateway.mission-transfer module contract
+# relay-gateway.mission-transfer 模块契约
 
-Status: Approved and implemented
-Version: 1.0.0
-Parent module: `relay-gateway`
-Gradle path: `:relay-gateway:mission-transfer`
+状态：已批准并已实现
+版本：1.0.0
+所属一级模块：`relay-gateway`
+Gradle 路径：`:relay-gateway:mission-transfer`
 
-This is the only contract, usage guide, public interface description, behavior specification, and acceptance basis for this module. The implementation must not introduce a second design document that changes the rules below.
+本文件是本模块唯一的契约、使用说明、对外接口说明、行为规范和验收依据；实现不得新增改变以下规则的第二份设计文档。
 
-## 1. Purpose
+## 1. 目的与唯一职责
 
-`mission-transfer` owns the integrity of one mission file transfer within one active desktop session. It accepts the three mission transfer frames, stages their bytes through an injected `MissionSink`, verifies the declared size and SHA-256, and reports the terminal result to the desktop through an injected result publisher.
+`mission-transfer` 持有一个有效电脑会话内单个任务文件传输的完整性：接收三个任务传输帧，经注入 `MissionSink` 暂存字节，验证声明大小和 SHA-256，并经注入结果发布器向电脑报告终态。
 
-The module is a deep module: callers provide a session, a frame, a sink, and a publisher. They do not implement chunk ordering, byte counting, digest calculation, replacement, cancellation, or exception redaction themselves.
+调用方只提供会话、帧、sink 和发布器；不得自行处理分块顺序、字节计数、摘要、替换、取消或异常脱敏。模块负责 `mission-begin`、`mission-chunk`、`mission-complete`，每个会话 generation 最多一个活动传输，按到达顺序追加分块且不在模块内保留完整任务，校验大小/摘要，把已验证 `StagedMission` 交给 sink，在失败/替换/会话结束时中止暂存，并发布脱敏 `MissionResultFrame`。
 
-## 2. One responsibility
+它不解释 WPMZ/KMZ/航线/DJI 业务语义，不上传或控制 DJI 任务，不创建/暴露手机绝对路径，不持有 WebSocket、OkHttp、Android、DJI、数据库、UI 对象，不维护会话状态/创建 generation，不保留全部字节，也不决定无关命令或遥测顺序。`MissionSink` 是未来 `wayline-mission` 接缝，生产实现可流式写入私有存储但公开结果只暴露抽象可读句柄。
 
-The module is responsible for:
-
-- accepting `mission-begin`, `mission-chunk`, and `mission-complete`;
-- allowing at most one active transfer per session generation;
-- appending chunks in arrival order;
-- counting bytes without retaining the whole mission in module memory;
-- checking the declared byte count and SHA-256;
-- handing a verified `StagedMission` to the injected sink;
-- aborting incomplete staging when a transfer fails, is replaced, or its session ends;
-- publishing a redacted `MissionResultFrame` for protocol-visible terminal outcomes.
-
-The module is not responsible for:
-
-- interpreting WPMZ, KMZ, wayline, or DJI business semantics;
-- uploading, starting, pausing, resuming, or stopping a DJI mission;
-- creating or exposing an absolute phone file path;
-- owning WebSocket, OkHttp, Android, DJI SDK, database, or UI objects;
-- maintaining connection state or creating session generations;
-- retaining all mission bytes in memory;
-- deciding the order of unrelated commands or telemetry.
-
-`MissionSink` is the seam to the future `wayline-mission` module. A production sink may stream to private storage, but its public result must expose only an abstract readable handle.
-
-## 3. Public interface
-
-### 3.1 Construction
+## 2. 对外接口
 
 ```text
 MissionTransfer(sink, resultPublisher) -> MissionTransfer
-```
-
-The constructor accepts dependencies. It does not create a sink, publisher, executor, file, network object, or Android object.
-
-### 3.2 Frame entry point
-
-```text
-accept(activeSession, frame) -> MissionTransferResult
-```
-
-`frame` must be one of:
-
-- `MissionBeginFrame`;
-- `MissionChunkFrame`;
-- `MissionCompleteFrame`.
-
-The surrounding gateway routes only these three frame types here. A non-mission frame is a caller error and must not alter transfer state. The module may return `UnsupportedFrame` for this programming error; it must not throw.
-
-Every call is associated with `ActiveSession.generation`. State from one generation can never be used by another generation.
-
-### 3.3 Session cleanup
-
-`MissionTransfer` implements `MissionSessionCleanup`:
-
-```text
+accept(activeSession, frame) -> Accepted | Completed(stagedMission) | Rejected(kind) | UnsupportedFrame
 abort(generation, reason) -> void
-```
 
-This method is idempotent. It removes the generation's active transfer and calls `MissionSink.abort`. It does not publish a result because the session is ending and its outbound publisher must not be used to revive an old session.
-
-### 3.4 Results
-
-```text
-Accepted
-Completed(stagedMission)
-Rejected(kind)
-UnsupportedFrame
-```
-
-`Accepted` means the frame was accepted and, for `mission-begin`, staging is open. `Completed` means the sink accepted the complete staged mission and the success result was submitted to the publisher. `Rejected` means the frame was not accepted; the named kind is stable and safe to show.
-
-The rejection kinds are exactly:
-
-```text
-TRANSFER_NOT_ACTIVE
-TRANSFER_ALREADY_ACTIVE
-TRANSFER_SUPERSEDED
-TRANSFER_SIZE_MISMATCH
-TRANSFER_CHECKSUM_MISMATCH
-TRANSFER_FAILED
-```
-
-`TRANSFER_SUPERSEDED` is a terminal result for the old transfer when a different ID begins. The new begin then proceeds independently. The old sink is aborted before the new sink begins.
-
-## 4. Sink seam
-
-```text
 MissionSink.begin(metadata) -> Accepted | Rejected
 MissionSink.append(bytes) -> Accepted | Rejected
 MissionSink.complete() -> StagedMission | Rejected
 MissionSink.abort(reason) -> void
 ```
 
-`MissionMetadata` contains only:
+构造只接受依赖，不创建 sink、发布器、执行器、文件、网络或 Android 对象。`frame` 只能是 `MissionBeginFrame`、`MissionChunkFrame`、`MissionCompleteFrame`；非任务帧是调用方错误，可返回 `UnsupportedFrame` 但不得改变状态或抛出。每次调用绑定 `ActiveSession.generation`，不同 generation 状态永不共享。`abort` 实现 `MissionSessionCleanup`，幂等地删除该 generation 活动传输并调用 sink abort，不发布结果以免复活旧会话。
 
-```text
-transferId
-fileName
-size
-sha256
-```
+`MissionMetadata` 只含 `transferId/fileName/size/sha256`；`StagedMission` 另含抽象 `MissionReadable` 的 `readableByMissionModule`，不得是 String、File、Path、URI 或 Android 类型。传给 sink 的字节必须防御复制；sink 拒绝/细节不得发送给电脑。
 
-`StagedMission` contains:
+## 3. 传输与结果规则
 
-```text
-transferId
-fileName
-size
-sha256
-readableByMissionModule
-```
+1. begin 仅在 sink begin 接受后创建传输；同 ID 第二次 begin 保留当前传输并返回 `TRANSFER_ALREADY_ACTIVE`；不同 ID begin 先 abort 旧传输、为旧 ID 发布 `TRANSFER_SUPERSEDED`，再独立尝试新 begin。
+2. 无匹配活动传输的 chunk 返回 `TRANSFER_NOT_ACTIVE` 且不调用 sink；匹配 chunk 恰好追加一次，以原始字节长度累计；将超声明大小的 chunk 必须 abort 并返回 `TRANSFER_SIZE_MISMATCH`。
+3. complete 要求累计大小精确等于声明大小，然后比较全部原始追加字节的小写 SHA-256；大小不符返回 `TRANSFER_SIZE_MISMATCH`，摘要不符返回 `TRANSFER_CHECKSUM_MISMATCH`，均 abort。
+4. sink 成功 complete 产生一个成功 `MissionResultFrame` 和一个 `Completed`；每种终态拒绝对该 ID 最多一个失败结果帧。发布器失败/异常不得改变状态或抛出；sink 异常转为 `TRANSFER_FAILED`、移除活动传输并尽力 abort；abort 后延迟 chunk/complete 不得写入；模块实例内并发调用必须串行化。
 
-`readableByMissionModule` is an abstract `MissionReadable` handle. It is not a `String`, `File`, `Path`, URI, or Android-specific type. The phone's storage implementation remains private to the sink.
+拒绝种类只能是 `TRANSFER_NOT_ACTIVE`、`TRANSFER_ALREADY_ACTIVE`、`TRANSFER_SUPERSEDED`、`TRANSFER_SIZE_MISMATCH`、`TRANSFER_CHECKSUM_MISMATCH`、`TRANSFER_FAILED`。协议 core 已校验帧字段、文件名、声明大小、chunk 大小和 SHA-256 格式，本模块只做传输层校验，不重复 JSON/协议解析。
 
-The module passes defensive byte copies to the sink. Sink rejection is treated as `TRANSFER_FAILED`; the exception or sink detail is never sent to the desktop.
+发布接缝为 `publish(activeSession, MissionResultFrame) -> PublishResult`，必须使用提供帧的同一会话；过期会话发布拒绝忽略，不得路由至新会话。安全 detail 分别固定为 `Mission transfer is not active`、`Mission transfer is already active`、`Mission transfer was superseded`、`Mission transfer size does not match`、`Mission transfer checksum does not match`、`Mission transfer failed`。不得发布异常类/消息、手机路径、临时文件名、堆栈或 sink 细节。
 
-## 5. Transfer rules
+## 4. 测试与变更
 
-1. `mission-begin` creates a transfer after `MissionSink.begin` accepts it.
-2. A second begin with the same ID preserves the current transfer and returns `TRANSFER_ALREADY_ACTIVE`.
-3. A begin with a different ID aborts the old transfer, publishes `TRANSFER_SUPERSEDED` for the old ID, then attempts the new begin.
-4. A chunk without a matching active transfer returns `TRANSFER_NOT_ACTIVE` and does not call the sink.
-5. A matching chunk is appended exactly once and increases the running byte count by its raw byte length.
-6. A chunk that would exceed the declared size aborts the transfer and returns `TRANSFER_SIZE_MISMATCH`.
-7. `mission-complete` requires the running byte count to equal the declared size.
-8. Completion then compares the lower-case SHA-256 digest of all appended raw bytes with the declared digest.
-9. A size mismatch aborts the transfer and returns `TRANSFER_SIZE_MISMATCH`.
-10. A digest mismatch aborts the transfer and returns `TRANSFER_CHECKSUM_MISMATCH`.
-11. A successful sink completion produces one `MissionResultFrame(id, true, ...)` and one `Completed` result.
-12. Every terminal rejection produces at most one `MissionResultFrame(id, false, safeDetail)` for that transfer ID.
-13. A publisher failure never changes transfer state and never throws through the module interface.
-14. A sink exception is converted to `TRANSFER_FAILED`, the active transfer is removed, and a best-effort abort is attempted.
-15. `abort(generation, reason)` prevents late chunks and completion frames from writing to that generation's sink.
-16. Concurrent calls are serialized per module instance. A transfer cannot be appended, completed, replaced, and cancelled in an interleaved state.
-
-The protocol-core module has already validated frame fields, file name, declared size, chunk size, and SHA-256 format before this module is called. This module owns transfer-level validation only; it does not duplicate JSON or protocol parsing.
-
-## 6. Result publication
-
-The publisher seam is:
-
-```text
-publish(activeSession, MissionResultFrame) -> PublishResult
-```
-
-The module never holds a writer or transport. Publication is best effort and must be attempted with the same `ActiveSession` that supplied the frame. A stale-session publisher rejection is ignored; it must not route the result to a newer session.
-
-Safe details are fixed strings:
-
-| Kind | Detail |
-| --- | --- |
-| `TRANSFER_NOT_ACTIVE` | `Mission transfer is not active` |
-| `TRANSFER_ALREADY_ACTIVE` | `Mission transfer is already active` |
-| `TRANSFER_SUPERSEDED` | `Mission transfer was superseded` |
-| `TRANSFER_SIZE_MISMATCH` | `Mission transfer size does not match` |
-| `TRANSFER_CHECKSUM_MISMATCH` | `Mission transfer checksum does not match` |
-| `TRANSFER_FAILED` | `Mission transfer failed` |
-
-No exception class, exception message, phone path, temporary file name, stack trace, or sink-specific detail may be published.
-
-## 7. Acceptance tests
-
-Tests must cover, at minimum:
-
-- complete begin/chunk/complete flow and exact sink bytes;
-- success result publication and returned staged handle;
-- no active transfer;
-- same-ID duplicate begin;
-- different-ID replacement and old-transfer abort;
-- chunk ID mismatch;
-- overrun, underrun, and checksum mismatch;
-- sink rejection and sink exception at every operation;
-- cleanup cancellation and late frames;
-- generation isolation;
-- publisher rejection and publisher exception;
-- concurrent delivery without duplicate append or completion;
-- architecture restrictions: no Android, DJI, network, transport, path, or file dependency in the implementation.
-
-## 8. Change rule
-
-The implementation cannot expand this module's responsibility silently. Any new frame, error kind, sink field, or externally observable ordering rule requires an explicit contract update and corresponding tests before implementation.
+测试必须覆盖完整 begin/chunk/complete 与精确 sink 字节、成功发布和暂存句柄、无活动传输、同/异 ID begin、ID 不匹配、超量/不足/摘要不符、每种 sink 拒绝/异常、清理取消与延迟帧、generation 隔离、发布器拒绝/异常、并发无重复追加/完成，以及无 Android、DJI、网络、传输、路径、文件依赖的架构限制。新增帧、错误种类、sink 字段或外部可观察顺序前，必须先更新本契约及测试。

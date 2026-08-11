@@ -1,61 +1,49 @@
-# device-identity module contract
+# device-identity 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: relay-settings
-Gradle path: :relay-settings:device-identity
+状态：已批准实现
+版本：1.0.0
+所属一级模块：relay-settings
+Gradle 路径：:relay-settings:device-identity
 
-## Single responsibility
+## 唯一职责
 
-Create and return the stable identity of this mobile installation. It validates both restored and newly generated values against the relay protocol identifier rules, caches only a successfully resolved value, and coordinates concurrent callers in one process.
+本模块创建并返回此移动端安装的稳定身份。它依照中继协议标识规则校验恢复值和新生成值，只缓存成功解析的值，并协调同一进程的并发调用。
 
-It does not persist endpoint settings, choose a computer, open a connection, authenticate the user, log an identity, access Android APIs, repair corrupt durable storage, or expose a storage exception.
+它不持久化端点设置、不选择电脑、不建立连接、不认证用户、不记录身份、不访问 Android API、不修复损坏持久化存储，也不暴露存储异常。
 
-## Interface
+## 对外接口
 
 ```text
 DeviceIdentity.create(storage, generator?) -> DeviceIdentity
-
-identity.identity()
-  -> Available(DeviceId)
-  | Unavailable(STORAGE_FAILURE | STORED_VALUE_INVALID | GENERATED_VALUE_INVALID)
-
-DeviceIdentityStorage.readOrCreate(candidate) -> stored value
-DeviceIdentityGenerator.generate() -> candidate value
+identity.identity() -> Available(DeviceId) | Unavailable(STORAGE_FAILURE | STORED_VALUE_INVALID | GENERATED_VALUE_INVALID)
+DeviceIdentityStorage.readOrCreate(candidate) -> 已存储值
+DeviceIdentityGenerator.generate() -> 候选值
 ```
 
-`DeviceIdentityStorage.readOrCreate` is the module's only persistence boundary. Its implementation belongs to `settings-store`. It must be atomic and linearizable across all readers and writers using the same installation storage: it returns the already stored value, or stores and returns the supplied candidate exactly once when empty. A missing/corrupt record is a storage concern; `settings-store` must recover it before this method returns. It may throw on an I/O or transaction failure; the identity module maps that failure to `STORAGE_FAILURE` without exposing the exception.
+`DeviceIdentityStorage.readOrCreate` 是唯一持久化接缝，其实现属于 `settings-store`。它必须对使用同一安装存储的所有读写原子且线性化：已有值时返回该值；为空时恰好存储并返回给定候选值。缺失/损坏记录是 `settings-store` 的恢复职责；I/O 或事务失败可抛出，但本模块必须映射为不暴露异常的 `STORAGE_FAILURE`。
 
-`DeviceIdentityGenerator` exists solely to make generation deterministic in tests. The default uses a random UUID string. Production callers must not supply a predictable generator.
+`DeviceIdentityGenerator` 仅用于令测试生成可确定；默认使用随机 UUID 字符串，生产调用方不得提供可预测生成器。`DeviceId.value` 非空白、无 ISO 控制字符且为 1 至 128 个 Unicode 码点，与 `protocol-core` 当前 `deviceId` 约束完全一致。该值不透明：可以作为 `SessionConfig.deviceId` 传给 `relay-gateway`，不得推断设备元数据或将其作为凭据。
 
-`DeviceId.value` is nonblank, contains no ISO control character, and has 1 through 128 Unicode code points. This is exactly the current `protocol-core` `deviceId` constraint. The value is opaque: callers may pass it to `relay-gateway` as `SessionConfig.deviceId`, but must not infer device metadata from it or use it as a credential.
+## 解析、失败与并发规则
 
-## Resolution rules
+1. 首次成功调用通过生成器创建一个候选值，并要求存储原子解析该值。
+2. 返回值必须先校验才可见或缓存；其他进程存储的有效胜出值原样返回。
+3. 一旦缓存有效值，后续调用必须返回同一 `DeviceId`，且不再调用生成器或存储。
+4. 并发调用在进程内只进行一次解析；所有成功调用者获得相同值。失败不缓存，后续调用可重试。
+5. 无效生成候选不得交给存储；存储返回无效值时本模块不得替换它。
 
-1. The first successful call creates one candidate through the generator and asks storage to resolve it atomically.
-2. A returned value is validated before becoming visible or cached. A stored winner from another process is valid and is returned unchanged.
-3. Once a valid value is cached, every later call returns the same `DeviceId` without calling the generator or storage.
-4. Concurrent calls have one in-process resolution. Every successful concurrent caller receives the same value. A failure is not cached, so a later call may retry.
-5. A failed generated candidate must not be offered to storage. An invalid value returned by storage must never be replaced by this module.
-
-## Failure and concurrency behavior
-
-| Situation | Result | Storage/generator calls | Cached value |
+| 情形 | 结果 | 存储/生成器调用 | 缓存 |
 | --- | --- | --- | --- |
-| Valid existing or newly stored value | `Available` | one resolution at most | stored |
-| Storage throws | `Unavailable(STORAGE_FAILURE)` | no implicit retry | unchanged |
-| Generator throws | `Unavailable(STORAGE_FAILURE)` | storage not called | unchanged |
-| Generated candidate violates ID rules | `Unavailable(GENERATED_VALUE_INVALID)` | storage not called | unchanged |
-| Storage returns invalid value | `Unavailable(STORED_VALUE_INVALID)` | no overwrite | unchanged |
+| 有效已有或新存储值 | `Available` | 最多一次解析 | 存储 |
+| 存储抛出 | `Unavailable(STORAGE_FAILURE)` | 不隐式重试 | 不变 |
+| 生成器抛出 | `Unavailable(STORAGE_FAILURE)` | 不调用存储 | 不变 |
+| 生成候选无效 | `Unavailable(GENERATED_VALUE_INVALID)` | 不调用存储 | 不变 |
+| 存储返回无效值 | `Unavailable(STORED_VALUE_INVALID)` | 不覆盖 | 不变 |
 
-All public calls are synchronous and thread-safe. The module has no callbacks, threads, executors, timeouts, or cancellation. Its internal lock is never held while the generator or storage implementation runs, so an implementation may synchronously re-enter `identity()` without deadlocking. Re-entrant resolution before the original call completes is treated as an independent contender and resolves through the same storage atomicity; it is never cached until valid.
+全部公开调用同步、线程安全；没有回调、线程、执行器、超时或取消。调用生成器或存储时不得持有内部锁，因此同步重入 `identity()` 不得死锁；原调用完成前的重入是独立竞争者，仍依赖同一存储原子性，只有有效后才缓存。失败结果不得包含完整设备 ID、候选值、存储返回值、异常消息或堆栈。
 
-No full device identifier, candidate, returned storage value, exception message, or stack trace is returned through a failure result.
+## 测试与兼容性
 
-## Tests
+JVM 测试必须覆盖默认有效性、恢复值、一次创建和缓存、存储竞争胜出、生成器/存储失败、无效生成和存储值、所有边界约束、每种失败后的重试、并发调用及生成器/存储重入；并确认无效候选不会到达存储且失败不缓存。
 
-JVM tests must cover default validity, restored value, one-time creation and caching, competing storage winner, generator failures, storage failures, invalid generated and stored values, all boundary constraints, retry after every failure, concurrent callers, and re-entrant generator or storage behavior. Tests must confirm that no invalid candidate reaches storage and that no failure is cached.
-
-## Compatibility rules
-
-`DeviceId` and the failure enum are public, stable protocol boundaries. Adding a failure reason, changing identifier constraints, changing atomic storage semantics, or exposing storage implementation details requires updating this contract, the parent contract, consumers, and tests first.
+`DeviceId` 与失败枚举是稳定公开协议边界。新增失败原因、改变标识约束、原子存储语义或暴露存储实现细节前，必须先更新本契约、父契约、消费者和测试。

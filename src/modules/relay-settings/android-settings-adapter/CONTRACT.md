@@ -1,29 +1,29 @@
-# android-settings-adapter module contract
+# android-settings-adapter 模块契约
 
-Status: approved for implementation
-Version: 1.0.0
-Parent module: relay-settings
-Gradle path: :relay-settings:android-settings-adapter
+状态：已批准实现
+版本：1.0.0
+所属一级模块：relay-settings
+Gradle 路径：:relay-settings:android-settings-adapter
 
-## Single responsibility
+## 唯一职责
 
-Provide the Android implementation of `RelaySettingsBackend` using one private `SharedPreferences` file. It is the only adapter allowed to convert the opaque relay-settings record to Android key/value storage.
+本模块使用一个私有 `SharedPreferences` 文件实现 `RelaySettingsBackend`，是唯一允许将不透明 relay-settings 记录转换为 Android 键值存储的适配器。
 
-It does not validate endpoints, generate device IDs, decide settings recovery, expose preferences to callers, connect the desktop, request permissions, or access DJI.
+它不校验端点、不生成设备 ID、不决定设置恢复、不向调用方暴露 preferences、不连接电脑、不请求权限，也不访问 DJI。
 
-## Interface and storage ownership
+## 对外接口与存储所有权
 
 ```text
 AndroidRelaySettingsBackend.create(context) -> RelaySettingsBackend
-backend.update(change) -> committed RelaySettingsRecord?
+backend.update(change) -> 已提交的 RelaySettingsRecord?
 ```
 
-The adapter stores only schema version, endpoint, and device ID under private application storage. `RelaySettingsStore` remains owner of schema migration and recovery rules; the adapter preserves nullable raw values exactly and does not inspect their contents.
+适配器只在应用私有存储中保存 schema 版本、端点和设备 ID。`RelaySettingsStore` 始终拥有 schema 迁移与恢复规则；适配器必须原样保留可空原始值，且不检查其内容。
 
-The application must run relay settings in one Android process. `SharedPreferences` does not provide cross-process transactions, so declaring a second process for the app, its service, or a receiver that writes relay settings is forbidden. Within the app process, `update` is serialized, transforms one complete immutable record, and uses synchronous `commit()` so a successful return means the replacement is durable.
+应用必须只在一个 Android 进程内运行中继设置。`SharedPreferences` 不提供跨进程事务，因此禁止为应用、服务或会写入中继设置的接收器声明第二进程。同一应用进程中，`update` 必须串行化，转换一条完整不可变记录，并使用同步 `commit()`，使成功返回表示替换已持久化。
 
-Malformed preference types, unavailable storage, a failed commit, or a transform exception are represented by a generic adapter exception with no raw value or Android exception text. `RelaySettingsStore` maps it to its stable failure result.
+错误类型的 preference、存储不可用、提交失败或转换异常必须以通用适配器异常表示，且不得包含原始值或 Android 异常文字；`RelaySettingsStore` 负责映射为稳定失败结果。
 
-## Tests
+## 测试
 
-Pure JVM tests cover record encode/decode, null handling, preservation of opaque values, atomic update serialization, failed commit mapping, malformed storage mapping, and no raw-value leakage. Android instrumentation tests cover real `SharedPreferences` durability and process configuration before release.
+纯 JVM 测试必须覆盖记录编解码、null 处理、不透明值保留、原子更新串行化、提交失败映射、畸形存储映射和无原始值泄漏。发布前 Android 仪表测试必须覆盖真实 `SharedPreferences` 持久性和进程配置。

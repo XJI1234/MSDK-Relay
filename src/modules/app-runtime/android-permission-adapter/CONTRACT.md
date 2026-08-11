@@ -1,34 +1,23 @@
-# android-permission-adapter module contract
+# android-permission-adapter 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: app-runtime
-Logical Gradle path: :app-runtime:android-permission-adapter
+状态：已实现并已验证
+版本：1.0.0
+所属一级模块：app-runtime
+逻辑 Gradle 路径：:app-runtime:android-permission-adapter
 
-## Single responsibility
+## 唯一职责
 
-`android-permission-adapter` is the Android implementation of the
-`PermissionPort` seam owned by `app-runtime:permission-coordinator`. It
-translates the platform-neutral request for `RUNTIME` and `USB_ACCESS` into
-Android runtime permission checks, Activity Result requests, USB accessory
-broadcasts, and USB permission requests.
+`android-permission-adapter` 是 `app-runtime:permission-coordinator` 所拥有 `PermissionPort` 接缝的 Android 实现。它将平台无关的 `RUNTIME` 和 `USB_ACCESS` 请求转换为 Android 运行时权限检查、Activity Result 请求、USB 附件广播和 USB 授权请求。
 
-It owns no permission policy beyond the fixed mapping documented below. It
-does not coordinate application startup, start or stop a foreground service,
-initialize DJI, open a WebSocket, persist relay settings, or produce user
-interface text.
+除下文固定映射外，它不持有任何权限策略；不协调应用启动、不启动或停止前台服务、不初始化 DJI、不建立 WebSocket、不持久化中继设置，也不生成用户界面文字。
 
-## Public interface
+## 对外接口
 
-The adapter exposes the existing `PermissionPort` interface to the runtime
-composition root and one Android-only lifecycle operation:
+适配器向运行时组合根暴露既有 `PermissionPort`，并提供一个 Android 专用生命周期操作：
 
 ```text
-AndroidPermissionAdapter.attach(
-    activity,
-    activityResultRegistry,
-    lifecycleOwner,
-) -> AndroidPermissionAdapter
+AndroidPermissionAdapter.attach(activity, activityResultRegistry, lifecycleOwner)
+  -> AndroidPermissionAdapter
 
 adapter implements PermissionPort
 adapter.snapshot() -> PermissionSnapshot
@@ -36,109 +25,41 @@ adapter.request(required, callback) -> PermissionCancellation
 adapter.close() -> Unit
 ```
 
-`attach` must be called before `lifecycleOwner` reaches `STARTED`. The
-`activity` must be the same window that owns `activityResultRegistry`, and the
-registry must remain alive until `close`. The adapter registers one stable
-Activity Result launcher and one non-exported USB broadcast receiver. The
-caller owns the adapter instance and calls `close` before destroying the
-owning Android lifecycle.
+必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；调用方持有实例，并在所属 Android 生命周期销毁前调用 `close`。
 
-The adapter never exposes `Activity`, `Intent`, `UsbAccessory`, permission
-strings, `Exception`, or Android callback objects through `PermissionPort`.
+适配器不得通过 `PermissionPort` 暴露 `Activity`、`Intent`、`UsbAccessory`、权限字符串、`Exception` 或 Android 回调对象。
 
-## Fixed Android mapping
+## 固定 Android 映射
 
-`PermissionKind.RUNTIME` maps to the permissions already required by the
-existing mobile application:
+`PermissionKind.RUNTIME` 映射为移动端现有应用所需权限：
 
-| Android version | Requested permissions |
+| Android 版本 | 请求权限 |
 | --- | --- |
-| API 33 and newer | `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `READ_PHONE_STATE`, `RECORD_AUDIO`, `POST_NOTIFICATIONS` |
-| API 29 through 32 | the four permissions above except `POST_NOTIFICATIONS`, plus `READ_EXTERNAL_STORAGE` |
-| API 24 through 28 | the four permissions above except `POST_NOTIFICATIONS`, plus `READ_EXTERNAL_STORAGE` |
+| API 33 及以上 | `ACCESS_COARSE_LOCATION`、`ACCESS_FINE_LOCATION`、`READ_PHONE_STATE`、`RECORD_AUDIO`、`POST_NOTIFICATIONS` |
+| API 29 至 32 | 前四项（不含 `POST_NOTIFICATIONS`）及 `READ_EXTERNAL_STORAGE` |
+| API 24 至 28 | 前四项（不含 `POST_NOTIFICATIONS`）及 `READ_EXTERNAL_STORAGE` |
 
-The adapter removes permissions that are not declared or not applicable to
-the current SDK before launching the request. It never requests a permission
-that is already granted.
+请求前必须移除未声明或对当前 SDK 不适用的权限，且绝不请求已授予权限。
 
-`PermissionKind.USB_ACCESS` maps to the currently attached USB accessory.
-`GRANTED` means an accessory exists and `UsbManager.hasPermission` is true.
-`DENIED` means an accessory exists and Android has not granted access.
-`UNKNOWN` means no accessory is currently attached. The adapter does not
-pretend that a missing accessory is authorized.
+`PermissionKind.USB_ACCESS` 映射为当前接入的 USB 附件。存在附件且 `UsbManager.hasPermission` 为真时为 `GRANTED`；存在附件但 Android 未授权时为 `DENIED`；没有附件时为 `UNKNOWN`。缺失附件绝不能伪装为已授权。
 
-## Request and state rules
+## 请求、状态与安全规则
 
-1. `snapshot` is side-effect free and returns a new immutable view of runtime
-   permission state and USB accessory state.
-2. A request for only already-granted kinds is not sent to Android. The
-   coordinator normally handles this shortcut, but the adapter preserves the
-   same result if called directly.
-3. At most one request is active. A second request is rejected by the
-   `PermissionCoordinator`; the adapter itself may throw
-   `IllegalStateException` if an integration bypasses that coordinator.
-4. A runtime request launches exactly once. Its result is reconciled with a
-   fresh permission check, so incomplete, reordered, or duplicate result maps
-   cannot grant a permission that Android did not grant.
-5. A USB request uses an explicit, package-scoped `PendingIntent`. If no
-   accessory exists, the request waits for the next attach broadcast or until
-   its cancellation is called. If the accessory is detached while waiting,
-   the state becomes `UNKNOWN` and the request remains cancellable.
-6. The callback is terminal and is delivered at most once. It is delivered
-   when every required kind is `GRANTED`, or when a required kind is
-   `DENIED`/`PERMANENTLY_DENIED`. An `UNKNOWN` USB state alone does not report
-   success or failure.
-7. Cancellation is idempotent. It unregisters the active operation from the
-   adapter, cancels Android delivery where possible, and guarantees that
-   later Activity Result or USB callbacks cannot reach the caller.
-8. `close` is idempotent. It unregisters Android listeners and cancels the
-   active request. No callback is delivered after `close` returns.
-9. Broadcasts and Activity Result callbacks may arrive on any Android
-   callback turn, but all adapter state transitions are serialized on the
-   adapter lock. Listener and platform cleanup failures do not escape as
-   Android crashes.
+1. `snapshot` 无副作用，并返回运行时权限及 USB 附件状态的新不可变视图。
+2. 仅含已授予种类的请求不得发送至 Android；即使绕过协调器直接调用，适配器也保持此结果。
+3. 最多一个请求有效。协调器拒绝第二个请求；绕过协调器的集成可得到 `IllegalStateException`。
+4. 运行时请求恰好启动一次；结果必须以最新权限检查为准，故不完整、乱序或重复结果表不能授予 Android 实际未授予的权限。
+5. USB 请求使用显式、限定本应用包的 `PendingIntent`。没有附件时等待下次接入广播或取消；等待中断开时状态为 `UNKNOWN`，请求仍可取消。
+6. 回调为终态且最多一次。全部请求种类为 `GRANTED` 时交付成功；任一请求种类为 `DENIED`/`PERMANENTLY_DENIED` 时交付拒绝。单独的 `UNKNOWN` USB 状态既不成功也不失败。
+7. 取消幂等：注销有效操作、尽可能取消 Android 交付，并保证后续 Activity Result 或 USB 回调不能到达调用方。
+8. `close` 幂等，注销 Android 监听器并取消有效请求；返回后不得再交付回调。
+9. 广播和 Activity Result 可在任意 Android 回调轮次到达，但所有适配器状态迁移必须由适配器锁串行化；监听器和平台清理失败不得变成 Android 崩溃。
 
-The adapter records that a runtime permission was requested so it can classify
-the Android case where `shouldShowRequestPermissionRationale` is false after
-an earlier denial as `PERMANENTLY_DENIED`. A first-time denial is classified
-as `DENIED`. This history is private adapter metadata and is not relay
-configuration.
+适配器仅记录“运行时权限是否曾被请求”，用于将先前拒绝后 `shouldShowRequestPermissionRationale=false` 分类为 `PERMANENTLY_DENIED`；首次拒绝为 `DENIED`。该历史是私有适配器元数据，不是中继配置。
 
-## Lifecycle and security
+## 生命周期、失败与验证
 
-- Registration occurs only while the supplied lifecycle is active.
-- The USB receiver is not exported and accepts only the adapter's generated
-  permission action plus Android accessory attach/detach actions.
-- The USB permission `PendingIntent` is explicit to this application package,
-  immutable, and uses a unique action derived from the package name.
-- `close` must be called from the composition root; the adapter does not own
-  the Activity or process lifecycle.
-- The adapter does not log permission names, accessory identities, intent
-  contents, or exception messages.
-
-## Failure behaviour
-
-- A platform check failure is represented by the coordinator's `PORT_FAILURE`
-  rejection or terminal `Failed` result; Android exceptions do not cross the
-  seam.
-- A denied runtime request produces a snapshot with `DENIED` or
-  `PERMANENTLY_DENIED`; it is not represented as a successful callback.
-- A missing USB accessory produces `UNKNOWN`, never `GRANTED`.
-- Duplicate and late callbacks are ignored after terminal completion,
-  cancellation, or close.
-
-## Tests required before implementation is complete
-
-The module tests must cover:
-
-- API 24, API 32, and API 33 runtime permission mapping;
-- already-granted permissions being skipped;
-- partial grant, full grant, ordinary denial, and permanent denial;
-- incomplete and duplicate Activity Result maps;
-- USB attached, granted, denied, detached, and attach-after-request states;
-- cancellation before and after each platform callback;
-- duplicate and late callbacks from both Android request mechanisms;
-- close during an active request and repeated close;
-- platform exceptions, listener isolation, and serialized state transitions;
-- the non-exported receiver and explicit PendingIntent configuration where
-  Android instrumentation coverage is available.
+- 仅在给定生命周期有效时注册；USB 接收器非导出，只接收适配器生成的授权 action 及 Android 附件接入/断开 action。
+- USB `PendingIntent` 必须显式、不可变，并使用由包名派生的唯一 action；`close` 只能由组合根调用，适配器不拥有 Activity 或进程生命周期。
+- 不得记录权限名、附件身份、Intent 内容或异常消息。平台检查失败映射为协调器的 `PORT_FAILURE` 拒绝或终态 `Failed`；拒绝运行时请求产生 `DENIED` 或 `PERMANENTLY_DENIED` 快照；缺失 USB 附件始终为 `UNKNOWN`；完成、取消或关闭后的重复/延迟回调必须忽略。
+- 测试必须覆盖 API 24/32/33 映射、已授权跳过、部分/完整授权、普通/永久拒绝、不完整与重复结果表、USB 接入/授权/拒绝/断开/请求后接入、每个平台回调前后取消、重复及延迟回调、活动请求中关闭及重复关闭、平台异常、监听器隔离、串行状态迁移，以及可用时非导出接收器和显式 PendingIntent 的 Android 仪表验证。

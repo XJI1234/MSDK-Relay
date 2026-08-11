@@ -1,79 +1,45 @@
-# android-foreground-service-adapter module contract
+# android-foreground-service-adapter 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: app-runtime
-Logical Gradle path: :app-runtime:android-foreground-service-adapter
+状态：已实现并已验证
+版本：1.0.0
+所属一级模块：app-runtime
+逻辑 Gradle 路径：:app-runtime:android-foreground-service-adapter
 
-## Single responsibility
+## 唯一职责
 
-This module is the Android implementation of the `ForegroundServicePort` seam.
-It starts and stops one relay foreground service, creates its notification
-channel and notification, and reports whether that service actually entered or
-left foreground execution.
+本模块实现 `ForegroundServicePort` 接缝：启动和停止一个中继前台服务，创建通知渠道和通知，并报告该服务是否实际进入或离开前台执行。
 
-It does not start relay-gateway, DJI, telemetry, live stream, mission, or
-settings modules. It does not decide when the relay should run. The pure
-`ForegroundServiceController` owns transition rules; `AppRuntime` owns the
-startup order; the Android application supplies only notification resources.
+它不启动 relay-gateway、DJI、遥测、图传、航线或设置模块，也不决定中继何时运行。纯 `ForegroundServiceController` 持有迁移规则，`AppRuntime` 持有启动顺序，Android 应用只提供通知资源。
 
-## Public interface
+## 对外接口
 
 ```text
-AndroidForegroundServicePort.create(applicationContext, notificationSpec)
-  -> AndroidForegroundServicePort
-
+AndroidForegroundServicePort.create(applicationContext, notificationSpec) -> AndroidForegroundServicePort
 port implements ForegroundServicePort
 port.start(callback) -> Unit
 port.stop(callback) -> Unit
 port.close() -> Unit
 ```
 
-`notificationSpec` contains a stable channel id, channel name resource id,
-notification text resource id, notification id, and small-icon resource id.
-It contains no business state and never changes while the service is running.
-`create` registers a non-exported, package-scoped receiver before the first
-start. `close` unregisters that receiver; the composition root calls it only
-after the controller has stopped the service.
+`notificationSpec` 包含稳定渠道 ID、渠道名称资源 ID、通知文本资源 ID、通知 ID 和小图标资源 ID；不含业务状态，且服务运行期间不得变化。`create` 在首次启动前注册非导出、仅本包可见的接收器。组合根只在控制器停止服务后调用 `close` 注销它。
 
-## Start and stop rules
+## 启动和停止规则
 
-1. `start` generates one opaque operation id, stores its callback, and uses
-   `ContextCompat.startForegroundService` on Android O and newer.
-2. `RelayForegroundService` creates the channel and calls `startForeground`
-   before it reports `started`. A failure before that point reports `failed`.
-3. The port accepts only the matching operation id. Duplicate, late, foreign,
-   or post-close broadcasts are ignored.
-4. `stop` completes immediately when this adapter has not observed a running
-   service. Otherwise it sends an explicit stop command to the relay service;
-   the service publishes `stopped` from its destruction path. The command is
-   never sent through an implicit intent.
-5. Only one port operation is active. A second direct caller receives
-   `IllegalStateException`; the pure controller prevents this in normal use.
-6. `close` is idempotent and prevents all later callbacks. It never starts,
-   stops, or restarts business modules.
+1. `start` 生成一个不透明操作 ID，保存回调，并在 Android O 及以上使用 `ContextCompat.startForegroundService`。
+2. `RelayForegroundService` 创建渠道并在报告 `started` 前调用 `startForeground`；此前失败报告 `failed`。
+3. 端口只接受匹配的操作 ID；重复、延迟、外来或 `close` 后广播必须忽略。
+4. 未观察到运行服务时 `stop` 立即完成；否则向中继服务发送显式停止命令，服务在销毁路径发布 `stopped`。不得使用隐式 Intent。
+5. 同时只能有一个端口操作。绕开纯控制器的第二个直接调用会得到 `IllegalStateException`。
+6. `close` 是幂等操作，禁止后续回调，且绝不启动、停止或重启业务模块。
 
-## Notification and security rules
+## 通知与安全规则
 
-- The service creates exactly one notification channel, with low importance,
-  on Android O and newer.
-- The service notification is ongoing and has the configured small icon.
-- All control and status intents are explicit to this application package.
-- The status receiver is registered with `RECEIVER_NOT_EXPORTED` where the
-  platform supports it; no exported receiver or bindable service is added.
-- Android exceptions, intent extras, notification data, and stack traces never
-  cross `ForegroundServicePort`.
+- Android O 及以上恰好创建一个低重要性通知渠道。
+- 服务通知必须常驻并使用配置的小图标。
+- 所有控制和状态 Intent 必须显式指向本应用包。
+- 平台支持时状态接收器以 `RECEIVER_NOT_EXPORTED` 注册；不得新增导出接收器或可绑定服务。
+- Android 异常、Intent extra、通知数据和堆栈不得越过 `ForegroundServicePort`。
 
-## Verification coverage
+## 验证要求
 
-- start, stop, and failure terminal callbacks at the port boundary;
-- exact operation-id matching, unexpected direction, duplicate, late, foreign,
-  and post-close callbacks;
-- repeated direct calls, callback isolation, synchronous platform throws, and
-  platform resource release;
-- notification specification validation;
-- The Android build verifies the service declaration, required foreground
-  service permissions, and compilation of the `startForeground` path. A
-  device-level instrumentation test remains an application integration test,
-  because this library does not own the host application's resources or test
-  runner.
+测试必须覆盖端口边界的启动、停止和失败终态回调；精确操作 ID 匹配、错误方向、重复、延迟、外来及 `close` 后回调；重复直接调用、回调隔离、同步平台抛出和平台资源释放；通知规格校验。Android 构建必须验证服务声明、前台服务权限及 `startForeground` 路径编译。真机仪表测试属于应用集成测试，因为库不持有宿主资源或测试运行器。

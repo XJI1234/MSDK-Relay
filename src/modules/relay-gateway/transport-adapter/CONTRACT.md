@@ -1,125 +1,49 @@
-# relay-gateway.transport-adapter module contract
+# relay-gateway.transport-adapter 模块契约
 
-Status: Approved and implemented
-Version: 1.0.0
-Parent module: `relay-gateway`
-Gradle path: `:relay-gateway:transport-adapter`
+状态：已批准并已实现
+版本：1.0.0
+所属一级模块：`relay-gateway`
+Gradle 路径：`:relay-gateway:transport-adapter`
 
-This is the only contract, usage guide, public interface description, behavior specification, and acceptance basis for this module.
+本文件是本模块唯一的契约、使用说明、对外接口说明、行为规范和验收依据；实现不得新增改变以下规则的第二份设计文档。
 
-## 1. Purpose
+## 1. 目的与唯一职责
 
-`transport-adapter` translates exactly one WebSocket library into the `connection-session` transport interfaces. It establishes a WebSocket, writes raw bytes, requests a close, and turns network callbacks into `opened`, `bytes`, `closed`, and `failure` callbacks carrying the supplied `SessionGeneration`.
+`transport-adapter` 将唯一一种 WebSocket 库适配为 `connection-session` 的传输接口：建立 WebSocket、写入原始字节、请求关闭，并把网络回调转换为携带调用方 `SessionGeneration` 的 `opened`、`bytes`、`closed`、`failure` 回调。
 
-It is the only `relay-gateway` secondary module permitted to import OkHttp or a concrete WebSocket type. The rest of the gateway talks only to `TransportConnector`, `TransportConnection`, `TransportWriter`, and `TransportListener` from `connection-session`.
+它是 `relay-gateway` 唯一允许导入 OkHttp 或具体 WebSocket 类型的二级模块；其他 gateway 模块只能使用 `connection-session` 的 `TransportConnector`、`TransportConnection`、`TransportWriter`、`TransportListener`。
 
-## 2. One responsibility
+本模块负责建立出站 `ws://`/`wss://`、将每条连接和回调绑定调用方 generation、暴露字节写入器、按接收顺序转发二进制载荷、把库失败/拒绝写入/拒绝关闭/畸形端点转换为稳定传输结果、确保重复网络终态最多触发一次监听器终态回调、使用 OkHttp 15 秒协议 ping 检测停滞电脑会话，并隔离库异常和原始网络细节。
 
-The module is responsible for:
+它不处理 JSON、Base64、中继帧、`hello`、`paired` 或协议校验；不持有会话状态、握手超时、重连、命令分发、遥测、任务传输或出站队列；不处理 Android 生命周期、权限、DJI、任务文件或 UI；不决定端点是否持久化/可编辑；不把 WebSocket 文本消息解释为中继消息。
 
-- creating an outbound `ws://` or `wss://` WebSocket connection;
-- associating every connection and callback with the caller supplied `SessionGeneration`;
-- exposing a `TransportConnection` and byte-only `TransportWriter`;
-- forwarding binary WebSocket payloads in receive order;
-- converting library failures, rejected writes, rejected closes, and malformed endpoints into stable transport results;
-- ensuring duplicate terminal network callbacks cause at most one terminal listener callback;
-- using an OkHttp protocol ping interval of 15 seconds to detect a stalled desktop session;
-- containing library exceptions and raw network details inside the adapter.
-
-The module is not responsible for:
-
-- JSON, Base64, relay frames, `hello`, `paired`, or protocol validation;
-- session state, handshake timeout, reconnect delay, command dispatch, telemetry, mission transfer, or outbound queueing;
-- Android lifecycle, permissions, DJI SDK, task files, or UI;
-- deciding whether an endpoint setting is persisted or user-editable;
-- interpreting a WebSocket text message as a relay message.
-
-## 3. Public interface
+## 2. 对外接口
 
 ```text
 OkHttpTransportConnector() -> TransportConnector
-```
 
-The returned connector implements the existing `connection-session` seam:
-
-```text
-open(endpoint, generation, listener)
-  -> OpenAccepted(connection)
-   | OpenRejected(safeReason)
-
+open(endpoint, generation, listener) -> OpenAccepted(connection) | OpenRejected(safeReason)
 connection.generation -> supplied generation
-connection.writer.write(bytes)
-  -> WriteAccepted | WriteRejected
-
+connection.writer.write(bytes) -> WriteAccepted | WriteRejected
 connection.enableCallbacks()
-
-connection.close(reason)
-  -> CloseRequested | AlreadyClosed
+connection.close(reason) -> CloseRequested | AlreadyClosed
 ```
 
-The application composition root constructs this adapter and gives it to `ConnectionSession`. No business module is allowed to construct, retain, or call an OkHttp `WebSocket`.
+应用组合根创建适配器并交给 `ConnectionSession`；业务模块不得创建、保留或调用 OkHttp `WebSocket`。
 
-## 4. Connection rules
+## 3. 连接、写入与关闭规则
 
-1. `open` never throws a WebSocket, URI, or OkHttp exception to its caller.
-2. `open` accepts only syntactically valid `ws://` and `wss://` endpoint URLs. All other input returns `OpenRejected` with a fixed safe reason.
-3. Every successful `open` returns a distinct `TransportConnection` with the exact supplied generation.
-4. The adapter must not invoke any `TransportListener` callback before `open` has returned `OpenAccepted`. It buffers callbacks that a WebSocket engine emits synchronously.
-5. `connection-session` calls `connection.enableCallbacks()` exactly once after it owns the accepted connection. The adapter then delivers buffered callbacks in order; a no-op implementation is valid for a simple test transport.
-6. An OkHttp `onOpen` invokes `listener.onOpened(connection)` once after callbacks are enabled.
-7. A binary WebSocket message invokes `listener.onBytes(generation, copiedBytes)` once, in library callback order after callbacks are enabled.
-8. A text message is not a relay transport payload and is discarded without parsing or closing the connection.
-9. `onClosing` requests a normal close but does not itself create a terminal listener event.
-10. The first of `onClosed` or `onFailure` invokes the matching listener terminal callback. Later terminal callbacks are discarded.
-11. A callback for a connection is always delivered with its own generation. The adapter does not compare generations, decide staleness, or close a newer connection; `connection-session` owns that policy.
-12. Incoming byte arrays are copied before delivery. The adapter retains no received payload after callback return.
+1. `open` 不得向调用方抛出 WebSocket、URI 或 OkHttp 异常，只接受语法正确的 `ws://`/`wss://`，其他输入以固定安全原因拒绝。
+2. 每次成功 `open` 返回拥有完全相同传入 generation 的独立 `TransportConnection`；`open` 返回 `OpenAccepted` 前不得调用 `TransportListener`，同步网络回调必须缓冲。
+3. `connection-session` 在拥有连接后恰好调用一次 `enableCallbacks()`；之后按序投递缓冲回调。`onOpen` 只调用一次 `onOpened(connection)`；二进制消息以复制后的字节和自身 generation 按库回调顺序调用 `onBytes`；文本消息必须丢弃；`onClosing` 只请求正常关闭；`onClosed` 与 `onFailure` 中先到者产生唯一匹配终态，后者丢弃。
+4. 适配器不比较 generation、不判定过期、不关闭新连接；该策略属于 `connection-session`。收到字节交付前复制，回调返回后不保留。
+5. `write` 仅在连接已打开且未终态时发送二进制消息，且先复制调用方字节；库拒绝/异常、打开前/终态后写入返回 `WriteRejected` 不抛出。不重排也不排队，顺序属于 `outbound-publisher`。
+6. `close` 幂等：第一次用固定非敏感原因请求正常关闭并返回 `CloseRequested`，之后 `AlreadyClosed`。库拒绝/异常仍使适配器视为关闭且不抛出；显式关闭不得同步回调监听器，网络关闭回调才是终态通知路径。
 
-## 5. Write and close rules
+## 4. 错误、隐私、测试与变更
 
-- `write` sends a binary WebSocket message only after this connection has opened and before it becomes terminal.
-- The writer copies caller supplied bytes before giving them to the WebSocket library.
-- A rejected library send, a library exception, a write before open, or a write after terminal state returns `WriteRejected` and does not throw.
-- The adapter does not reorder or queue writes. `outbound-publisher` owns write ordering.
-- `close` is idempotent. Its first call requests a normal WebSocket close with a fixed non-sensitive close reason and returns `CloseRequested`; later calls return `AlreadyClosed`.
-- A library close rejection or exception still leaves the connection closed from the adapter's perspective and does not throw.
-- Explicit `close` does not synchronously invoke the listener. A later network close callback remains the only terminal notification path.
+`OpenRejected` 仅可暴露 `Transport endpoint is invalid`、`Transport connection could not be opened`。公开结果、回调原因、异常不得暴露完整端点、查询、HTTP 响应、原始载荷、关闭原因、令牌、设备 ID、异常消息或堆栈。库回调/内部引擎抛出时必须隔离，打开后最多一次 `onFailure(generation, "Transport failed")`，且不得越过库回调边界。
 
-## 6. Error and privacy rules
+生产实现可有仅本模块的内部 WebSocket 引擎接缝供内存测试，不得出现在其他模块契约中。生产引擎为 OkHttp 4.12.0，ping 间隔 15 秒；替换库或内部调度只有在全部公开行为不变时允许。
 
-Only these safe reasons may leave the adapter through `OpenRejected`:
-
-```text
-Transport endpoint is invalid
-Transport connection could not be opened
-```
-
-No public result, callback reason, or thrown exception may expose the complete endpoint, query string, HTTP response, raw payload, close reason, token, device identifier, exception message, or stack trace.
-
-Library callbacks and injected engine implementations may throw. The adapter catches them, sends at most one `onFailure(generation, "Transport failed")` after opening, and never lets the exception cross the library callback boundary.
-
-## 7. Internal test seam
-
-The production connector may use an internal WebSocket engine seam so unit tests can use an in-memory engine. This seam belongs to this module only. It must preserve the public rules above and must not appear in the contracts of `connection-session`, `protocol-core`, `command-dispatcher`, `mission-transfer`, or `outbound-publisher`.
-
-The production engine is OkHttp 4.12.0 with a 15-second ping interval. Changing the concrete WebSocket library or its internal scheduling is allowed only if all public behavior in this contract remains unchanged.
-
-## 8. Acceptance tests
-
-Tests must cover, at minimum:
-
-- valid and invalid endpoint opening without exceptions;
-- exact generation propagation and independent connections;
-- open callback, binary payload copying, text payload discard, and callback order;
-- duplicate close/failure terminal callbacks;
-- write before open, normal binary write, rejected/throwing write, and write after terminal;
-- idempotent close and rejected/throwing close;
-- callback exceptions and listener exceptions cannot escape;
-- an engine that calls back synchronously from `open` is buffered until `enableCallbacks`;
-- a real local OkHttp WebSocket test covers open, binary receive and send, text discard, and one close terminal callback;
-- stale callbacks are forwarded only with their original generation and never affect another connection;
-- concurrency around writes, close, and terminal callbacks;
-- architecture scan proving this is the sole gateway module with an OkHttp import and it has no protocol, DJI, Android, command, telemetry, or mission dependency.
-
-## 9. Change rule
-
-Any change to the public `TransportConnector` behavior, payload type, callback ordering, close semantics, ping interval, or allowed endpoint scheme requires this contract and its tests to be updated before implementation.
+测试必须覆盖有效/无效端点、精确 generation 与独立连接、打开/二进制复制/文本丢弃/回调顺序、重复终态、打开前/正常/拒绝/异常/终态后写入、幂等关闭、回调与监听器异常、同步 open 回调的 enableCallbacks 缓冲、真实本地 OkHttp WebSocket、旧回调 generation、写入/关闭/终态并发，以及架构扫描确认本模块是唯一 OkHttp 导入且无协议、DJI、Android、命令、遥测、任务依赖。改变连接器行为、载荷类型、回调顺序、关闭语义、ping 间隔或允许 scheme 前，必须先更新契约与测试。

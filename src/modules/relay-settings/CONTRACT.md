@@ -1,32 +1,19 @@
-# relay-settings module contract
+# relay-settings 模块契约
 
-Status: facade implementation in progress
-Version: 1.0.0
-Gradle path: :relay-settings
+状态：门面实现进行中；版本：1.0.0；Gradle 路径：:relay-settings
 
-`relay-settings` owns durable local relay configuration: validated computer endpoint and stable mobile device identity. It does not create network sessions, treat identity as authentication, or own DJI/Android business facts.
+`relay-settings` 持有持久化本地中继配置：已校验电脑端点与稳定移动端设备身份。它不创建网络会话、不将身份视为认证，也不持有 DJI/Android 业务事实。二级模块为 `endpoint-settings`（端点校验）、`device-identity`（稳定生成身份）和 `settings-store`（持久化读写、迁移、恢复）；gateway 只能消费本模块产生的已校验值。
 
-Second-level modules are `endpoint-settings` (endpoint validation), `device-identity` (stable generated identity), and `settings-store` (durable read/write, migration, and recovery). Gateway consumes only validated values produced by this module.
+## 门面接口
 
-## Facade
-
-`RelaySettings.create(backend, generator?)` is the only production construction point. It wires `settings-store` as the durable `DeviceIdentityStorage`; Android supplies the atomic `RelaySettingsBackend`, while the default generator remains inside `device-identity`.
+`RelaySettings.create(backend, generator?)` 是唯一生产构造点：它以 `settings-store` 作为持久化 `DeviceIdentityStorage`，Android 提供原子 `RelaySettingsBackend`，默认生成器留在 `device-identity`。
 
 ```text
 settings.loadEndpoint() -> SettingsLoadResult
 settings.saveEndpoint(value) -> EndpointSaveResult
 settings.clearEndpoint() -> EndpointSaveResult
 settings.deviceIdentity() -> DeviceIdentityResult
-settings.connectionSettings()
-  -> Available(RelayConnectionSettings)
-  | StoreUnavailable(SettingsStoreFailure)
-  | IdentityUnavailable(DeviceIdentityFailure)
+settings.connectionSettings() -> Available(RelayConnectionSettings) | StoreUnavailable(SettingsStoreFailure) | IdentityUnavailable(DeviceIdentityFailure)
 ```
 
-`RelayConnectionSettings` contains only a validated optional endpoint and a valid stable `DeviceId`. `connectionSettings` reads settings before resolving identity: a store failure does not invoke identity generation/storage. It is a consistent composition at the method boundary, not a transaction that locks future settings changes; a caller that retains it owns its own snapshot.
-
-Endpoint mutations report only their durable endpoint outcome. They do not generate an identity, so a successfully saved endpoint can never be obscured by an unrelated identity failure. All lower-module contracts, thread-safety, recovery, and failure privacy rules remain in force through the facade.
-
-## Tests
-
-Facade tests cover construction, endpoint delegation, composed connection settings with and without an endpoint, store failure short-circuiting identity resolution, identity failure mapping, and concurrent composition with endpoint mutation.
+`RelayConnectionSettings` 只含已校验的可选端点与有效稳定 `DeviceId`。`connectionSettings` 必须先读取设置再解析身份，故存储失败不调用身份生成/存储；它只在方法边界提供一致组合，不锁定后续设置更改，保留者拥有自己的快照。端点变更只报告持久化端点结果且不生成身份，因此成功保存端点不得被无关身份失败遮蔽。全部下层契约、线程安全、恢复及失败隐私规则经门面继续有效。测试覆盖构造、端点委托、有/无端点的组合设置、存储失败短路身份解析、身份失败映射及端点变更时并发组合。

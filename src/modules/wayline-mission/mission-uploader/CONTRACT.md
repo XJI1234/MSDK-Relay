@@ -1,61 +1,22 @@
-# mission-uploader module contract
+# mission-uploader 模块契约
 
-Status: implemented and verified
-Version: 1.0.0
-Parent module: wayline-mission
-Gradle path: :wayline-mission:mission-uploader
+状态：已实现并已验证；版本：1.0.0；所属一级模块：wayline-mission；Gradle 路径：:wayline-mission:mission-uploader
 
-## 1. Single responsibility
+## 唯一职责与接口
 
-This module uploads the currently staged KMZ mission to the aircraft through the shared DJI operation coordinator, and records only upload progress and the terminal public result in mission-state-store.
+本模块经共享 DJI 操作协调器将当前暂存 KMZ 上传至飞行器，并只在 `mission-state-store` 记录上传进度和终态公开结果。它不暂存/删除文件、不解析 KMZ、不执行或控制任务、不持有设备连接事实，也不暴露 DJI 异常；暂存字节读取器和 DJI 上传适配器均为注入接缝。
 
-It does not stage or delete files, parse KMZ, execute or control a mission, own device connection facts, or expose DJI exceptions. The staged byte reader and DJI upload adapter are injected seams.
-
-## 2. Public interface
-
-MissionUploader.create(stateStore, contentReader, uploadPort, operationCoordinator, timeoutMillis = 30000) -> MissionUploader
+```text
+MissionUploader.create(stateStore, contentReader, uploadPort, operationCoordinator, timeoutMillis = 30000)
 uploader.start() -> Accepted(cancellation) | Rejected(reason)
+```
 
-The content reader receives safe MissionMetadata and returns bytes only for the currently staged file. The upload port receives metadata, bytes, a progress callback, and an operation completion callback. It must call completion exactly once in normal operation; duplicate or late calls are ignored by the coordinator and uploader.
+读取器只为当前暂存文件接收安全 `MissionMetadata` 并返回字节；上传端口接收元数据、字节、进度和完成回调。正常情况下完成只调用一次，重复/延迟调用由协调器和 uploader 忽略。接受只表示上传已提交；成功终态进入 `UPLOADED`，失败、超时、取消、读取器失败、适配器失败或提交拒绝进入 `FAILED`。
 
-Accepted means the upload operation was submitted. It does not mean the aircraft confirmed success. A successful terminal callback changes state to UPLOADED; failure, timeout, cancellation, reader failure, adapter failure, or submission rejection changes state to FAILED.
+## 状态、并发、失败与验证
 
-## 3. Preconditions and state
+启动要求当前文件及上传状态 `NOT_UPLOADED`/`FAILED`；每个 uploader 最多一个有效上传，第二次返回 `ALREADY_ACTIVE` 且不读取字节/调用 DJI。读取内容前从单个快照读取元数据和 `missionRevision`，提交前记录 `UPLOADING(0)`。进度必须为 0..100，无效适配器进度忽略；每项进度/终态都携带来源版本和 `missionRevision`，新暂存任务与旧回调完全隔离。
 
-- start requires a current file and mission-state-store upload state NOT_UPLOADED or FAILED.
-- Only one upload owned by this uploader may be active. A second start returns ALREADY_ACTIVE and does not read bytes or call DJI.
-- The uploader reads file metadata and missionRevision from one snapshot before reading content.
-- Before submitting the operation it records UPLOADING(0).
-- Progress values must be 0..100. Invalid adapter progress is ignored and cannot escape the module.
-- Every progress and terminal update carries the uploader source revision and missionRevision. A replaced or cleared mission therefore makes old callbacks harmless.
-- A new staged mission is independent; callbacks for the old mission cannot change the new mission state.
+模块 JVM 安全，无 Android 生命周期；协调器提供串行化、超时和取消，超时为 1,000..60,000 ms。启动线程安全且最多一次接受；取消后旧适配器回调忽略，完成终态且幂等。调用方必须在接受操作运行时保持读取器和端口可用；结束后 uploader 不保留字节。
 
-## 4. Lifecycle, cancellation, and concurrency
-
-The module is JVM-safe and has no Android lifecycle. The injected coordinator serializes DJI operations and supplies timeout and cancellation semantics. The timeout must be 1,000..60,000 ms.
-
-start is thread-safe. Calls race through one lock; at most one accepted upload is active. Cancellation is delegated to the coordinator. After cancellation, callbacks from the old adapter are ignored. Completion is terminal and idempotent.
-
-The caller must keep the injected reader and upload port available while an accepted operation runs. The uploader does not retain file bytes after the operation finishes.
-
-## 5. Failure behavior
-
-| Situation | Result | State |
-| --- | --- | --- |
-| no staged file | NO_MISSION | unchanged |
-| active upload | ALREADY_ACTIVE | unchanged |
-| content unavailable or reader throws | CONTENT_UNAVAILABLE | FAILED |
-| invalid timeout or coordinator rejection | OPERATION_REJECTED | FAILED |
-| upload adapter failure or exception | FAILED | FAILED |
-| coordinator timeout | TIMED_OUT | FAILED |
-| cancellation | CANCELLED | FAILED |
-
-Public failures contain only stable enum values. No raw exception, path, DJI object, or byte content is returned.
-
-## 6. Test requirements
-
-JVM tests cover successful upload, progress 0 and 100, no mission, duplicate start, reader failure, adapter failure, adapter exception, coordinator rejection, timeout, queued cancellation, running cancellation, duplicate completion, late progress after cancellation, replacement of the staged mission, and concurrent start calls.
-
-## 7. Terminal completion listener
-
-`start(listener = no-op)` accepts an optional `UploadTerminalListener`. The listener is invoked once only after an accepted upload reaches its terminal coordinator outcome: `SUCCEEDED`, `FAILED`, `TIMED_OUT`, or `CANCELLED`. It runs after the corresponding public state update is attempted. Submission and precondition rejections return synchronously and do not invoke the listener. Listener exceptions are contained and cannot change upload state or coordinator behavior.
+失败映射：无任务 `NO_MISSION` 不变；活动上传 `ALREADY_ACTIVE` 不变；内容不可用/读取器抛出 `CONTENT_UNAVAILABLE` 且 `FAILED`；无效超时/协调器拒绝 `OPERATION_REJECTED` 且 `FAILED`；适配器失败/异常为 `FAILED`；超时 `TIMED_OUT`；取消 `CANCELLED`。公开失败只含稳定枚举。测试覆盖成功、0/100 进度、全部失败类别、排队/运行取消、重复完成、取消后延迟进度、任务替换和并发启动。`start(listener = no-op)` 可接受 `UploadTerminalListener`，仅在已接受上传终态且状态更新尝试后恰好调用一次；拒绝不调用，监听器异常隔离。
