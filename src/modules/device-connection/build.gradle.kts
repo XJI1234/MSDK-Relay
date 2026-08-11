@@ -14,6 +14,7 @@ dependencies {
     api(project(":device-connection:remote-controller-link"))
     api(project(":device-connection:aircraft-link"))
     api(project(":device-connection:pairing-controller"))
+    api(project(":device-connection:pairing-status-link"))
     api(project(":device-connection:device-capability-reader"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
