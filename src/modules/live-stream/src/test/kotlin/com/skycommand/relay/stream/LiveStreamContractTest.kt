@@ -60,6 +60,21 @@ class LiveStreamContractTest {
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
     }
 
+    @Test
+    fun deviceUnavailabilityCancelsAnActiveStartAndDropsItsLateSuccess() {
+        val fixture = Fixture()
+        val completion = Completion()
+        fixture.liveStream.commandHandler().handle(start(), completion)
+
+        fixture.liveStream.markDeviceUnavailable()
+
+        assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
+        assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        fixture.port.startCompletion!!.succeed()
+        assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
+        assertEquals(listOf("reject:Stream operation failed"), completion.events)
+    }
+
     private class Fixture {
         val port = Port()
         private val coordinator = DjiOperationCoordinator.create(

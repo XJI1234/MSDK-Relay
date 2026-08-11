@@ -1,6 +1,7 @@
 package com.skycommand.relay.stream
 
 import com.skycommand.relay.device.operation.DjiOperationCoordinator
+import com.skycommand.relay.device.operation.OperationCancellationHandle
 import com.skycommand.relay.gateway.command.CommandCompletion
 import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.protocol.CommandFrame
@@ -24,6 +25,8 @@ import com.skycommand.relay.stream.state.StreamStateDiagnosticSink
 import com.skycommand.relay.stream.state.StreamStateListener
 import com.skycommand.relay.stream.state.StreamStateStore
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 data class LiveStreamDependencies(
     val djiPort: DjiStreamPort,
@@ -33,6 +36,8 @@ data class LiveStreamDependencies(
 )
 
 class LiveStream private constructor(dependencies: LiveStreamDependencies) {
+    private val lifecycleLock = ReentrantLock()
+    private val activeOperations = mutableSetOf<TrackedOperation>()
     private val state = StreamStateStore.create(dependencies.diagnosticSink)
     private val adapter = DjiStreamAdapter.create(
         stateStore = state,
@@ -47,6 +52,11 @@ class LiveStream private constructor(dependencies: LiveStreamDependencies) {
     fun snapshot(): StreamSnapshot = state.snapshot()
 
     fun onChanged(listener: StreamStateListener): Registration = state.onChanged(listener)
+
+    fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
+        activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
+        (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
+    }
 
     private fun handleCommand(command: CommandFrame, completion: CommandCompletion) {
         val terminal = RelayCompletion(command.name, completion)
@@ -65,11 +75,57 @@ class LiveStream private constructor(dependencies: LiveStreamDependencies) {
     }
 
     private inner class Actions : StreamCommandActions {
-        override fun start(config: ValidatedStreamConfig, completion: StreamActionCompletion): StreamActionResult =
-            adapter.start(config, StreamDjiTerminalListener { completion.complete(it.toActionOutcome()) }).toActionResult()
+        override fun start(config: ValidatedStreamConfig, completion: StreamActionCompletion): StreamActionResult = lifecycleLock.withLock {
+            val tracked = TrackedOperation()
+            val result = adapter.start(config, StreamDjiTerminalListener {
+                completeTrackedOperation(tracked)
+                completion.complete(it.toActionOutcome())
+            })
+            track(result, tracked)
+        }
 
-        override fun stop(completion: StreamActionCompletion): StreamActionResult =
-            adapter.stop(StreamDjiTerminalListener { completion.complete(it.toActionOutcome()) }).toActionResult()
+        override fun stop(completion: StreamActionCompletion): StreamActionResult = lifecycleLock.withLock {
+            val tracked = TrackedOperation()
+            val result = adapter.stop(StreamDjiTerminalListener {
+                completeTrackedOperation(tracked)
+                completion.complete(it.toActionOutcome())
+            })
+            track(result, tracked)
+        }
+    }
+
+    private fun track(result: DjiStreamStartResult, tracked: TrackedOperation): StreamActionResult = when (result) {
+        is DjiStreamStartResult.Accepted -> {
+            tracked.install(result.cancellation)
+            if (!tracked.completed.get()) activeOperations += tracked
+            StreamActionResult.Accepted
+        }
+
+        is DjiStreamStartResult.Rejected -> StreamActionResult.Rejected
+    }
+
+    private fun track(result: DjiStreamStopResult, tracked: TrackedOperation): StreamActionResult = when (result) {
+        is DjiStreamStopResult.Accepted -> {
+            tracked.install(result.cancellation)
+            if (!tracked.completed.get()) activeOperations += tracked
+            StreamActionResult.Accepted
+        }
+
+        is DjiStreamStopResult.Rejected -> StreamActionResult.Rejected
+    }
+
+    private fun completeTrackedOperation(tracked: TrackedOperation) {
+        tracked.completed.set(true)
+        lifecycleLock.withLock { activeOperations.remove(tracked) }
+    }
+
+    private class TrackedOperation {
+        val completed = AtomicBoolean(false)
+        lateinit var cancellation: OperationCancellationHandle
+
+        fun install(cancellation: OperationCancellationHandle) {
+            this.cancellation = cancellation
+        }
     }
 
     private class RelayCompletion(

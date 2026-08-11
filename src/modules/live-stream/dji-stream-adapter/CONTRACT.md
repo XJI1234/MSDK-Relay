@@ -1,6 +1,6 @@
 # dji-stream-adapter 模块契约
 
-状态：已批准实现；版本：1.0.0；所属一级模块：live-stream；Gradle 路径：:live-stream:dji-stream-adapter
+状态：已实施并已验证；版本：1.0.0；所属一级模块：live-stream；Gradle 路径：:live-stream:dji-stream-adapter
 
 ## 唯一职责与接口
 
