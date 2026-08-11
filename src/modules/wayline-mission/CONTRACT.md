@@ -19,6 +19,7 @@ Gradle 路径：`:wayline-mission`
 | `mission-uploader` | 将当前暂存航线上传至设备 |
 | `mission-executor` | 开始、暂停、恢复和停止任务 |
 | `wayline-command-handler` | 解释 wayline 命令并调用对应能力 |
+| `android-dji-wayline-adapter` | 将 KMZ 字节、上传进度和任务控制转换为 DJI MSDK v5 操作 |
 
 所有 DJI 操作必须通过 `device-connection` 的统一操作调度入口；文件字节只由 `mission-staging` 拥有。
 

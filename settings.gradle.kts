@@ -66,6 +66,7 @@ includeRelayModule(":wayline-mission:wpmz-generator")
 includeRelayModule(":wayline-mission:mission-uploader")
 includeRelayModule(":wayline-mission:mission-executor")
 includeRelayModule(":wayline-mission:wayline-command-handler")
+includeRelayModule(":wayline-mission:android-dji-wayline-adapter")
 
 includeRelayModule(":live-stream")
 includeRelayModule(":live-stream:stream-config-validator")
