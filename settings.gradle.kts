@@ -57,6 +57,7 @@ includeRelayModule(":telemetry:snapshot-assembler")
 includeRelayModule(":telemetry:capability-calculator")
 includeRelayModule(":telemetry:telemetry-command-handler")
 includeRelayModule(":telemetry:telemetry-publisher")
+includeRelayModule(":telemetry:android-flight-telemetry-adapter")
 
 includeRelayModule(":wayline-mission")
 includeRelayModule(":wayline-mission:mission-staging")
