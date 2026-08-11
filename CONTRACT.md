@@ -112,6 +112,7 @@
 | 二级模块 | 只负责 | 明确不负责 |
 | --- | --- | --- |
 | `sdk-lifecycle` | DJI SDK 注册、初始化、注销和 SDK 可用状态 | 不执行配对、直播或航线任务 |
+| `android-dji-sdk-adapter` | 将 DJI MSDK v5 的初始化和注册结果适配到 `DjiSdkPort` | 不读取设备状态，不执行配对、航线、图传或遥测业务 |
 | `dji-operation-coordinator` | 为所有 DJI SDK 操作提供统一串行执行、超时和取消策略 | 不理解具体业务命令，不决定操作是否应该执行 |
 | `device-state-store` | 保存 SDK、遥控器、飞行器和配对的唯一设备状态快照 | 不生成遥测 JSON，不发送网络消息 |
 | `remote-controller-link` | 遥控器连接状态、型号和固件等遥控器侧信息 | 不判断飞行器是否连接 |
