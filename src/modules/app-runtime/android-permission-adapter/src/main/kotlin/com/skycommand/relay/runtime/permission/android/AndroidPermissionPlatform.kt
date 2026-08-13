@@ -60,10 +60,22 @@ internal class AndroidPermissionPlatform private constructor(
                 }
 
                 usbPermissionAction -> {
+                    val outcome = usbPermissionOutcome(
+                        intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false),
+                    )
                     val callback = synchronized(lock) {
                         usbRequestInFlight = false
-                        usbFailure = null
-                        usbCallback.also { usbCallback = null }
+                        when (outcome) {
+                            UsbPermissionOutcome.GRANTED -> {
+                                usbFailure = null
+                                usbCallback.also { usbCallback = null }
+                            }
+
+                            UsbPermissionOutcome.DENIED -> {
+                                usbCallback = null
+                                usbFailure.also { usbFailure = null }
+                            }
+                        }
                     }
                     callback?.invoke()
                 }
@@ -93,12 +105,12 @@ internal class AndroidPermissionPlatform private constructor(
                 addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED)
                 addAction(usbPermissionAction)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                activity.registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                activity.registerReceiver(usbReceiver, filter)
-            }
+            ContextCompat.registerReceiver(
+                activity,
+                usbReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
             receiverRegistered = true
             attachedAccessory = currentAccessory()
         }
@@ -280,3 +292,11 @@ internal class AndroidPermissionPlatform private constructor(
         ): AndroidPermissionPlatform = AndroidPermissionPlatform(activity, activityResultRegistry, lifecycleOwner)
     }
 }
+
+internal enum class UsbPermissionOutcome {
+    GRANTED,
+    DENIED,
+}
+
+internal fun usbPermissionOutcome(permissionGranted: Boolean): UsbPermissionOutcome =
+    if (permissionGranted) UsbPermissionOutcome.GRANTED else UsbPermissionOutcome.DENIED

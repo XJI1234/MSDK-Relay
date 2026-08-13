@@ -24,6 +24,13 @@ import com.skycommand.relay.wayline.executor.ExecutionTerminalListener
 import com.skycommand.relay.wayline.executor.ExecutionTerminalOutcome
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.executor.MissionExecutor
+import com.skycommand.relay.wayline.phase.MissionExecutionSignal
+import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
+import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
+import com.skycommand.relay.wayline.phase.MissionFlightPhase
+import com.skycommand.relay.wayline.phase.MissionPhase
+import com.skycommand.relay.wayline.phase.MissionPhaseFact
+import com.skycommand.relay.wayline.phase.MissionPhaseSink
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.MissionStaging
 import com.skycommand.relay.wayline.staging.StagingCompleteResult
@@ -51,6 +58,7 @@ data class WaylineMissionDependencies(
     val contentReader: StagedMissionContentReader,
     val uploadPort: MissionUploadPort,
     val controlPort: MissionControlPort,
+    val executionSignalSource: MissionExecutionSignalSource,
     val operationCoordinator: DjiOperationCoordinator,
     val uploadTimeoutMillis: Long = 30_000,
     val controlTimeoutMillis: Long = 30_000,
@@ -62,6 +70,8 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private val lifecycleLock = ReentrantLock()
     private val activeOperations = mutableSetOf<TrackedOperation>()
     private val stagingRevision = AtomicLong(0)
+    private val executionStateRevision = AtomicLong(0)
+    private val phaseListeners = mutableSetOf<MissionPhaseListener>()
     private val staging = MissionStaging.create(dependencies.stagingStorage)
     private val state = MissionStateStore.create(dependencies.diagnosticSink)
     private val uploader = MissionUploader.create(
@@ -76,7 +86,12 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         controlPort = dependencies.controlPort,
         coordinator = dependencies.operationCoordinator,
         timeoutMillis = dependencies.controlTimeoutMillis,
+        executionSourceRevision = executionStateRevision,
     )
+    private val flightPhase = MissionFlightPhase.create(MissionPhaseSink(::acceptPhaseFact))
+    @Suppress("unused")
+    private val executionSignalRegistration: MissionExecutionSignalRegistration =
+        dependencies.executionSignalSource.onSignal(::acceptExecutionSignal)
     private val commands = WaylineCommandHandler.create(staging, Actions())
     private val contentReader = dependencies.contentReader
 
@@ -88,7 +103,14 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
 
     fun onChanged(listener: MissionStateListener): Registration = state.onChanged(listener)
 
+    fun onPhaseChanged(listener: MissionPhaseListener): Registration {
+        lifecycleLock.withLock { phaseListeners += listener }
+        return Registration { lifecycleLock.withLock { phaseListeners.remove(listener) } }
+    }
+
     fun markDeviceUnavailable(): MissionSnapshot = lifecycleLock.withLock {
+        val current = state.snapshot()
+        flightPhase.invalidate(current.missionRevision, current.deviceGeneration)
         val snapshot = state.markDeviceUnavailable().snapshot
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
         snapshot
@@ -123,6 +145,8 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     }
 
     private fun recordStaged(metadata: MissionMetadata) {
+        val current = state.snapshot()
+        flightPhase.invalidate(current.missionRevision, current.deviceGeneration)
         state.apply(MissionStateEvent.FileStaged(stagingRevision.incrementAndGet(), metadata))
     }
 
@@ -144,13 +168,52 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
             }), tracked)
         }
 
-        override fun start(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.start(listener) }
+        override fun start(completion: WaylineActionCompletion): WaylineActionResult = requestStart(completion)
 
         override fun pause(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.pause(listener) }
 
         override fun resume(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.resume(listener) }
 
-        override fun stop(completion: WaylineActionCompletion): WaylineActionResult = requestControl(completion) { listener -> executor.stop(listener) }
+        override fun stop(completion: WaylineActionCompletion): WaylineActionResult = requestStop(completion)
+    }
+
+    private fun requestStart(completion: WaylineActionCompletion): WaylineActionResult = lifecycleLock.withLock {
+        val snapshot = state.snapshot()
+        val missionRevision = snapshot.missionRevision
+        val shouldArm = missionRevision != null &&
+            snapshot.upload is com.skycommand.relay.wayline.state.UploadState.UPLOADED &&
+            snapshot.execution in setOf(
+                com.skycommand.relay.wayline.state.ExecutionState.NOT_STARTED,
+                com.skycommand.relay.wayline.state.ExecutionState.FAILED,
+            )
+        if (shouldArm) {
+            flightPhase.arm(missionRevision, snapshot.deviceGeneration, requireNotNull(snapshot.file).fileName)
+        }
+        val tracked = TrackedOperation()
+        val result = executor.start(ExecutionTerminalListener { outcome ->
+            if (outcome != ExecutionTerminalOutcome.SUCCEEDED && missionRevision != null) {
+                flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
+            }
+            completeTrackedOperation(tracked)
+            completion.complete(outcome.toWaylineOutcome())
+        })
+        if (result is ExecutionRequestResult.Rejected && missionRevision != null) {
+            flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
+        }
+        track(result, tracked)
+    }
+
+    private fun requestStop(completion: WaylineActionCompletion): WaylineActionResult = lifecycleLock.withLock {
+        val snapshot = state.snapshot()
+        val tracked = TrackedOperation()
+        val result = executor.stop(ExecutionTerminalListener {
+            completeTrackedOperation(tracked)
+            completion.complete(it.toWaylineOutcome())
+        })
+        if (result is ExecutionRequestResult.Accepted) {
+            flightPhase.invalidate(snapshot.missionRevision, snapshot.deviceGeneration)
+        }
+        track(result, tracked)
     }
 
     private fun requestControl(
@@ -187,6 +250,34 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private fun completeTrackedOperation(tracked: TrackedOperation) {
         tracked.completed.set(true)
         lifecycleLock.withLock { activeOperations.remove(tracked) }
+    }
+
+    private fun acceptExecutionSignal(signal: MissionExecutionSignal) {
+        val snapshot = state.snapshot()
+        val missionRevision = snapshot.missionRevision ?: return
+        flightPhase.accept(signal, missionRevision, snapshot.deviceGeneration)
+    }
+
+    private fun acceptPhaseFact(fact: MissionPhaseFact) = lifecycleLock.withLock {
+        val snapshot = state.snapshot()
+        if (
+            snapshot.missionRevision != fact.missionRevision ||
+            snapshot.deviceGeneration != fact.deviceGeneration ||
+            snapshot.file?.fileName != fact.fileName
+        ) {
+            return
+        }
+        if (fact.phase == MissionPhase.ROUTE_EXECUTION_STARTED) {
+            state.apply(
+                MissionStateEvent.ExecutionChanged(
+                    sourceRevision = executionStateRevision.incrementAndGet(),
+                    missionRevision = fact.missionRevision,
+                    deviceGeneration = fact.deviceGeneration,
+                    state = com.skycommand.relay.wayline.state.ExecutionState.EXECUTING,
+                ),
+            )
+        }
+        phaseListeners.toList().forEach { listener -> runCatching { listener.onPhaseChanged(fact) } }
     }
 
     private class TrackedOperation {
@@ -292,4 +383,8 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     companion object {
         fun create(dependencies: WaylineMissionDependencies): WaylineMission = WaylineMission(dependencies)
     }
+}
+
+fun interface MissionPhaseListener {
+    fun onPhaseChanged(fact: MissionPhaseFact)
 }

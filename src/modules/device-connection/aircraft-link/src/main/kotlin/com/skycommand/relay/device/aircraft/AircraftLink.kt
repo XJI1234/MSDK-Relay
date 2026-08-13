@@ -41,9 +41,23 @@ sealed interface AircraftStopResult {
     data object AlreadyStopped : AircraftStopResult
 }
 
+fun interface AircraftDiagnosticSink {
+    fun record(diagnostic: AircraftDiagnostic)
+}
+
+data class AircraftDiagnostic(
+    val kind: AircraftDiagnosticKind,
+)
+
+enum class AircraftDiagnosticKind {
+    PORT_FAILURE,
+    INVALID_SIGNAL,
+}
+
 class AircraftLink private constructor(
     private val store: DeviceStateStore,
     private val port: AircraftPort,
+    private val diagnosticSink: AircraftDiagnosticSink,
 ) {
     private val lock = ReentrantLock()
     private var runToken = 0L
@@ -72,6 +86,7 @@ class AircraftLink private constructor(
                     runToken += 1
                 }
             }
+            record(AircraftDiagnosticKind.PORT_FAILURE)
             return AircraftStartResult.Rejected("aircraft listener unavailable")
         }
         val pending = lock.withLock {
@@ -85,6 +100,7 @@ class AircraftLink private constructor(
         }
         if (pending == null) {
             runCatching { registered.cancel() }
+                .onFailure { record(AircraftDiagnosticKind.PORT_FAILURE) }
         } else {
             pending.forEach(::applySignal)
         }
@@ -101,7 +117,9 @@ class AircraftLink private constructor(
             subscription.also { subscription = null }
         }
         runCatching { currentSubscription?.cancel() }
+            .onFailure { record(AircraftDiagnosticKind.PORT_FAILURE) }
         runCatching { port.stop() }
+            .onFailure { record(AircraftDiagnosticKind.PORT_FAILURE) }
         return AircraftStopResult.Stopped
     }
 
@@ -133,10 +151,18 @@ class AircraftLink private constructor(
                     model = signal.displayModel,
                 ),
             )
-        }
+        }.onFailure { record(AircraftDiagnosticKind.INVALID_SIGNAL) }
+    }
+
+    private fun record(kind: AircraftDiagnosticKind) {
+        runCatching { diagnosticSink.record(AircraftDiagnostic(kind)) }
     }
 
     companion object {
-        fun create(store: DeviceStateStore, port: AircraftPort): AircraftLink = AircraftLink(store, port)
+        fun create(
+            store: DeviceStateStore,
+            port: AircraftPort,
+            diagnosticSink: AircraftDiagnosticSink = AircraftDiagnosticSink { },
+        ): AircraftLink = AircraftLink(store, port, diagnosticSink)
     }
 }

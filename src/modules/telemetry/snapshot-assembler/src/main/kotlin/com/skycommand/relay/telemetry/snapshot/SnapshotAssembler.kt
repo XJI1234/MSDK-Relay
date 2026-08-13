@@ -71,7 +71,13 @@ data class TelemetrySnapshot(
 )
 
 object SnapshotAssembler {
-    fun assemble(inputs: TelemetryInputs): TelemetrySnapshot = TelemetrySnapshot(
+    fun assemble(inputs: TelemetryInputs): TelemetrySnapshot {
+        val flight = if (inputs.device.flightController == LinkState.CONNECTED) {
+            inputs.flight
+        } else {
+            FlightTelemetrySnapshot()
+        }
+        return TelemetrySnapshot(
         deviceRevision = inputs.device.revision,
         sdkAvailability = inputs.device.sdkAvailability,
         remoteController = inputs.device.remoteController,
@@ -81,14 +87,14 @@ object SnapshotAssembler {
         remoteControllerModel = inputs.device.remoteControllerModel,
         aircraftModel = inputs.device.aircraftModel,
         capabilities = CapabilityCalculator.calculate(DeviceCapabilityReader.read(inputs.device)),
-        isFlying = inputs.flight.isFlying,
-        motorsOn = inputs.flight.motorsOn,
-        flightMode = inputs.flight.flightMode,
-        batteryPercent = inputs.flight.batteryPercent,
-        remainingFlightTimeSeconds = inputs.flight.remainingFlightTimeSeconds,
-        altitudeMeters = inputs.flight.altitudeMeters,
-        latitude = inputs.flight.latitude,
-        longitude = inputs.flight.longitude,
+        isFlying = flight.isFlying,
+        motorsOn = flight.motorsOn,
+        flightMode = flight.flightMode,
+        batteryPercent = flight.batteryPercent,
+        remainingFlightTimeSeconds = flight.remainingFlightTimeSeconds,
+        altitudeMeters = flight.altitudeMeters,
+        latitude = flight.latitude,
+        longitude = flight.longitude,
         liveStreaming = inputs.stream.state == StreamLifecycleState.STREAMING,
         liveStreamNotice = inputs.stream.notice,
         liveResolution = inputs.stream.metrics?.resolution,
@@ -105,6 +111,7 @@ object SnapshotAssembler {
         },
         missionFileName = inputs.mission.file?.fileName,
     )
+    }
 
     fun assemble(device: DeviceSnapshot): TelemetrySnapshot = TelemetrySnapshot(
         deviceRevision = device.revision,

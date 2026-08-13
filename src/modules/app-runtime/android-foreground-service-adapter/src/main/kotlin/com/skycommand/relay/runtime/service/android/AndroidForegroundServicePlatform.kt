@@ -49,12 +49,12 @@ internal class AndroidForegroundServicePlatform private constructor(
             addAction(statusAction + ACTION_STOPPED_SUFFIX)
             addAction(statusAction + ACTION_FAILED_SUFFIX)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            context.registerReceiver(receiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun start(operationId: String, callback: (ForegroundServicePlatformEvent) -> Unit) {

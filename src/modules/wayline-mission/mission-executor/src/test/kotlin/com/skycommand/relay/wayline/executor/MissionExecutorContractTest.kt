@@ -31,13 +31,15 @@ class MissionExecutorContractTest {
     }
 
     @Test
-    fun completesTheFullStartPauseResumeStopLifecycle() {
+    fun completesTheControlLifecycleWithoutTreatingStartAcceptanceAsFlightExecution() {
         val fixture = Fixture()
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
         assertEquals(ExecutionState.STARTING, fixture.store.snapshot().execution)
         fixture.port.completeSuccess()
-        assertEquals(ExecutionState.EXECUTING, fixture.store.snapshot().execution)
+        assertEquals(ExecutionState.STARTING, fixture.store.snapshot().execution)
+
+        fixture.markExecutionStarted()
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
         fixture.port.completeSuccess()
@@ -157,6 +159,17 @@ class MissionExecutorContractTest {
                 MissionStateEvent.FileStaged(
                     1,
                     MissionMetadata("mission.kmz", 3, "a".repeat(64)),
+                ),
+            )
+        }
+
+        fun markExecutionStarted() {
+            store.apply(
+                MissionStateEvent.ExecutionChanged(
+                    3,
+                    store.snapshot().missionRevision!!,
+                    store.snapshot().deviceGeneration,
+                    ExecutionState.EXECUTING,
                 ),
             )
         }

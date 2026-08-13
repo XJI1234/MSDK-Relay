@@ -165,7 +165,12 @@ class SdkLifecycle private constructor(
                 true
             }
         }
-        if (failed) notifyState(SdkAvailability.FAILED) else record(SdkLifecycleDiagnosticKind.STALE_CALLBACK)
+        if (failed) {
+            record(SdkLifecycleDiagnosticKind.PORT_FAILURE)
+            notifyState(SdkAvailability.FAILED)
+        } else {
+            record(SdkLifecycleDiagnosticKind.STALE_CALLBACK)
+        }
     }
 
     private fun notifyState(next: SdkAvailability) {

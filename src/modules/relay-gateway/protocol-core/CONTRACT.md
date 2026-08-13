@@ -1,7 +1,7 @@
 # relay-gateway.protocol-core 二级模块契约
 
-状态：已批准并实现
-版本：0.2.0
+状态：已批准；`mission-phase` 扩展待实施
+版本：0.3.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 模块标识：`relay-protocol-core`
 模块目录：`src/modules/relay-gateway/protocol-core/`
@@ -24,6 +24,8 @@ Gradle 路径：`:relay-gateway:protocol-core`
 ### 2.1 负责
 
 - 定义 `hello`、`paired`、`telemetry`、`command`、结果帧和任务传输帧；
+- 定义诊断报告与诊断确认帧；
+- 定义航线阶段上报帧；
 - 定义所有协议级长度、大小和复杂度上限；
 - 把合法帧编码成 UTF-8 JSON 字节；
 - 把一段有界字节解码成合法帧、稳定拒绝结果或未知帧结果；
@@ -126,6 +128,10 @@ RelayFrameCodec.decode(bytes)
 | 单个任务分块原始字节 | `1..49152` 字节，即最大 48 KiB |
 | 单个任务分块 Base64 文本 | 最大 `65536` 个 ASCII 字符 |
 | 协议错误消息 | `1..256` 个 Unicode code point，且不含控制字符 |
+| 诊断批次事件数 | `1..32` 条 |
+| 诊断 `runId`、`operationId` | 与 ID 相同：`1..128` 个 Unicode code point |
+| 诊断 `module`、`eventCode` | `1..64` 个 ASCII 字符，仅字母、数字、`-`、`_`、`.`，且首字符为字母 |
+| 诊断 `safeDetail` | `0..512` 个 Unicode code point，无控制字符 |
 
 当前 48 KiB 分块经过标准 Base64 编码后最多为 65536 个字符。96 KiB 单帧上限能够容纳该数据、最长传输 ID 和 JSON 外壳，同时为普通命令和遥测保留余量。
 
@@ -258,6 +264,64 @@ mission-result {
 ```
 
 `detail` 的兼容和编码规则与 `command-result` 相同。
+
+### 5.10 `diagnostic-report`
+
+```text
+diagnostic-report {
+  type: "diagnostic-report",
+  runId: 合法运行 ID,
+  events: [
+    {
+      sequence: 正整数,
+      timestampMillis: 非负整数,
+      level: "DEBUG" | "INFO" | "WARN" | "ERROR",
+      module: 合法模块标识,
+      eventCode: 合法事件码,
+      operationId: 合法 ID | 缺失,
+      safeDetail: 受限脱敏文本
+    }
+  ]
+}
+```
+
+- 仅手机端向电脑端发送；`events` 必须为 `1..32` 条，按 `sequence` 严格递增，且全部事件属于根 `runId`；
+- 解码器只校验结构、类型、资源限制和稳定标识，不验证电脑是否已保存；
+- `safeDetail` 必须已经脱敏；协议层不接受控制字符。
+
+### 5.11 `diagnostic-ack`
+
+```text
+diagnostic-ack {
+  type: "diagnostic-ack",
+  runId: 合法运行 ID,
+  acknowledgedSequence: 非负整数
+}
+```
+
+- 仅电脑端向手机端发送；含义为电脑已经持久化同一 `runId` 内不大于该序号的全部事件；
+- 旧实现应忽略未知诊断帧，不能因此关闭会话；手机仅收到合法确认后删除本地事件。
+
+### 5.12 `mission-phase`
+
+```text
+mission-phase {
+  type: "mission-phase",
+  missionRevision: 正整数,
+  deviceGeneration: 非负整数,
+  sequence: 正整数,
+  phase: "START_POINT_REACHED" | "ROUTE_EXECUTION_STARTED",
+  fileName: 安全 .kmz basename
+}
+```
+
+- 仅手机端向电脑端发送，是航线运行阶段的事实通知，不是命令结果，也不要求电脑回复确认；
+- `missionRevision`、`deviceGeneration` 与 `sequence` 共同标识一个手机端运行代际内的事实顺序；电脑端必须按同一任务代际的 `sequence` 升序处理，重复或更旧序号不得倒退其显示状态；
+- `START_POINT_REACHED` 只表示手机已收到 DJI 的 `ENTER_WAYLINE` 状态；`ROUTE_EXECUTION_STARTED` 表示手机已确认进入航线执行。两帧必须按 `sequence` 递增顺序发送，且 `START_POINT_REACHED` 必须先于对应的 `ROUTE_EXECUTION_STARTED`；
+- 所有数值都必须是可精确转换为 Long 的 JSON 整数；`missionRevision` 与 `sequence` 必须大于 0，`deviceGeneration` 必须大于等于 0；
+- `fileName` 使用 §9.2 的安全文件名规则。该帧不得包含坐标、航点、路径、DJI 原始状态、异常、任务字节、endpoint、认证信息或任何密钥；
+- `Delivered` 只表示手机交给当前传输 writer，不表示电脑已收到。当前协议不为阶段帧提供离线重发；连接不活跃时的发送拒绝必须被手机记录为受限诊断，不能重新执行航线或伪造新阶段事实；
+- 旧版本收到此类型必须依照未知帧规则 `Ignored("mission-phase")`，不得关闭会话。
 
 ## 6. 解码算法和固定顺序
 
@@ -475,9 +539,10 @@ Activity、Service、Context
 
 ### 15.1 每种合法帧
 
-- 九种帧分别完成编码和解码往返；
+- 十二种帧分别完成编码和解码往返；
 - `paired` 分别覆盖显式 `"1"` 和省略版本；
 - 两种结果帧分别覆盖有详情和缺失详情；
+- `mission-phase` 覆盖两种阶段、每个整数边界、文件名边界、阶段枚举非法值、错误数值类型与同一任务代际的相邻顺序；
 - 通用 JSON 覆盖 null、字符串、数字、布尔、数组和嵌套对象；
 - 已知帧额外字段可忽略，未知合法类型返回 `Ignored`。
 

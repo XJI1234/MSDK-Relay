@@ -24,6 +24,13 @@ import com.skycommand.relay.gateway.session.MonotonicScheduler
 import com.skycommand.relay.gateway.session.ScheduledCancellation
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
+import com.skycommand.relay.protocol.MissionPhaseFrame
+import com.skycommand.relay.diagnostics.DiagnosticClock
+import com.skycommand.relay.diagnostics.DiagnosticJournal
+import com.skycommand.relay.diagnostics.DiagnosticLevel
+import com.skycommand.relay.diagnostics.android.AndroidDiagnosticStore
+import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
+import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.runtime.AppRuntime
 import com.skycommand.relay.runtime.RuntimeState
 import com.skycommand.relay.runtime.bootstrap.AppBootstrap
@@ -36,7 +43,14 @@ import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
 import com.skycommand.relay.stream.dji.android.AndroidDjiStreamPort
+import com.skycommand.relay.flight.FlightControl
+import com.skycommand.relay.flight.FlightControlDependencies
+import com.skycommand.relay.flight.dji.android.AndroidDjiFlightPort
+import com.skycommand.relay.settings.DeviceSettings
+import com.skycommand.relay.settings.DeviceSettingsDependencies
+import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.telemetry.Telemetry
+import com.skycommand.relay.telemetry.command.TelemetryReadResult
 import com.skycommand.relay.telemetry.flight.android.AndroidFlightTelemetrySource
 import com.skycommand.relay.telemetry.flight.android.FlightTelemetrySource
 import com.skycommand.relay.telemetry.publish.PublishTelemetryResult
@@ -49,6 +63,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 data class MobileRelayStatus(
     val runtime: RuntimeState,
@@ -63,8 +78,11 @@ class MobileRelayGraph private constructor(
     private val runtime: AppRuntime,
     private val device: DeviceConnection,
     private val gateway: RelayGateway,
+    private val diagnostics: GatewayDiagnosticPublisher,
     private val telemetry: Telemetry,
     private val flight: FlightTelemetrySource,
+    private val flightControl: FlightControl,
+    private val deviceSettings: DeviceSettings,
     private val stream: LiveStream,
     private val wayline: WaylineMission,
     private val waylineAdapter: AndroidDjiWaylineAdapter,
@@ -125,9 +143,12 @@ class MobileRelayGraph private constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         runCatching { runtime.stop() }
+        runCatching { diagnostics.stop() }
         registrations.asReversed().forEach { runCatching { it.unregister() } }
         registrations.clear()
         runCatching { wayline.markDeviceUnavailable() }
+        runCatching { flightControl.close() }
+        runCatching { deviceSettings.close() }
         runCatching { stream.close() }
         runCatching { waylineAdapter.close() }
         runCatching { staging.close() }
@@ -151,6 +172,14 @@ class MobileRelayGraph private constructor(
                 val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
                 ScheduledCancellation { future.cancel(false) }
             }
+            val diagnosticStore = AndroidDiagnosticStore.create(activity)
+            val journal = DiagnosticJournal.create(
+                runId = UUID.randomUUID().toString(),
+                capacity = 256,
+                clock = DiagnosticClock { System.currentTimeMillis() },
+                persistence = diagnosticStore.persistence(),
+                recoveredEvents = diagnosticStore.restore(),
+            )
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),
@@ -160,25 +189,144 @@ class MobileRelayGraph private constructor(
                     AndroidPairingStatusPort.create(),
                     operationExecutor,
                     operationScheduler,
+                    sdkDiagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.ERROR,
+                            "device-connection",
+                            diagnostic.kind.name,
+                            null,
+                            "DJI SDK lifecycle callback reported a failure",
+                        )
+                    },
+                    deviceStateDiagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "device-connection",
+                            diagnostic.kind.name,
+                            null,
+                            "Device state listener failed while receiving a state update",
+                        )
+                    },
+                    remoteControllerDiagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "device-connection",
+                            diagnostic.kind.name,
+                            null,
+                            "Remote controller observation could not be processed",
+                        )
+                    },
+                    pairingStatusDiagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "device-connection",
+                            diagnostic.kind.name,
+                            null,
+                            "Pairing status observation could not be processed",
+                        )
+                    },
+                    aircraftDiagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "device-connection",
+                            diagnostic.kind.name,
+                            null,
+                            "Aircraft observation could not be processed",
+                        )
+                    },
                 ),
             )
             val staging = AndroidMissionStagingStorage.create(activity)
             val waylineAdapter = AndroidDjiWaylineAdapter.create(activity)
             val wayline = WaylineMission.create(
                 WaylineMissionDependencies(
-                    staging, staging, waylineAdapter, waylineAdapter, device.operations(),
+                    stagingStorage = staging,
+                    contentReader = staging,
+                    uploadPort = waylineAdapter,
+                    controlPort = waylineAdapter,
+                    executionSignalSource = waylineAdapter,
+                    operationCoordinator = device.operations(),
                     uploadTimeoutMillis = 60_000,
                     controlTimeoutMillis = 30_000,
+                    diagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "wayline-mission",
+                            diagnostic.kind.name,
+                            null,
+                            "Mission state listener failed while receiving a state update",
+                        )
+                    },
                 ),
             )
             val stream = LiveStream.create(
-                LiveStreamDependencies(AndroidDjiStreamPort.create(), device.operations()),
+                LiveStreamDependencies(
+                    AndroidDjiStreamPort.create(),
+                    device.operations(),
+                    diagnosticSink = { kind ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "live-stream",
+                            kind.name,
+                            null,
+                            "Stream state listener failed while receiving a state update",
+                        )
+                    },
+                ),
+            )
+            val flightControl = FlightControl.create(
+                FlightControlDependencies(
+                    AndroidDjiFlightPort.create(),
+                    device.operations(),
+                ),
+            )
+            val deviceSettings = DeviceSettings.create(
+                DeviceSettingsDependencies(AndroidDjiSettingsPort.create(), device.operations()),
             )
             val gateway = RelayGateway.create(
-                RelayGatewayConfig(endpoint, deviceId, wayline.missionSink()),
+                RelayGatewayConfig(
+                    endpoint,
+                    deviceId,
+                    wayline.missionSink(),
+                    diagnosticSink = { diagnostic ->
+                        journal.record(
+                            DiagnosticLevel.WARN,
+                            "relay-gateway",
+                            diagnostic.kind.name,
+                            null,
+                            diagnostic.detail,
+                        )
+                    },
+                ),
                 OkHttpTransportConnector(),
                 gatewayScheduler,
             )
+            val diagnostics = GatewayDiagnosticPublisher.create(journal, RelayGatewayDiagnosticPort(gateway))
+            wayline.onPhaseChanged { fact ->
+                val result = gateway.publishMissionPhase(
+                    MissionPhaseFrame(
+                        missionRevision = fact.missionRevision,
+                        deviceGeneration = fact.deviceGeneration,
+                        sequence = fact.sequence,
+                        phase = when (fact.phase) {
+                            com.skycommand.relay.wayline.phase.MissionPhase.START_POINT_REACHED ->
+                                com.skycommand.relay.protocol.MissionPhase.START_POINT_REACHED
+                            com.skycommand.relay.wayline.phase.MissionPhase.ROUTE_EXECUTION_STARTED ->
+                                com.skycommand.relay.protocol.MissionPhase.ROUTE_EXECUTION_STARTED
+                        },
+                        fileName = fact.fileName,
+                    ),
+                )
+                if (result is PublishResult.Rejected) {
+                    journal.record(
+                        DiagnosticLevel.WARN,
+                        "wayline-mission",
+                        "MISSION_PHASE_PUBLISH_REJECTED",
+                        null,
+                        "Gateway was unavailable when a mission phase fact was produced",
+                    )
+                }
+            }
             val flight = AndroidFlightTelemetrySource.create()
             val source = CompositeTelemetrySource(
                 feed({ device.snapshot() }) { changed ->
@@ -203,7 +351,7 @@ class MobileRelayGraph private constructor(
                     }
                 },
             )
-            registerCommands(gateway, telemetry, device, stream, wayline)
+            registerCommands(gateway, telemetry, device, flightControl, deviceSettings, stream, wayline)
             val lifecycle = RelayBootstrapModule(
                 object : RelayLifecyclePorts {
                     override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -219,11 +367,28 @@ class MobileRelayGraph private constructor(
                     override fun startTelemetry() { telemetry.start() }
                     override fun stopTelemetry() { telemetry.stop() }
                     override fun publishTelemetry() { telemetry.publishCurrent() }
-                    override fun startGateway() { gateway.start() }
-                    override fun stopGateway() { gateway.stop() }
+                    override fun startGateway() {
+                        diagnostics.start()
+                        gateway.start()
+                    }
+                    override fun stopGateway() {
+                        diagnostics.stop()
+                        gateway.stop()
+                    }
                     override fun closeFlightTelemetry() { flight.close() }
                     override fun markStreamUnavailable() { stream.markDeviceUnavailable() }
                     override fun markMissionUnavailable() { wayline.markDeviceUnavailable() }
+                    override fun markFlightControlUnavailable() { flightControl.markDeviceUnavailable() }
+                    override fun markDeviceSettingsUnavailable() { deviceSettings.markDeviceUnavailable() }
+                    override fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind) {
+                        journal.record(
+                            DiagnosticLevel.ERROR,
+                            "app-runtime",
+                            kind.name,
+                            null,
+                            "Relay lifecycle operation could not be completed",
+                        )
+                    }
                 },
             )
             val permissionAdapter = AndroidPermissionAdapter.attach(activity, activity.activityResultRegistry, activity)
@@ -240,7 +405,7 @@ class MobileRelayGraph private constructor(
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, device, gateway, telemetry, flight, stream, wayline, waylineAdapter,
+                runtime, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, wayline, waylineAdapter,
                 staging, permissionAdapter, foregroundPort, executor,
             ).also { it.installStatusNotifications() }
         }
@@ -257,15 +422,20 @@ class MobileRelayGraph private constructor(
             gateway: RelayGateway,
             telemetry: Telemetry,
             device: DeviceConnection,
+            flightControl: FlightControl,
+            deviceSettings: DeviceSettings,
             stream: LiveStream,
             wayline: WaylineMission,
         ) {
             val telemetryHandler = CommandHandler { command, completion ->
                 if (command.fields.fields.isNotEmpty()) completion.reject("Telemetry command fields are invalid")
-                else when (telemetry.publishCurrent()) {
-                    PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
-                        completion.succeed("Telemetry published")
-                    PublishTelemetryResult.Rejected -> completion.reject("Telemetry is unavailable")
+                else when (val read = telemetry.read()) {
+                    is TelemetryReadResult.ReadSucceeded -> when (telemetry.publishCurrent()) {
+                        PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
+                            completion.succeed("Telemetry published", TelemetryFrameMapper.commandResult(read.snapshot))
+                        PublishTelemetryResult.Rejected -> completion.reject("Telemetry is unavailable")
+                    }
+                    TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
                 }
             }
             val pairingHandler = pairingHandler(device)
@@ -275,6 +445,12 @@ class MobileRelayGraph private constructor(
             }
             listOf("live-stream.start", "live-stream.stop").forEach {
                 register(gateway, it, stream.commandHandler())
+            }
+            listOf("flight.takeoff", "flight.land", "flight.return-home").forEach {
+                register(gateway, it, flightControl.commandHandler())
+            }
+            listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
+                register(gateway, it, deviceSettings.commandHandler())
             }
             listOf(
                 "wayline.generate", "wayline.upload", "wayline.start", "wayline.pause",

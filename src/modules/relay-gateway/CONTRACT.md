@@ -1,7 +1,7 @@
 # relay-gateway 一级模块契约
 
-状态：已修订，待审阅
-版本：0.2.0
+状态：已修订；航线阶段上报扩展待实施
+版本：0.3.0
 所属程序：MSDK Relay Android
 模块标识：`relay-gateway`
 
@@ -18,7 +18,7 @@
 - 使用 `relay-settings` 提供的端点和设备身份建立会话；
 - 发送 `hello` 并验证 `paired`；
 - 接收电脑命令并交给已注册的处理器；
-- 发布遥测、命令结果和航线传输结果；
+- 发布遥测、命令结果、航线传输结果、航线阶段事实和已脱敏诊断报告；
 - 识别断线、替换连接、无效帧和协议错误；
 - 在会话结束时取消未完成的传输和命令等待。
 
@@ -45,6 +45,9 @@ RelayGateway.unregisterCommandHandler(name) -> Removed | NotRegistered
 RelayGateway.publishTelemetry(telemetryFrame) -> PublishResult
 RelayGateway.publishCommandResult(commandResultFrame) -> PublishResult
 RelayGateway.publishMissionResult(missionResultFrame) -> PublishResult
+RelayGateway.publishMissionPhase(missionPhaseFrame) -> PublishResult
+RelayGateway.publishDiagnosticReport(diagnosticReportFrame) -> PublishResult
+RelayGateway.registerDiagnosticAcknowledgementHandler(handler) -> Registration
 
 RelayGateway.onStateChanged(listener) -> Registration
 ```
@@ -59,7 +62,10 @@ RelayGateway.onStateChanged(listener) -> Registration
 - 只有进入 `ACTIVE` 后，命令和业务发布接口才允许生效；
 - `stop()` 返回后，不得再发布旧会话的异步结果；
 - `registerCommandHandler()` 只注册命令入口，不授予处理器访问 transport 或会话代次的权限；
-- `publishTelemetry()`、`publishCommandResult()` 和 `publishMissionResult()` 只负责把调用方已经构造好的结果发送出去，不生成业务内容。
+- `publishTelemetry()`、`publishCommandResult()`、`publishMissionResult()` 和 `publishMissionPhase()` 只负责把调用方已经构造好的结果发送出去，不生成业务内容。
+- `publishMissionPhase()` 只接受 `protocol-core` 定义的 `MissionPhaseFrame`；调用方必须是应用组合层的 `wayline-mission` 阶段事件桥接，不得由 gateway、电脑端请求或 DJI 原始状态直接构造。它不缓存、重排、确认或重发阶段事实。
+- `publishDiagnosticReport()` 只允许发送已经由 `runtime-diagnostics` 脱敏、排序和限量的报告；返回 `Delivered` 仅表示交给当前传输层，绝不表示电脑已持久化。
+- `registerDiagnosticAcknowledgementHandler()` 只转发合法的 `diagnostic-ack`；它不得保存、解释或确认任何业务状态。
 
 ## 3.1 二级模块划分
 
@@ -93,6 +99,7 @@ transport-adapter
 - protocol-core 负责把字节变成合法帧；
 - command-dispatcher 只接收手机端允许的 `command` 帧；
 - mission-transfer 只接收手机端允许的三种任务传输帧；
+- 诊断确认处理器只接收电脑端的 `diagnostic-ack` 并转交 `runtime-diagnostics`；
 - outbound-publisher 只发送当前会话产生的帧，旧会话的异步结果必须被丢弃。
 
 ### 二级模块边界规则
@@ -249,5 +256,6 @@ PROTOCOL_VERSION_UNSUPPORTED
 - 未处于 `ACTIVE` 时不执行命令；
 - 断线后不保留可继续执行的未确认命令；
 - gateway 不持久化遥测和任务文件；
+- gateway 不持久化诊断事件，也不在未收到 `diagnostic-ack` 时声称日志已送达；
 - gateway 不改变业务模块返回的任务文件内容和 SHA-256；
 - 公开结果不能暴露 Android 私有路径或 DJI SDK 类型。

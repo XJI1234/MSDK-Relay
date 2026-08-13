@@ -1,8 +1,10 @@
 package com.skycommand.relay.runtime.permission.android
 
+import android.annotation.SuppressLint
 import android.Manifest
 
 internal object AndroidRuntimePermissionPolicy {
+    @SuppressLint("InlinedApi")
     fun permissionsFor(sdkInt: Int): List<String> = buildList {
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.ACCESS_FINE_LOCATION)

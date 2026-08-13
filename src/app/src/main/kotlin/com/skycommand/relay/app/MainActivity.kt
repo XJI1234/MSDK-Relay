@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
         if (loaded is SettingsLoadResult.Available) {
             endpointInput.setText(loaded.snapshot.endpoint?.value.orEmpty())
         }
-        renderMessage("已停止")
+        renderMessage(R.string.message_stopped)
     }
 
     override fun onDestroy() {
@@ -57,12 +57,12 @@ class MainActivity : ComponentActivity() {
             setTextColor(0xFF17211F.toInt())
         }, matchWrap())
         content.addView(TextView(this).apply {
-            text = "电脑端 WebSocket 地址"
+            text = getString(R.string.endpoint_label)
             textSize = 14f
             setPadding(0, padding, 0, 8)
         }, matchWrap())
         endpointInput = EditText(this).apply {
-            hint = "ws://192.168.1.10:8080/relay"
+            hint = getString(R.string.endpoint_hint)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             minHeight = (52 * density).toInt()
             setSingleLine(true)
@@ -73,11 +73,11 @@ class MainActivity : ComponentActivity() {
             setPadding(0, 16, 0, 16)
         }
         startButton = Button(this).apply {
-            text = "保存并启动"
+            text = getString(R.string.start_relay)
             setOnClickListener { saveAndStart() }
         }
         stopButton = Button(this).apply {
-            text = "停止"
+            text = getString(R.string.stop_relay)
             isEnabled = false
             setOnClickListener { stopRelay() }
         }
@@ -100,17 +100,17 @@ class MainActivity : ComponentActivity() {
     private fun saveAndStart() {
         when (settings.saveEndpoint(endpointInput.text.toString().trim())) {
             is EndpointSaveResult.Saved -> Unit
-            is EndpointSaveResult.Rejected -> return renderMessage("WebSocket 地址无效")
-            is EndpointSaveResult.Unavailable -> return renderMessage("设置存储不可用")
+            is EndpointSaveResult.Rejected -> return renderMessage(R.string.message_invalid_endpoint)
+            is EndpointSaveResult.Unavailable -> return renderMessage(R.string.message_settings_unavailable)
         }
         val connection = settings.connectionSettings()
         if (connection !is RelayConnectionSettingsResult.Available) {
-            renderMessage("连接设置不可用")
+            renderMessage(R.string.message_settings_unavailable)
             return
         }
         val endpoint = connection.settings.endpoint?.value
         if (endpoint == null) {
-            renderMessage("连接设置不可用")
+            renderMessage(R.string.message_settings_unavailable)
             return
         }
         if (graph == null || graphEndpoint != endpoint) {
@@ -122,28 +122,28 @@ class MainActivity : ComponentActivity() {
             graph = runCatching {
                 MobileRelayGraph.create(this, endpoint, connection.settings.deviceId.value)
             }.getOrElse {
-                renderMessage("手机端模块初始化失败")
+                renderMessage(R.string.message_graph_initialization_failed)
                 return
             }
             graphEndpoint = endpoint
             statusRegistration = graph?.onStatusChanged(::renderStatus)
         }
-        runCatching { graph?.start() }.onFailure { renderMessage("启动请求失败") }
+        runCatching { graph?.start() }.onFailure { renderMessage(R.string.message_start_failed) }
     }
 
     private fun stopRelay() {
-        runCatching { graph?.stop() }.onFailure { renderMessage("停止请求失败") }
+        runCatching { graph?.stop() }.onFailure { renderMessage(R.string.message_stop_failed) }
     }
 
     private fun renderStatus(status: MobileRelayStatus) {
         runOnUiThread {
             statusView.text = listOf(
-                "运行时：" + status.runtime,
-                "电脑连接：" + status.gateway,
-                "DJI SDK：" + status.sdk,
-                "飞行器：" + status.aircraft,
-                "图传：" + status.stream,
-                "航线：" + status.mission,
+                getString(R.string.status_runtime, status.runtime),
+                getString(R.string.status_gateway, status.gateway),
+                getString(R.string.status_sdk, status.sdk),
+                getString(R.string.status_aircraft, status.aircraft),
+                getString(R.string.status_stream, status.stream),
+                getString(R.string.status_mission, status.mission),
             ).joinToString("\n")
             val running = status.runtime != RuntimeState.STOPPED && status.runtime != RuntimeState.FAILED
             startButton.isEnabled = !running
@@ -153,6 +153,10 @@ class MainActivity : ComponentActivity() {
 
     private fun renderMessage(message: String) {
         statusView.text = message
+    }
+
+    private fun renderMessage(messageResId: Int) {
+        renderMessage(getString(messageResId))
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(

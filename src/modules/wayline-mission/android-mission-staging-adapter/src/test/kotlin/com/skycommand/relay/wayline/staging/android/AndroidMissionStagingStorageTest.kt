@@ -21,5 +21,17 @@ class AndroidMissionStagingStorageTest {
         assertContentEquals(byteArrayOf(1),storage.read(first));assertFailsWith<IllegalStateException>{storage.append(byteArrayOf(3))}
     }
 
+    @Test fun closingClearsTheCurrentMissionCache() {
+        val storage = AndroidMissionStagingStorage(createTempDirectory().toFile())
+        val mission = metadata("survey.kmz")
+
+        storage.beginTemporary(mission)
+        storage.append(byteArrayOf(1))
+        storage.replaceCurrent()
+        storage.close()
+
+        assertFailsWith<IllegalStateException> { storage.read(mission) }
+    }
+
     private fun metadata(name:String)=MissionMetadata(name,1,"a".repeat(64))
 }

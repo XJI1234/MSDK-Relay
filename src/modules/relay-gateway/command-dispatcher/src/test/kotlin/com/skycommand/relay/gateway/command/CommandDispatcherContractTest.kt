@@ -29,6 +29,7 @@ import com.skycommand.relay.protocol.Accepted
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.CommandResultFrame
 import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.protocol.PairedFrame
 import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.protocol.RelayFrameCodec
@@ -65,6 +66,23 @@ class CommandDispatcherContractTest {
     }
 
     @Test
+    fun publishesAnOptionalStructuredCommandResultWithoutPuttingItInDetail() {
+        val results = RecordingResultPublisher()
+        val dispatcher = CommandDispatcher(results)
+        val result = JsonObject(mapOf("domain" to JsonString("camera")))
+        dispatcher.register("telemetry.read", CommandHandler { _, completion -> completion.succeed("Settings read", result) })
+        val connector = RecordingConnector()
+        val session = createSession(connector, dispatcher)
+
+        session.start()
+        connector.openCurrent()
+        connector.receive(encoded(PairedFrame("desktop-session", null)))
+        connector.receive(encoded(CommandFrame("settings-1", "telemetry.read", JsonObject(emptyMap()))))
+
+        assertEquals(CommandResultFrame("settings-1", true, "Settings read", result), results.frames.single().second)
+    }
+
+    @Test
     fun rejectsUnknownAndForbiddenCommandNamesWithoutCallingAHandler() {
         val results = RecordingResultPublisher()
         val dispatcher = CommandDispatcher(results)
@@ -77,7 +95,7 @@ class CommandDispatcherContractTest {
         connector.receive(encoded(PairedFrame("desktop-session", null)))
         captureActiveSession(connector)
 
-        val unknown = CommandFrame("unknown", "flight.takeoff", JsonObject(emptyMap()))
+        val unknown = CommandFrame("unknown", "virtual-stick.enable", JsonObject(emptyMap()))
         assertEquals(
             DispatchResult.DispatchRejected(DispatchRejectionKind.UNKNOWN_COMMAND),
             dispatcher.dispatch(consumer.activeSession, unknown),
@@ -94,7 +112,7 @@ class CommandDispatcherContractTest {
         assertEquals(RegistrationResult.RegistrationRejected, dispatcher.register("telemetry.read", handler))
         assertEquals(UnregistrationResult.Removed, dispatcher.unregister("telemetry.read"))
         assertEquals(UnregistrationResult.NotRegistered, dispatcher.unregister("telemetry.read"))
-        assertEquals(RegistrationResult.RegistrationRejected, dispatcher.register("flight.takeoff", handler))
+        assertEquals(RegistrationResult.RegistrationRejected, dispatcher.register("virtual-stick.enable", handler))
     }
 
     @Test
@@ -114,6 +132,13 @@ class CommandDispatcherContractTest {
             "wayline.stop",
             "live-stream.start",
             "live-stream.stop",
+            "flight.takeoff",
+            "flight.land",
+            "flight.return-home",
+            "device.settings.camera.read",
+            "device.settings.camera.write",
+            "device.settings.transmission.read",
+            "device.settings.transmission.write",
         )
 
         names.forEach { name ->

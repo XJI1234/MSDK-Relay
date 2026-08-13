@@ -50,6 +50,11 @@ object TelemetryFrameMapper {
         ),
     )
 
+    fun commandResult(snapshot: TelemetrySnapshot): JsonObject {
+        val frame = map(snapshot)
+        return JsonObject(frame.payload.fields + ("capabilities" to frame.capabilities))
+    }
+
     private fun String?.json(): JsonValue = this?.let(::JsonString) ?: JsonNull
     private fun Boolean?.json(): JsonValue = this?.let(::JsonBoolean) ?: JsonNull
     private fun Number?.json(): JsonValue = this?.let { JsonNumber(it.toString()) } ?: JsonNull

@@ -1,6 +1,7 @@
 package com.skycommand.relay.wayline.android
 
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import kotlin.test.Test
@@ -10,6 +11,29 @@ import kotlin.test.assertTrue
 import java.nio.file.Files
 
 class AndroidDjiWaylineAdapterContractTest {
+    @Test fun registersForDjiStateBeforeStartAndStopsDeliveringAfterClose() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        val signals = mutableListOf<MissionExecutionSignal>()
+
+        adapter.onSignal { signals += it }
+        assertEquals(0, dji.executionListenerRegistrations)
+
+        adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.start(ControlDone())
+        assertEquals(1, dji.executionListenerRegistrations)
+        assertEquals(listOf("listener", "start"), dji.calls)
+        assertEquals("start", dji.command)
+        dji.emit(DjiMissionExecutionState.ENTER_WAYLINE)
+        requireNotNull(dji.controlCompletion).succeed()
+
+        assertEquals(listOf(MissionExecutionSignal.ENTER_WAYLINE), signals)
+        adapter.close()
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        assertEquals(listOf(MissionExecutionSignal.ENTER_WAYLINE), signals)
+    }
+
     @Test fun uploadsTemporaryFileAndControlsTheSuccessfulName() {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji); val progress=mutableListOf<Int>(); val done=UploadDone()
         adapter.upload(metadata("one.kmz"), byteArrayOf(1,2), { progress+=it }, done)
@@ -90,11 +114,13 @@ class AndroidDjiWaylineAdapterContractTest {
     private class ControlDone:ControlCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
     private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>()
         override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;val index=deleteCounts.size;deleteCounts+=0;val path="C:/cache/$index/$fileName";paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++}}}
-    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0
+    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null
         override fun upload(path:String,completion:DjiUploadCompletion){uploadPath=path;uploadCompletion=completion;uploadCompletions+=completion}
-        override fun start(name:String,completion:DjiControlCompletion){command="start";controlName=name;controlCompletion=completion}
+        override fun start(name:String,completion:DjiControlCompletion){calls+="start";command="start";controlName=name;controlCompletion=completion}
         override fun pause(completion:DjiControlCompletion){command="pause";controlCompletion=completion}
         override fun resume(completion:DjiControlCompletion){command="resume";controlCompletion=completion}
         override fun stop(name:String,completion:DjiControlCompletion){command="stop";controlName=name;controlCompletion=completion}
+        override fun onExecutionState(listener:(DjiMissionExecutionState)->Unit):DjiExecutionStateRegistration { calls+="listener"; executionListenerRegistrations++; executionListener=listener; return DjiExecutionStateRegistration { executionListener=null } }
+        fun emit(state:DjiMissionExecutionState) { executionListener?.invoke(state) }
         override fun close(){closeCalls++} }
 }

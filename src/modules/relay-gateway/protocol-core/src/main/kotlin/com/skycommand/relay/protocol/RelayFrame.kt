@@ -61,6 +61,7 @@ data class CommandResultFrame(
     val id: String,
     val ok: Boolean,
     val detail: String,
+    val result: JsonObject? = null,
 ) : RelayFrame
 
 data class MissionBeginFrame(
@@ -91,17 +92,62 @@ data class MissionResultFrame(
     val detail: String,
 ) : RelayFrame
 
+enum class MissionPhase {
+    START_POINT_REACHED,
+    ROUTE_EXECUTION_STARTED,
+}
+
+data class MissionPhaseFrame(
+    val missionRevision: Long,
+    val deviceGeneration: Long,
+    val sequence: Long,
+    val phase: MissionPhase,
+    val fileName: String,
+) : RelayFrame
+
+data class DiagnosticEventFrame(
+    val sequence: Long,
+    val timestampMillis: Long,
+    val level: String,
+    val module: String,
+    val eventCode: String,
+    val operationId: String?,
+    val safeDetail: String,
+)
+
+class DiagnosticReportFrame(
+    val runId: String,
+    events: List<DiagnosticEventFrame>,
+) : RelayFrame {
+    val events: List<DiagnosticEventFrame> = Collections.unmodifiableList(events.toList())
+
+    override fun equals(other: Any?): Boolean =
+        other is DiagnosticReportFrame && runId == other.runId && events == other.events
+
+    override fun hashCode(): Int = 31 * runId.hashCode() + events.hashCode()
+
+    override fun toString(): String = "DiagnosticReportFrame(runId=$runId, events=$events)"
+}
+
+data class DiagnosticAcknowledgementFrame(
+    val runId: String,
+    val acknowledgedSequence: Long,
+) : RelayFrame
+
 fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
     val result: ProtocolResult<Unit> = when (frame) {
         is HelloFrame -> validateHello(frame)
         is PairedFrame -> validatePaired(frame)
         is TelemetryFrame -> validateTelemetry(frame)
         is CommandFrame -> validateCommand(frame)
-        is CommandResultFrame -> validateResult(frame.id, frame.detail)
+        is CommandResultFrame -> validateResult(frame.id, frame.detail, frame.result)
         is MissionBeginFrame -> validateMissionBegin(frame)
         is MissionChunkFrame -> validateMissionChunk(frame)
         is MissionCompleteFrame -> validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Mission ID is invalid")
         is MissionResultFrame -> validateResult(frame.id, frame.detail)
+        is MissionPhaseFrame -> validateMissionPhase(frame)
+        is DiagnosticReportFrame -> validateDiagnosticReport(frame)
+        is DiagnosticAcknowledgementFrame -> validateDiagnosticAcknowledgement(frame)
     }
     return when (result) {
         is Accepted -> Accepted(frame)
@@ -222,7 +268,7 @@ private class JsonTokenBudget(initialTokens: Long) {
 
 private val JSON_NUMBER_PATTERN = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 
-private fun validateResult(id: String, detail: String): ProtocolResult<Unit> {
+private fun validateResult(id: String, detail: String, result: JsonObject? = null): ProtocolResult<Unit> {
     return validateId(id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Message ID is invalid")
         .then {
             if (detail.codePointCount(0, detail.length) > ProtocolLimits.maxResultDetailCodePoints || detail.any(Char::isISOControl)) {
@@ -231,7 +277,72 @@ private fun validateResult(id: String, detail: String): ProtocolResult<Unit> {
                 Accepted(Unit)
             }
         }
+        .then { result?.let { validateJsonValue(it, depth = 1, tokenBudget = JsonTokenBudget(initialTokens = 4)) } ?: Accepted(Unit) }
 }
+
+private fun validateDiagnosticReport(frame: DiagnosticReportFrame): ProtocolResult<Unit> {
+    return validateId(frame.runId, ProtocolErrorCode.INVALID_MESSAGE_ID, "Diagnostic run ID is invalid")
+        .then {
+            if (frame.events.size !in 1..ProtocolLimits.maxDiagnosticEventsPerReport) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, "Diagnostic event count is invalid"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+        .then {
+            var previousSequence = 0L
+            frame.events.forEach { event ->
+                val result = validateDiagnosticEvent(event, previousSequence)
+                if (result is Rejected) return result
+                previousSequence = event.sequence
+            }
+            Accepted(Unit)
+        }
+}
+
+private fun validateDiagnosticAcknowledgement(frame: DiagnosticAcknowledgementFrame): ProtocolResult<Unit> {
+    return validateId(frame.runId, ProtocolErrorCode.INVALID_MESSAGE_ID, "Diagnostic run ID is invalid")
+        .then {
+            if (frame.acknowledgedSequence < 0) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_ACKNOWLEDGEMENT, "Diagnostic acknowledgement sequence is invalid"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+}
+
+private fun validateDiagnosticEvent(event: DiagnosticEventFrame, previousSequence: Long): ProtocolResult<Unit> {
+    if (event.sequence <= previousSequence || event.timestampMillis < 0) {
+        return Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, "Diagnostic event sequence or timestamp is invalid"))
+    }
+    if (event.level !in DIAGNOSTIC_LEVELS) {
+        return Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, "Diagnostic event level is invalid"))
+    }
+    if (!isDiagnosticIdentifier(event.module) || !isDiagnosticIdentifier(event.eventCode)) {
+        return Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, "Diagnostic event identifier is invalid"))
+    }
+    return event.operationId?.let { validateId(it, ProtocolErrorCode.INVALID_MESSAGE_ID, "Diagnostic operation ID is invalid") }
+        ?: Accepted(Unit)
+        .then {
+            if (
+                event.safeDetail.codePointCount(0, event.safeDetail.length) > ProtocolLimits.maxDiagnosticDetailCodePoints ||
+                event.safeDetail.any(Char::isISOControl)
+            ) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, "Diagnostic event detail is invalid"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+}
+
+private fun isDiagnosticIdentifier(value: String): Boolean =
+    value.length in 1..ProtocolLimits.maxDiagnosticModuleCodePoints &&
+        value.firstOrNull()?.isAsciiLetter() == true &&
+        value.all { it.isAsciiLetter() || it.isDigit() || it == '-' || it == '_' || it == '.' }
+
+private fun Char.isAsciiLetter(): Boolean = this in 'a'..'z' || this in 'A'..'Z'
+
+private val DIAGNOSTIC_LEVELS = setOf("DEBUG", "INFO", "WARN", "ERROR")
 
 private fun validateMissionBegin(frame: MissionBeginFrame): ProtocolResult<Unit> {
     return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Mission ID is invalid")
@@ -267,6 +378,18 @@ private fun validateMissionChunk(frame: MissionChunkFrame): ProtocolResult<Unit>
                 else -> Accepted(Unit)
             }
         }
+}
+
+private fun validateMissionPhase(frame: MissionPhaseFrame): ProtocolResult<Unit> {
+    return when {
+        frame.missionRevision <= 0 || frame.deviceGeneration < 0 || frame.sequence <= 0 ->
+            Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Mission phase revision is invalid"))
+
+        !isSafeMissionFileName(frame.fileName) ->
+            Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Mission phase file name is invalid"))
+
+        else -> Accepted(Unit)
+    }
 }
 
 private fun validateId(value: String, code: ProtocolErrorCode, message: String): ProtocolResult<Unit> {

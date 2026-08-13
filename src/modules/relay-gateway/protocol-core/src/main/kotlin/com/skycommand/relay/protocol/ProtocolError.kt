@@ -18,6 +18,8 @@ enum class ProtocolErrorCode {
     EMPTY_CHUNK,
     CHUNK_TOO_LARGE,
     INVALID_RESULT_DETAIL,
+    INVALID_DIAGNOSTIC_REPORT,
+    INVALID_DIAGNOSTIC_ACKNOWLEDGEMENT,
 }
 
 @ConsistentCopyVisibility

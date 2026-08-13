@@ -77,7 +77,10 @@ class TelemetryContractTest {
         val telemetry = Telemetry.create(source, sink)
         telemetry.start()
 
-        source.inputs = source.inputs.copy(flight = FlightTelemetrySnapshot(isFlying = true, batteryPercent = 77))
+        source.inputs = source.inputs.copy(
+            device = connectedFlightDevice(),
+            flight = FlightTelemetrySnapshot(isFlying = true, batteryPercent = 77),
+        )
         source.emit()
 
         assertEquals(true, sink.values.single().isFlying)
@@ -97,7 +100,10 @@ class TelemetryContractTest {
         assertEquals(emptyList(), sink.values)
 
         source.failure = null
-        source.inputs = source.inputs.copy(flight = FlightTelemetrySnapshot(isFlying = true))
+        source.inputs = source.inputs.copy(
+            device = connectedFlightDevice(),
+            flight = FlightTelemetrySnapshot(isFlying = true),
+        )
         source.emit()
         assertEquals(true, sink.values.single().isFlying)
     }
@@ -115,7 +121,10 @@ class TelemetryContractTest {
         assertEquals(emptyList(), sink.values)
 
         telemetry.start()
-        source.inputs = source.inputs.copy(flight = FlightTelemetrySnapshot(motorsOn = true))
+        source.inputs = source.inputs.copy(
+            device = connectedFlightDevice(),
+            flight = FlightTelemetrySnapshot(motorsOn = true),
+        )
         source.emit()
         assertEquals(true, sink.values.single().motorsOn)
     }
@@ -176,4 +185,15 @@ class TelemetryContractTest {
 
         fun captureListener(): () -> Unit = requireNotNull(listener)
     }
+
+    private fun connectedFlightDevice() = DeviceSnapshot(
+        revision = 1,
+        sdkAvailability = SdkAvailability.READY,
+        remoteController = LinkState.CONNECTED,
+        aircraft = LinkState.CONNECTED,
+        flightController = LinkState.CONNECTED,
+        pairing = PairingState.PAIRED,
+        remoteControllerModel = "RC Plus",
+        aircraftModel = "Matrice 4",
+    )
 }

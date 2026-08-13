@@ -20,6 +20,14 @@ port.initialize(callbacks) -> PortStartResult
 port.close() -> Unit
 ```
 
+该模块还提供唯一的 Android 进程初始化入口：
+
+```text
+DjiSdkApplication.attachBaseContext(baseContext) -> 安装 DJI 运行时
+```
+
+宿主应用的 Manifest 必须将 `application` 声明为 `com.skycommand.relay.device.sdk.android.DjiSdkApplication`。该 Application 只调用当前 MSDK 发行版要求的 `com.cySdkyc.clx.Helper.install(this)`，不注册 DJI 应用、不持有 Activity、不注册设备监听器，也不包含任何中继业务状态。
+
 `create` 必须接收应用级 Context。它返回既有的平台无关 `DjiSdkPort`；不得向调用方暴露 Android Context、`SDKManager`、DJI 错误、产品标识、异常或 MSDK 回调。
 
 本适配器仅有一个直接协作者，即内部 MSDK 管理器桥接层。该桥接层不是对外接口；DJI 变更 API 时可以替换它，而无需修改 `sdk-lifecycle` 或其他业务模块。

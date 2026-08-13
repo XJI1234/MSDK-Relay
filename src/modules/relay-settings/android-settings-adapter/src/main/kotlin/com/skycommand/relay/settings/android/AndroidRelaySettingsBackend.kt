@@ -1,5 +1,6 @@
 package com.skycommand.relay.settings.android
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import com.skycommand.relay.settings.store.RelaySettingsBackend
@@ -8,6 +9,7 @@ import com.skycommand.relay.settings.store.RelaySettingsRecord
 class AndroidRelaySettingsBackend private constructor(
     private val preferences: SharedPreferences,
 ) : RelaySettingsBackend {
+    @SuppressLint("ApplySharedPref")
     @Synchronized
     override fun update(change: (RelaySettingsRecord?) -> RelaySettingsRecord?): RelaySettingsRecord? {
         val current = try {

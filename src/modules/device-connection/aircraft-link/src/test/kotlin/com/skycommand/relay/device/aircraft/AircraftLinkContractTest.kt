@@ -56,6 +56,23 @@ class AircraftLinkContractTest {
         assertEquals(LinkState.DISCONNECTED, failingStore.snapshot().aircraft)
     }
 
+    @Test
+    fun recordsPortFailureWhenObservationCannotStart() {
+        val diagnostics = mutableListOf<AircraftDiagnosticKind>()
+        val link = AircraftLink.create(
+            DeviceStateStore.create(),
+            object : AircraftPort {
+                override fun start(listener: AircraftListener): AircraftPortSubscription = error("unavailable")
+                override fun stop() = Unit
+            },
+            AircraftDiagnosticSink { diagnostics += it.kind },
+        )
+
+        assertIs<AircraftStartResult.Rejected>(link.start())
+
+        assertEquals(listOf(AircraftDiagnosticKind.PORT_FAILURE), diagnostics)
+    }
+
     private class Fixture {
         val store = DeviceStateStore.create()
         val port = RecordingPort()

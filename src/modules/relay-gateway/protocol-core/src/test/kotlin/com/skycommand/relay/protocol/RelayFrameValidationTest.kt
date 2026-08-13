@@ -8,6 +8,46 @@ import kotlin.test.assertContentEquals
 class RelayFrameValidationTest {
 
     @Test
+    fun rejectsDiagnosticReportWithNonIncreasingSequence() {
+        val result = validate(
+            DiagnosticReportFrame(
+                "run", listOf(
+                    diagnosticEvent(sequence = 2),
+                    diagnosticEvent(sequence = 2),
+                ),
+            ),
+        )
+
+        assertEquals(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, assertIs<Rejected>(result).error.code)
+    }
+
+    @Test
+    fun rejectsDiagnosticReportWithInvalidIdentifierOrOversizedDetail() {
+        val invalidIdentifier = validate(DiagnosticReportFrame("run", listOf(diagnosticEvent(module = "1bad"))))
+        val nonAsciiIdentifier = validate(DiagnosticReportFrame("run", listOf(diagnosticEvent(module = "设备"))))
+        val oversizedDetail = validate(
+            DiagnosticReportFrame("run", listOf(diagnosticEvent(detail = "a".repeat(513)))),
+        )
+
+        assertEquals(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, assertIs<Rejected>(invalidIdentifier).error.code)
+        assertEquals(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, assertIs<Rejected>(nonAsciiIdentifier).error.code)
+        assertEquals(ProtocolErrorCode.INVALID_DIAGNOSTIC_REPORT, assertIs<Rejected>(oversizedDetail).error.code)
+    }
+
+    @Test
+    fun rejectsNegativeDiagnosticAcknowledgement() {
+        val result = validate(DiagnosticAcknowledgementFrame("run", -1))
+
+        assertEquals(ProtocolErrorCode.INVALID_DIAGNOSTIC_ACKNOWLEDGEMENT, assertIs<Rejected>(result).error.code)
+    }
+
+    private fun diagnosticEvent(
+        sequence: Long = 1,
+        module: String = "runtime-diagnostics",
+        detail: String = "safe",
+    ) = DiagnosticEventFrame(sequence, 0, "INFO", module, "EVENT", null, detail)
+
+    @Test
     fun acceptsValidHello() {
         assertIs<Accepted<RelayFrame>>(validate(HelloFrame("android-device", "1")))
     }

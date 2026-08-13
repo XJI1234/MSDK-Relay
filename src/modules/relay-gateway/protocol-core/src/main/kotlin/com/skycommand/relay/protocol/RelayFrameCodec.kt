@@ -162,6 +162,7 @@ object RelayFrameCodec {
                     id = requiredText(root, "id"),
                     ok = requiredBoolean(root, "ok"),
                     detail = optionalText(root, "detail") ?: "",
+                    result = optionalObject(root, "result")?.toJsonObject(),
                 )
             )
 
@@ -189,6 +190,41 @@ object RelayFrameCodec {
                     ok = requiredBoolean(root, "ok"),
                     detail = optionalText(root, "detail") ?: "",
                 )
+            )
+
+            "mission-phase" -> decoded(
+                MissionPhaseFrame(
+                    missionRevision = requiredLong(root, "missionRevision"),
+                    deviceGeneration = requiredLong(root, "deviceGeneration"),
+                    sequence = requiredLong(root, "sequence"),
+                    phase = requiredMissionPhase(requiredText(root, "phase")),
+                    fileName = requiredText(root, "fileName"),
+                )
+            )
+
+            "diagnostic-report" -> decoded(
+                DiagnosticReportFrame(
+                    runId = requiredText(root, "runId"),
+                    events = requiredArray(root, "events").map { eventNode ->
+                        val event = requireObject(eventNode, "Diagnostic event must be an object")
+                        DiagnosticEventFrame(
+                            sequence = requiredLong(event, "sequence"),
+                            timestampMillis = requiredLong(event, "timestampMillis"),
+                            level = requiredText(event, "level"),
+                            module = requiredText(event, "module"),
+                            eventCode = requiredText(event, "eventCode"),
+                            operationId = optionalText(event, "operationId"),
+                            safeDetail = requiredText(event, "safeDetail"),
+                        )
+                    },
+                ),
+            )
+
+            "diagnostic-ack" -> decoded(
+                DiagnosticAcknowledgementFrame(
+                    runId = requiredText(root, "runId"),
+                    acknowledgedSequence = requiredLong(root, "acknowledgedSequence"),
+                ),
             )
 
             else -> DecodeResult.Ignored(type)
@@ -237,6 +273,7 @@ object RelayFrameCodec {
                 root.put("id", frame.id)
                 root.put("ok", frame.ok)
                 root.put("detail", frame.detail)
+                frame.result?.let { root.set<JsonNode>("result", it.toNode()) }
             }
 
             is MissionBeginFrame -> {
@@ -263,6 +300,39 @@ object RelayFrameCodec {
                 root.put("id", frame.id)
                 root.put("ok", frame.ok)
                 root.put("detail", frame.detail)
+            }
+
+            is MissionPhaseFrame -> {
+                root.put("type", "mission-phase")
+                root.put("missionRevision", frame.missionRevision)
+                root.put("deviceGeneration", frame.deviceGeneration)
+                root.put("sequence", frame.sequence)
+                root.put("phase", frame.phase.name)
+                root.put("fileName", frame.fileName)
+            }
+
+            is DiagnosticReportFrame -> {
+                root.put("type", "diagnostic-report")
+                root.put("runId", frame.runId)
+                val events = mapper.createArrayNode()
+                frame.events.forEach { event ->
+                    val node = mapper.createObjectNode()
+                    node.put("sequence", event.sequence)
+                    node.put("timestampMillis", event.timestampMillis)
+                    node.put("level", event.level)
+                    node.put("module", event.module)
+                    node.put("eventCode", event.eventCode)
+                    event.operationId?.let { node.put("operationId", it) }
+                    node.put("safeDetail", event.safeDetail)
+                    events.add(node)
+                }
+                root.set<JsonNode>("events", events)
+            }
+
+            is DiagnosticAcknowledgementFrame -> {
+                root.put("type", "diagnostic-ack")
+                root.put("runId", frame.runId)
+                root.put("acknowledgedSequence", frame.acknowledgedSequence)
             }
         }
         return root
@@ -312,12 +382,40 @@ object RelayFrameCodec {
         return value.longValue()
     }
 
+    private fun requiredMissionPhase(value: String): MissionPhase =
+        runCatching { MissionPhase.valueOf(value) }.getOrElse {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Mission phase is invalid"))
+        }
+
     private fun requiredObject(node: JsonNode, name: String): JsonNode {
         val value = node.get(name)
         if (value == null || !value.isObject) {
             throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name must be an object"))
         }
         return value
+    }
+
+    private fun optionalObject(node: JsonNode, name: String): JsonNode? {
+        val value = node.get(name) ?: return null
+        if (!value.isObject) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name must be an object"))
+        }
+        return value
+    }
+
+    private fun requiredArray(node: JsonNode, name: String): List<JsonNode> {
+        val value = node.get(name)
+        if (value == null || !value.isArray) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name must be an array"))
+        }
+        return value.elements().asSequence().toList()
+    }
+
+    private fun requireObject(node: JsonNode, message: String): JsonNode {
+        if (!node.isObject) {
+            throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, message))
+        }
+        return node
     }
 
     private fun decodeBase64(value: String): ByteArray {

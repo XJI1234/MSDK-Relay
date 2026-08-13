@@ -21,7 +21,8 @@ kotlin { jvmToolchain(17) }
 
 dependencies {
     api(project(":app-runtime:permission-coordinator"))
-    implementation("androidx.activity:activity:1.9.3")
+    implementation("androidx.activity:activity-ktx:1.9.3")
+    implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")

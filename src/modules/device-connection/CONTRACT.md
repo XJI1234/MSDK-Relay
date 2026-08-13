@@ -26,6 +26,8 @@ DeviceConnection.operations().submit(action, timeoutMillis, completion)
 
 `DeviceSnapshot`、`DeviceCapabilities`、`OperationResult` 和所有拒绝结果均不得包含 DJI SDK 类型、Android 类型、设备序列号、密钥、文件路径、原始异常或堆栈。
 
+`DeviceConnectionDependencies` 可选接收 SDK 生命周期、设备状态、遥控器观察、飞行器观察和配对状态观察五类诊断接收器。它们只接收稳定事件码与安全上下文；任何接收器抛出的异常都必须被隔离，绝不能改变设备状态、启动、停止或配对命令的结果。应用组合根必须把这五类事件交给 `runtime-diagnostics`，使无线日志能定位观察链路故障。
+
 ## 3. 二级模块
 
 | 二级模块 | 唯一职责 | 公开产物 | 明确不负责 |

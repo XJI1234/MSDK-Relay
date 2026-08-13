@@ -18,6 +18,24 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class TelemetryFrameMapperTest {
+    @Test fun mapsTelemetryReadResultToTheDesktopPayloadShape() {
+        val result = TelemetryFrameMapper.commandResult(
+            TelemetrySnapshot(
+                4, SdkAvailability.READY, LinkState.CONNECTED, LinkState.CONNECTED,
+                LinkState.CONNECTED, PairingState.PAIRED, null, "DJI Mini 4 Pro",
+                TelemetryCapabilities(true, true, WaypointMissionSupport.SUPPORTED, false),
+                batteryPercent = 73,
+            ),
+        )
+
+        assertEquals(JsonNumber("4"), result["deviceRevision"])
+        assertEquals(JsonString("DJI Mini 4 Pro"), result["aircraftModel"])
+        assertEquals(JsonNumber("73"), result["batteryPercent"])
+        val capabilities = result["capabilities"]
+        assertIs<com.skycommand.relay.protocol.JsonObject>(capabilities)
+        assertEquals(JsonBoolean(true), capabilities["waypointMission"])
+    }
+
     @Test fun mapsEveryBusinessFieldAndCapability() {
         val frame = TelemetryFrameMapper.map(
             TelemetrySnapshot(

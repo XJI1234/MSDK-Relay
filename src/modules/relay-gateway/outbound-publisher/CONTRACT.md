@@ -28,7 +28,7 @@ Gradle 路径：`:relay-gateway:outbound-publisher`
 - 串行化所有对当前 writer 的写入；
 - 为 `connection-session` 提供 `attach`、`sendHandshake` 和 `discard`；
 - 只允许 `hello` 走握手专用接口；
-- 只允许遥测、命令结果和任务结果走活动会话发布接口；
+- 只允许遥测、命令结果、任务结果、航线阶段事实和诊断报告走活动会话发布接口；
 - 在编码失败、writer 拒绝、会话过期或方向不允许时返回固定的结构化结果；
 - 在 `discard` 返回后保证该代次不再发生新的写入。
 
@@ -96,7 +96,7 @@ publish(activeSession, frame)
 ### 4.3 `publish`
 
 - `activeSession.generation` 必须等于当前附着代次，否则返回 `Rejected(STALE_SESSION)` 且不编码、不写入；
-- 允许的帧类型只有 `TelemetryFrame`、`CommandResultFrame` 和 `MissionResultFrame`；
+- 允许的帧类型只有 `TelemetryFrame`、`CommandResultFrame`、`MissionResultFrame`、`MissionPhaseFrame` 和 `DiagnosticReportFrame`；
 - `HelloFrame` 必须走 `sendHandshake`；`PairedFrame`、`CommandFrame`、`MissionBeginFrame`、`MissionChunkFrame` 和 `MissionCompleteFrame` 都是当前方向不允许的帧，返回 `Rejected(DIRECTION_NOT_ALLOWED)`；
 - 对允许帧，先调用 `protocol-core.encode`，成功后调用 writer；两个步骤在同一发送顺序中完成；
 - 编码被拒绝或内部异常返回 `Rejected(ENCODING_REJECTED)`；writer 拒绝或抛出异常返回 `Rejected(WRITE_REJECTED)`；
@@ -157,7 +157,7 @@ protocol-core 的 RelayFrame、validate、RelayFrameCodec.encode 和结构化结
 - 首次 `attach`、相同 attachment 幂等、不同 writer 或不同代次拒绝；
 - attach 不写字节；
 - hello 正常发送、重复 hello 拒绝、旧代次 hello 拒绝、编码失败和 writer 拒绝；
-- 三种允许业务帧分别编码并按调用顺序写入；
+- 五种允许业务帧分别编码并按调用顺序写入；
 - 每种不允许方向帧稳定拒绝且不写字节；
 - 没有附着、旧 `ActiveSession`、discard 后的发布都稳定返回 `STALE_SESSION`；
 - `protocol-core` 编码失败和 writer 抛出异常不泄漏异常且不破坏下一次调用；

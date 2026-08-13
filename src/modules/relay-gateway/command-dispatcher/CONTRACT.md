@@ -61,9 +61,16 @@ wayline.resume
 wayline.stop
 live-stream.start
 live-stream.stop
+flight.takeoff
+flight.land
+flight.return-home
+device.settings.camera.read
+device.settings.camera.write
+device.settings.transmission.read
+device.settings.transmission.write
 ```
 
-未在目录中的命令永远不能注册。`flight.takeoff`、`flight.land`、`flight.return-home` 和所有 `virtual-stick.*` 均不属于本阶段，必须保持未注册并由分发器稳定拒绝。新增、删除或重命名命令必须先修改根契约和本文。
+未在目录中的命令永远不能注册。所有 `virtual-stick.*` 均不属于本阶段，必须保持未注册并由分发器稳定拒绝。新增、删除或重命名命令必须先修改根契约和本文。
 
 ## 4. 对外接口
 
@@ -175,7 +182,7 @@ outbound-publisher 的 publish 接口和结构化 PublishResult
 
 ## 8. 必测矩阵
 
-- 目录内每个命令可注册一次，目录外和 `flight.*` / `virtual-stick.*` 稳定拒绝；
+- 目录内每个命令可注册一次，目录外和 `virtual-stick.*` 稳定拒绝；
 - 重复注册不替换处理器；注销只影响未来分发；
 - 同步成功、同步拒绝、异步成功、异步拒绝均产生关联原 ID 的唯一结果；
 - 空 detail、1024 code point detail、超长 detail 和控制字符 detail；

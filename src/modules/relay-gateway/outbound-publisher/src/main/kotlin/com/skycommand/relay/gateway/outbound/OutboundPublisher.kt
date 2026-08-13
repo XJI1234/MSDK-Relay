@@ -9,8 +9,10 @@ import com.skycommand.relay.gateway.session.TransportWriteResult
 import com.skycommand.relay.gateway.session.TransportWriter
 import com.skycommand.relay.protocol.Accepted
 import com.skycommand.relay.protocol.CommandResultFrame
+import com.skycommand.relay.protocol.DiagnosticReportFrame
 import com.skycommand.relay.protocol.HelloFrame
 import com.skycommand.relay.protocol.MissionResultFrame
+import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.protocol.RelayFrameCodec
 import com.skycommand.relay.protocol.TelemetryFrame
@@ -64,7 +66,13 @@ class OutboundPublisher : SessionOutbound {
         if (current == null || current.generation != activeSession.generation) {
             return PublishResult.Rejected(PublishRejectionKind.STALE_SESSION)
         }
-        if (frame !is TelemetryFrame && frame !is CommandResultFrame && frame !is MissionResultFrame) {
+        if (
+            frame !is TelemetryFrame &&
+            frame !is CommandResultFrame &&
+            frame !is MissionResultFrame &&
+            frame !is MissionPhaseFrame &&
+            frame !is DiagnosticReportFrame
+        ) {
             return PublishResult.Rejected(PublishRejectionKind.DIRECTION_NOT_ALLOWED)
         }
 

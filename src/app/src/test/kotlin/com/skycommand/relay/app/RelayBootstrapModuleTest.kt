@@ -36,7 +36,7 @@ class RelayBootstrapModuleTest {
         assertEquals(
             listOf(
                 "device-listen", "gateway-listen", "device-start", "telemetry-start", "gateway-start",
-                "stream-unavailable", "mission-unavailable", "gateway-unlisten", "device-unlisten",
+                "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable", "gateway-unlisten", "device-unlisten",
                 "gateway-stop", "telemetry-stop", "flight-close", "device-stop",
             ),
             ports.events,
@@ -64,6 +64,7 @@ class RelayBootstrapModuleTest {
         assertFalse(result.isFailure)
         assertEquals(1, ports.events.count { it == "gateway-stop" })
         assertEquals(1, ports.events.count { it == "telemetry-stop" })
+        assertEquals(1, ports.events.count { it == "diagnostic:RELAY_START_FAILURE" })
         ports.deviceChanged()
         assertEquals(2, ports.events.count { it == "gateway-start" })
     }
@@ -136,9 +137,14 @@ class RelayBootstrapModuleTest {
                 error("gateway start failed")
             }
         }
+        override fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind) {
+            events += "diagnostic:${kind.name}"
+        }
         override fun stopGateway() { events += "gateway-stop" }
         override fun closeFlightTelemetry() { events += "flight-close" }
         override fun markStreamUnavailable() { events += "stream-unavailable" }
         override fun markMissionUnavailable() { events += "mission-unavailable" }
+        override fun markFlightControlUnavailable() { events += "flight-control-unavailable" }
+        override fun markDeviceSettingsUnavailable() { events += "device-settings-unavailable" }
     }
 }

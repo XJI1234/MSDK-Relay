@@ -8,6 +8,7 @@ android {
 kotlin { jvmToolchain(17) }
 dependencies {
     api(project(":wayline-mission:mission-uploader")); api(project(":wayline-mission:mission-executor"))
+    api(project(":wayline-mission:mission-flight-phase"))
     implementation("com.dji:dji-sdk-v5-aircraft:5.17.0"); compileOnly("com.dji:dji-sdk-v5-aircraft-provided:5.17.0")
     testImplementation(kotlin("test")); testImplementation("junit:junit:4.13.2")
 }

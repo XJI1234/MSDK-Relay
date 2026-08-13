@@ -1,6 +1,7 @@
 package com.skycommand.relay.device
 
 import com.skycommand.relay.device.aircraft.AircraftLink
+import com.skycommand.relay.device.aircraft.AircraftDiagnosticSink
 import com.skycommand.relay.device.aircraft.AircraftPort
 import com.skycommand.relay.device.capability.DeviceCapabilityReader
 import com.skycommand.relay.device.capability.DeviceCapabilities
@@ -12,14 +13,18 @@ import com.skycommand.relay.device.pairing.PairingOperationResult
 import com.skycommand.relay.device.pairing.PairingPort
 import com.skycommand.relay.device.pairing.PairingRequestResult
 import com.skycommand.relay.device.pairing.status.PairingStatusLink
+import com.skycommand.relay.device.pairing.status.PairingStatusDiagnosticSink
 import com.skycommand.relay.device.pairing.status.PairingStatusPort
 import com.skycommand.relay.device.remote.RemoteControllerLink
+import com.skycommand.relay.device.remote.RemoteControllerDiagnosticSink
 import com.skycommand.relay.device.remote.RemoteControllerPort
 import com.skycommand.relay.device.sdk.DjiSdkPort
 import com.skycommand.relay.device.sdk.SdkLifecycle
+import com.skycommand.relay.device.sdk.SdkLifecycleDiagnosticSink
 import com.skycommand.relay.device.sdk.StartResult
 import com.skycommand.relay.device.sdk.StopResult
 import com.skycommand.relay.device.state.DeviceSnapshot
+import com.skycommand.relay.device.state.DeviceStateDiagnosticSink
 import com.skycommand.relay.device.state.DeviceStateListener
 import com.skycommand.relay.device.state.DeviceStateStore
 import com.skycommand.relay.device.state.Registration
@@ -34,6 +39,11 @@ data class DeviceConnectionDependencies(
     val pairingStatusPort: PairingStatusPort,
     val executor: OperationExecutor,
     val scheduler: OperationScheduler,
+    val sdkDiagnosticSink: SdkLifecycleDiagnosticSink = SdkLifecycleDiagnosticSink { },
+    val deviceStateDiagnosticSink: DeviceStateDiagnosticSink = DeviceStateDiagnosticSink { },
+    val remoteControllerDiagnosticSink: RemoteControllerDiagnosticSink = RemoteControllerDiagnosticSink { },
+    val pairingStatusDiagnosticSink: PairingStatusDiagnosticSink = PairingStatusDiagnosticSink { },
+    val aircraftDiagnosticSink: AircraftDiagnosticSink = AircraftDiagnosticSink { },
 )
 
 sealed interface DeviceConnectionStartResult {
@@ -52,13 +62,25 @@ sealed interface DeviceConnectionStopResult {
 
 class DeviceConnection private constructor(dependencies: DeviceConnectionDependencies) {
     private val lifecycleLock = ReentrantLock()
-    private val store = DeviceStateStore.create()
-    private val lifecycle = SdkLifecycle.create(dependencies.sdkPort)
-    private val remoteControllerLink = RemoteControllerLink.create(store, dependencies.remoteControllerPort)
-    private val aircraftLink = AircraftLink.create(store, dependencies.aircraftPort)
+    private val store = DeviceStateStore.create(dependencies.deviceStateDiagnosticSink)
+    private val lifecycle = SdkLifecycle.create(dependencies.sdkPort, dependencies.sdkDiagnosticSink)
+    private val remoteControllerLink = RemoteControllerLink.create(
+        store,
+        dependencies.remoteControllerPort,
+        dependencies.remoteControllerDiagnosticSink,
+    )
+    private val aircraftLink = AircraftLink.create(
+        store,
+        dependencies.aircraftPort,
+        dependencies.aircraftDiagnosticSink,
+    )
     private val operations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
     private val pairing = PairingController.create(store, operations, dependencies.pairingPort)
-    private val pairingStatusLink = PairingStatusLink.create(store, dependencies.pairingStatusPort)
+    private val pairingStatusLink = PairingStatusLink.create(
+        store,
+        dependencies.pairingStatusPort,
+        dependencies.pairingStatusDiagnosticSink,
+    )
 
     init {
         lifecycle.onChanged { store.applySdk(it) }

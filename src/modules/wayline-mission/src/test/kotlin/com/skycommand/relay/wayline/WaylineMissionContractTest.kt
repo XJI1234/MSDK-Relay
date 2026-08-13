@@ -15,6 +15,12 @@ import com.skycommand.relay.protocol.JsonNumber
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.phase.MissionExecutionSignal
+import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
+import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
+import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
+import com.skycommand.relay.wayline.phase.MissionPhase
+import com.skycommand.relay.wayline.phase.MissionPhaseFact
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.UploadState
 import com.skycommand.relay.wayline.executor.MissionControlPort
@@ -30,6 +36,53 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class WaylineMissionContractTest {
+    @Test
+    fun djiEnterWaylineMovesTheCurrentMissionToExecutingAndPublishesBothPhaseFactsInOrder() {
+        val fixture = Fixture()
+        val facts = mutableListOf<MissionPhaseFact>()
+        fixture.mission.onPhaseChanged { facts += it }
+        stageGenerated(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+
+        fixture.signals.emit(MissionExecutionSignal.ENTER_WAYLINE)
+
+        assertEquals(ExecutionState.EXECUTING, fixture.mission.snapshot().execution)
+        assertEquals(
+            listOf(
+                MissionPhaseFact(1, 0, 1, MissionPhase.START_POINT_REACHED, "survey.kmz"),
+                MissionPhaseFact(1, 0, 2, MissionPhase.ROUTE_EXECUTION_STARTED, "survey.kmz"),
+            ),
+            facts,
+        )
+    }
+
+    @Test
+    fun directExecutingDoesNotInventStartPointReachedAndDeviceLossInvalidatesThePhaseTracker() {
+        val fixture = Fixture()
+        val facts = mutableListOf<MissionPhaseFact>()
+        fixture.mission.onPhaseChanged { facts += it }
+        stageGenerated(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+        fixture.mission.markDeviceUnavailable()
+        fixture.signals.emit(MissionExecutionSignal.ENTER_WAYLINE)
+
+        assertEquals(
+            listOf(MissionPhaseFact(1, 0, 1, MissionPhase.ROUTE_EXECUTION_STARTED, "survey.kmz")),
+            facts,
+        )
+        assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
+    }
+
     @Test
     fun generatesAndRecordsTheMissionBeforeReportingSuccess() {
         val fixture = Fixture()
@@ -200,6 +253,7 @@ class WaylineMissionContractTest {
         val storage = Storage()
         val upload = UploadPort()
         val control = ControlPort()
+        val signals = SignalSource()
         val mission = WaylineMission.create(
             WaylineMissionDependencies(
                 stagingStorage = storage,
@@ -208,6 +262,7 @@ class WaylineMissionContractTest {
                 },
                 uploadPort = upload,
                 controlPort = control,
+                executionSignalSource = signals,
                 operationCoordinator = DjiOperationCoordinator.create(
                     executor = OperationExecutor { it() },
                     scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
@@ -249,6 +304,15 @@ class WaylineMissionContractTest {
         override fun stop(completion: ControlCompletion) { this.completion = completion }
         fun completeSuccess() { requireNotNull(completion).succeed() }
         fun completeFailure() { requireNotNull(completion).fail() }
+    }
+
+    private class SignalSource : MissionExecutionSignalSource {
+        private var listener: MissionExecutionSignalListener? = null
+        override fun onSignal(listener: MissionExecutionSignalListener): MissionExecutionSignalRegistration {
+            this.listener = listener
+            return MissionExecutionSignalRegistration { this.listener = null }
+        }
+        fun emit(signal: MissionExecutionSignal) { listener?.onSignal(signal) }
     }
 
     private fun hash(bytes: ByteArray): String =

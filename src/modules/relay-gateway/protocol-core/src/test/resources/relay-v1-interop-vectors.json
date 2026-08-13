@@ -1,0 +1,94 @@
+{
+  "format": "sky-command-relay-interop-v1",
+  "revision": 1,
+  "vectors": [
+    {
+      "id": "command-result-camera-settings",
+      "wire": "{\"type\":\"command-result\",\"id\":\"settings-camera-1\",\"ok\":true,\"detail\":\"Camera settings read\",\"result\":{\"domain\":\"camera\",\"settings\":{\"cameraIndex\":\"LEFT_OR_MAIN\",\"focusMode\":\"AUTO\",\"autoExposureLockEnabled\":false}}}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"command-result\",\"id\":\"settings-camera-1\",\"ok\":true,\"detail\":\"Camera settings read\",\"result\":{\"domain\":\"camera\",\"settings\":{\"cameraIndex\":\"LEFT_OR_MAIN\",\"focusMode\":\"AUTO\",\"autoExposureLockEnabled\":false}}}"
+      }
+    },
+    {
+      "id": "command-result-transmission-settings-null-rate",
+      "wire": "{\"type\":\"command-result\",\"id\":\"settings-transmission-1\",\"ok\":true,\"detail\":\"Transmission settings read\",\"result\":{\"domain\":\"transmission\",\"settings\":{\"channel\":\"AUTO\",\"dynamicDataRateMbps\":null,\"liveViewQuality\":\"HIGH\"}}}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"command-result\",\"id\":\"settings-transmission-1\",\"ok\":true,\"detail\":\"Transmission settings read\",\"result\":{\"domain\":\"transmission\",\"settings\":{\"channel\":\"AUTO\",\"dynamicDataRateMbps\":null,\"liveViewQuality\":\"HIGH\"}}}"
+      }
+    },
+    {
+      "id": "command-result-legacy-without-result",
+      "wire": "{\"type\":\"command-result\",\"id\":\"legacy-command-1\",\"ok\":true,\"detail\":\"Completed\"}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"command-result\",\"id\":\"legacy-command-1\",\"ok\":true,\"detail\":\"Completed\"}"
+      }
+    },
+    {
+      "id": "mission-phase-route-execution-started",
+      "wire": "{\"type\":\"mission-phase\",\"missionRevision\":7,\"deviceGeneration\":2,\"sequence\":3,\"phase\":\"ROUTE_EXECUTION_STARTED\",\"fileName\":\"hangzhou-survey.kmz\"}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"mission-phase\",\"missionRevision\":7,\"deviceGeneration\":2,\"sequence\":3,\"phase\":\"ROUTE_EXECUTION_STARTED\",\"fileName\":\"hangzhou-survey.kmz\"}"
+      }
+    },
+    {
+      "id": "mission-chunk-canonical-base64",
+      "wire": "{\"type\":\"mission-chunk\",\"id\":\"mission-chunk-1\",\"data\":\"AAH/\"}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"mission-chunk\",\"id\":\"mission-chunk-1\",\"data\":\"AAH/\"}"
+      }
+    },
+    {
+      "id": "diagnostic-report-single-event",
+      "wire": "{\"type\":\"diagnostic-report\",\"runId\":\"run-20260812\",\"events\":[{\"sequence\":1,\"timestampMillis\":1723456789,\"level\":\"ERROR\",\"module\":\"device-connection\",\"eventCode\":\"SDK_REGISTRATION_FAILED\",\"operationId\":\"sdk-start-1\",\"safeDetail\":\"DJI registration was rejected\"}]}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"diagnostic-report\",\"runId\":\"run-20260812\",\"events\":[{\"sequence\":1,\"timestampMillis\":1723456789,\"level\":\"ERROR\",\"module\":\"device-connection\",\"eventCode\":\"SDK_REGISTRATION_FAILED\",\"operationId\":\"sdk-start-1\",\"safeDetail\":\"DJI registration was rejected\"}]}"
+      }
+    },
+    {
+      "id": "diagnostic-acknowledgement",
+      "wire": "{\"type\":\"diagnostic-ack\",\"runId\":\"run-20260812\",\"acknowledgedSequence\":1}",
+      "expected": {
+        "kind": "decoded",
+        "canonicalWire": "{\"type\":\"diagnostic-ack\",\"runId\":\"run-20260812\",\"acknowledgedSequence\":1}"
+      }
+    },
+    {
+      "id": "command-result-result-must-be-object",
+      "wire": "{\"type\":\"command-result\",\"id\":\"invalid-result-1\",\"ok\":true,\"detail\":\"Invalid\",\"result\":\"not-an-object\"}",
+      "expected": {
+        "kind": "rejected",
+        "code": "INVALID_FIELD"
+      }
+    },
+    {
+      "id": "mission-chunk-requires-canonical-base64",
+      "wire": "{\"type\":\"mission-chunk\",\"id\":\"invalid-base64-1\",\"data\":\"AQ\"}",
+      "expected": {
+        "kind": "rejected",
+        "code": "INVALID_BASE64"
+      }
+    },
+    {
+      "id": "mission-phase-requires-integer-sequence",
+      "wire": "{\"type\":\"mission-phase\",\"missionRevision\":7,\"deviceGeneration\":2,\"sequence\":\"3\",\"phase\":\"ROUTE_EXECUTION_STARTED\",\"fileName\":\"hangzhou-survey.kmz\"}",
+      "expected": {
+        "kind": "rejected",
+        "code": "INVALID_FIELD"
+      }
+    },
+    {
+      "id": "future-frame-is-ignored",
+      "wire": "{\"type\":\"future-frame\",\"revision\":1}",
+      "expected": {
+        "kind": "ignored",
+        "type": "future-frame"
+      }
+    }
+  ]
+}

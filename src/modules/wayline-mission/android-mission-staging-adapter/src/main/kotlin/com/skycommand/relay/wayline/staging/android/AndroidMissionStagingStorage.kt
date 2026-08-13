@@ -6,8 +6,6 @@ import com.skycommand.relay.wayline.staging.StagingStorage
 import com.skycommand.relay.wayline.uploader.StagedMissionContentReader
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 class AndroidMissionStagingStorage internal constructor(
     private val directory: File,
@@ -15,6 +13,7 @@ class AndroidMissionStagingStorage internal constructor(
     private val lock = Any()
     private val temporary = File(directory, "incoming.tmp")
     private val current = File(directory, "current.kmz")
+    private val backup = File(directory, "previous.kmz")
     private var output: FileOutputStream? = null
     private var temporaryMetadata: MissionMetadata? = null
     private var currentMetadata: MissionMetadata? = null
@@ -22,6 +21,7 @@ class AndroidMissionStagingStorage internal constructor(
     override fun beginTemporary(metadata: MissionMetadata) = synchronized(lock) {
         closeOutput()
         temporary.delete()
+        backup.delete()
         check(directory.exists() || directory.mkdirs())
         output = FileOutputStream(temporary, false)
         temporaryMetadata = metadata
@@ -41,16 +41,7 @@ class AndroidMissionStagingStorage internal constructor(
         val metadata = checkNotNull(temporaryMetadata) { "No active mission transfer" }
         closeOutput()
         check(temporary.isFile)
-        runCatching {
-            Files.move(
-                temporary.toPath(),
-                current.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        }.getOrElse {
-            Files.move(temporary.toPath(), current.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        }
+        replaceWithRollback()
         temporaryMetadata = null
         currentMetadata = metadata
     }
@@ -71,12 +62,33 @@ class AndroidMissionStagingStorage internal constructor(
         closeOutput()
         temporaryMetadata = null
         temporary.delete()
+        backup.delete()
+        currentMetadata = null
+        current.delete()
         Unit
     }
 
     private fun closeOutput() {
         runCatching { output?.close() }
         output = null
+    }
+
+    private fun replaceWithRollback() {
+        check(!backup.exists() || backup.delete()) { "Unable to clear mission backup" }
+        val hasCurrent = current.isFile
+        if (hasCurrent) {
+            check(current.renameTo(backup)) { "Unable to preserve current mission" }
+        }
+        try {
+            check(temporary.renameTo(current)) { "Unable to replace current mission" }
+            backup.delete()
+        } catch (failure: Throwable) {
+            if (hasCurrent && backup.isFile) {
+                current.delete()
+                check(backup.renameTo(current)) { "Unable to restore current mission" }
+            }
+            throw failure
+        }
     }
 
     companion object {

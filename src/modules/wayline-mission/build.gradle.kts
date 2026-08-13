@@ -9,6 +9,7 @@ dependencies {
     api(project(":wayline-mission:wpmz-generator"))
     api(project(":wayline-mission:mission-uploader"))
     api(project(":wayline-mission:mission-executor"))
+    api(project(":wayline-mission:mission-flight-phase"))
     api(project(":wayline-mission:wayline-command-handler"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

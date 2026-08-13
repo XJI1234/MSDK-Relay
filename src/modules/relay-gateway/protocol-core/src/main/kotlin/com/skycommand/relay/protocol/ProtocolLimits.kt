@@ -14,6 +14,10 @@ object ProtocolLimits {
     const val maxCommandNameCodePoints = 64
     const val maxFileNameCodePoints = 128
     const val maxResultDetailCodePoints = 1024
+    const val maxDiagnosticEventsPerReport = 32
+    const val maxDiagnosticModuleCodePoints = 64
+    const val maxDiagnosticEventCodeCodePoints = 64
+    const val maxDiagnosticDetailCodePoints = 512
     const val maxErrorMessageCodePoints = 256
     const val maxMissionBytes = 100 * 1024 * 1024L
     const val maxMissionChunkBytes = 48 * 1024

@@ -8,6 +8,16 @@ fun interface CloseableRegistration {
     fun unregister()
 }
 
+enum class RelayBootstrapDiagnosticKind {
+    DEVICE_START_FAILURE,
+    RELAY_START_FAILURE,
+    REGISTRATION_RELEASE_FAILURE,
+    GATEWAY_STOP_FAILURE,
+    TELEMETRY_STOP_FAILURE,
+    FLIGHT_TELEMETRY_CLOSE_FAILURE,
+    DEVICE_STOP_FAILURE,
+}
+
 interface RelayLifecyclePorts {
     fun sdkAvailability(): SdkAvailability
     fun onDeviceChanged(listener: () -> Unit): CloseableRegistration
@@ -22,6 +32,9 @@ interface RelayLifecyclePorts {
     fun closeFlightTelemetry()
     fun markStreamUnavailable()
     fun markMissionUnavailable()
+    fun markFlightControlUnavailable()
+    fun markDeviceSettingsUnavailable()
+    fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind)
 }
 
 class RelayBootstrapModule(
@@ -44,6 +57,7 @@ class RelayBootstrapModule(
                 ports.startDevice()
                 onDeviceChanged(true)
             } catch (failure: Exception) {
+                report(RelayBootstrapDiagnosticKind.DEVICE_START_FAILURE)
                 active = false
                 stopInternal()
                 throw failure
@@ -73,14 +87,17 @@ class RelayBootstrapModule(
                     }
                     ports.startGateway()
                 } catch (failure: Exception) {
+                    report(RelayBootstrapDiagnosticKind.RELAY_START_FAILURE)
                     relayStarted = false
-                    runCatching { ports.stopGateway() }
-                    runCatching { ports.stopTelemetry() }
+                    stopGateway()
+                    stopTelemetry()
                     if (propagateFailure) throw failure
                 }
             } else if (relayStarted) {
                 ports.markStreamUnavailable()
                 ports.markMissionUnavailable()
+                ports.markFlightControlUnavailable()
+                ports.markDeviceSettingsUnavailable()
             }
         }
     }
@@ -94,16 +111,34 @@ class RelayBootstrapModule(
     }
 
     private fun stopInternal() {
-        gatewayRegistration?.unregister()
+        runCatching { gatewayRegistration?.unregister() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.REGISTRATION_RELEASE_FAILURE) }
         gatewayRegistration = null
-        deviceRegistration?.unregister()
+        runCatching { deviceRegistration?.unregister() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.REGISTRATION_RELEASE_FAILURE) }
         deviceRegistration = null
         val stopRelay = relayStarted.also { relayStarted = false }
         if (stopRelay) {
-            runCatching { ports.stopGateway() }
-            runCatching { ports.stopTelemetry() }
+            stopGateway()
+            stopTelemetry()
         }
         runCatching { ports.closeFlightTelemetry() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.FLIGHT_TELEMETRY_CLOSE_FAILURE) }
         runCatching { ports.stopDevice() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.DEVICE_STOP_FAILURE) }
+    }
+
+    private fun stopGateway() {
+        runCatching { ports.stopGateway() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.GATEWAY_STOP_FAILURE) }
+    }
+
+    private fun stopTelemetry() {
+        runCatching { ports.stopTelemetry() }
+            .onFailure { report(RelayBootstrapDiagnosticKind.TELEMETRY_STOP_FAILURE) }
+    }
+
+    private fun report(kind: RelayBootstrapDiagnosticKind) {
+        runCatching { ports.reportDiagnostic(kind) }
     }
 }

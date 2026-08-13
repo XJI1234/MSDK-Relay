@@ -60,6 +60,7 @@ adapter.close() -> Unit
 ## 生命周期、失败与验证
 
 - 仅在给定生命周期有效时注册；USB 接收器非导出，只接收适配器生成的授权 action 及 Android 附件接入/断开 action。
+- USB 授权广播必须读取 Android 的 `EXTRA_PERMISSION_GRANTED`。仅值为真时才交付 USB 请求成功；值为假或缺失时必须交付失败，绝不能把“用户拒绝授权”当作成功。
 - USB `PendingIntent` 必须显式、不可变，并使用由包名派生的唯一 action；`close` 只能由组合根调用，适配器不拥有 Activity 或进程生命周期。
 - 不得记录权限名、附件身份、Intent 内容或异常消息。平台检查失败映射为协调器的 `PORT_FAILURE` 拒绝或终态 `Failed`；拒绝运行时请求产生 `DENIED` 或 `PERMANENTLY_DENIED` 快照；缺失 USB 附件始终为 `UNKNOWN`；完成、取消或关闭后的重复/延迟回调必须忽略。
 - 测试必须覆盖 API 24/32/33 映射、已授权跳过、部分/完整授权、普通/永久拒绝、不完整与重复结果表、USB 接入/授权/拒绝/断开/请求后接入、每个平台回调前后取消、重复及延迟回调、活动请求中关闭及重复关闭、平台异常、监听器隔离、串行状态迁移，以及可用时非导出接收器和显式 PendingIntent 的 Android 仪表验证。

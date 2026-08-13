@@ -44,6 +44,29 @@ class RelayFrameCodecTest {
     }
 
     @Test
+    fun roundTripsOptionalStructuredCommandResultForDeviceSettings() {
+        val frame = CommandResultFrame(
+            id = "settings-1",
+            ok = true,
+            detail = "Camera settings read",
+            result = JsonObject(
+                mapOf(
+                    "domain" to JsonString("camera"),
+                    "settings" to JsonObject(
+                        mapOf(
+                            "autoExposureLockEnabled" to JsonBoolean(false),
+                            "focusMode" to JsonString("AUTO"),
+                            "cameraIndex" to JsonString("LEFT_OR_MAIN"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(frame, decode(encode(frame)))
+    }
+
+    @Test
     fun roundTripsMissionFramesAndCopiesBytes() {
         val begin = MissionBeginFrame("mission-1", "route.kmz", 3, "0".repeat(64))
         val chunk = MissionChunkFrame("mission-1", byteArrayOf(1, 2, 3))
@@ -54,6 +77,61 @@ class RelayFrameCodecTest {
         assertContentEquals(chunk.bytes, assertIs<MissionChunkFrame>(decode(encode(chunk))).bytes)
         assertEquals(complete, decode(encode(complete)))
         assertEquals(result, decode(encode(result)))
+    }
+
+    @Test
+    fun roundTripsDiagnosticReportAndAcknowledgement() {
+        val report = DiagnosticReportFrame(
+            runId = "run-20260812",
+            events = listOf(
+                DiagnosticEventFrame(
+                    sequence = 1,
+                    timestampMillis = 1_723_456_789L,
+                    level = "ERROR",
+                    module = "device-connection",
+                    eventCode = "SDK_REGISTRATION_FAILED",
+                    operationId = "sdk-start-1",
+                    safeDetail = "DJI registration was rejected",
+                ),
+            ),
+        )
+        val acknowledgement = DiagnosticAcknowledgementFrame("run-20260812", 1)
+
+        assertEquals(report, decode(encode(report)))
+        assertEquals(acknowledgement, decode(encode(acknowledgement)))
+    }
+
+    @Test
+    fun roundTripsMissionPhaseFactsWithoutAcceptingUnsafeMetadata() {
+        val reachedStart = MissionPhaseFrame(
+            missionRevision = 7,
+            deviceGeneration = 2,
+            sequence = 1,
+            phase = MissionPhase.START_POINT_REACHED,
+            fileName = "survey.kmz",
+        )
+        val executionStarted = reachedStart.copy(
+            sequence = 2,
+            phase = MissionPhase.ROUTE_EXECUTION_STARTED,
+        )
+
+        assertEquals(reachedStart, decode(encode(reachedStart)))
+        assertEquals(executionStarted, decode(encode(executionStarted)))
+    }
+
+    @Test
+    fun rejectsMissionPhaseWithInvalidRevisionGenerationSequenceOrFileName() {
+        listOf(
+            """{"type":"mission-phase","missionRevision":0,"deviceGeneration":0,"sequence":1,"phase":"START_POINT_REACHED","fileName":"survey.kmz"}""",
+            """{"type":"mission-phase","missionRevision":1,"deviceGeneration":-1,"sequence":1,"phase":"START_POINT_REACHED","fileName":"survey.kmz"}""",
+            """{"type":"mission-phase","missionRevision":1,"deviceGeneration":0,"sequence":0,"phase":"START_POINT_REACHED","fileName":"survey.kmz"}""",
+            """{"type":"mission-phase","missionRevision":1,"deviceGeneration":0,"sequence":1,"phase":"UNKNOWN","fileName":"survey.kmz"}""",
+            """{"type":"mission-phase","missionRevision":1,"deviceGeneration":0,"sequence":1,"phase":"START_POINT_REACHED","fileName":"../survey.kmz"}""",
+        ).forEach { json ->
+            val result = RelayFrameCodec.decode(json.encodeToByteArray())
+
+            assertEquals(ProtocolErrorCode.INVALID_FIELD, assertIs<DecodeResult.Rejected>(result).error.code)
+        }
     }
 
     @Test

@@ -64,6 +64,16 @@ class SnapshotAssemblerContractTest {
     fun combinesFlightStreamAndMissionFactsWithoutInventingMissingValues() {
         val result = SnapshotAssembler.assemble(
             inputs(
+                device = DeviceSnapshot(
+                    revision = 1,
+                    sdkAvailability = SdkAvailability.READY,
+                    remoteController = LinkState.CONNECTED,
+                    aircraft = LinkState.CONNECTED,
+                    flightController = LinkState.CONNECTED,
+                    pairing = PairingState.PAIRED,
+                    remoteControllerModel = "RC Plus",
+                    aircraftModel = "Matrice 4",
+                ),
                 flight = FlightTelemetrySnapshot(
                     isFlying = true,
                     motorsOn = true,
@@ -131,6 +141,43 @@ class SnapshotAssemblerContractTest {
     @Test
     fun keepsEveryUnknownFlightValueExplicitlyNull() {
         val result = SnapshotAssembler.assemble(inputs())
+
+        assertEquals(null, result.isFlying)
+        assertEquals(null, result.motorsOn)
+        assertEquals(null, result.flightMode)
+        assertEquals(null, result.batteryPercent)
+        assertEquals(null, result.remainingFlightTimeSeconds)
+        assertEquals(null, result.altitudeMeters)
+        assertEquals(null, result.latitude)
+        assertEquals(null, result.longitude)
+    }
+
+    @Test
+    fun clearsFlightFactsWhenTheFlightControllerIsDisconnected() {
+        val result = SnapshotAssembler.assemble(
+            inputs(
+                device = DeviceSnapshot(
+                    revision = 8,
+                    sdkAvailability = SdkAvailability.READY,
+                    remoteController = LinkState.CONNECTED,
+                    aircraft = LinkState.DISCONNECTED,
+                    flightController = LinkState.DISCONNECTED,
+                    pairing = PairingState.UNKNOWN,
+                    remoteControllerModel = "RC Plus",
+                    aircraftModel = null,
+                ),
+                flight = FlightTelemetrySnapshot(
+                    isFlying = false,
+                    motorsOn = false,
+                    flightMode = "WAYPOINT",
+                    batteryPercent = 86,
+                    remainingFlightTimeSeconds = 420,
+                    altitudeMeters = 80.5,
+                    latitude = 30.123,
+                    longitude = 120.456,
+                ),
+            ),
+        )
 
         assertEquals(null, result.isFlying)
         assertEquals(null, result.motorsOn)

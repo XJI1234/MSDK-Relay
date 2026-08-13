@@ -4,6 +4,7 @@ import com.skycommand.relay.device.aircraft.AircraftListener
 import com.skycommand.relay.device.aircraft.AircraftPort
 import com.skycommand.relay.device.aircraft.AircraftPortSubscription
 import com.skycommand.relay.device.aircraft.AircraftSignal
+import com.skycommand.relay.device.aircraft.AircraftDiagnosticKind
 import com.skycommand.relay.device.operation.DjiOperation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
@@ -20,9 +21,12 @@ import com.skycommand.relay.device.remote.RemoteControllerSignal
 import com.skycommand.relay.device.sdk.DjiSdkCallbacks
 import com.skycommand.relay.device.sdk.DjiSdkPort
 import com.skycommand.relay.device.sdk.PortStartResult
+import com.skycommand.relay.device.remote.RemoteControllerDiagnosticKind
+import com.skycommand.relay.device.state.DeviceStateDiagnosticKind
 import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.state.PairingState
 import com.skycommand.relay.device.state.SdkAvailability
+import com.skycommand.relay.device.pairing.status.PairingStatusDiagnosticKind
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -33,6 +37,96 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DeviceConnectionContractTest {
+    @Test
+    fun forwardsDeviceStateListenerFailuresToConfiguredDiagnosticSink() {
+        val events = mutableListOf<String>()
+        val diagnostics = mutableListOf<DeviceStateDiagnosticKind>()
+        val sdk = FakeSdk(events)
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = sdk,
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                deviceStateDiagnosticSink = { diagnostics += it.kind },
+            ),
+        )
+
+        connection.onChanged { error("listener failure") }
+        connection.start()
+
+        assertEquals(listOf(DeviceStateDiagnosticKind.LISTENER_FAILURE), diagnostics)
+    }
+
+    @Test
+    fun forwardsRemoteControllerObservationFailuresToConfiguredDiagnosticSink() {
+        val events = mutableListOf<String>()
+        val diagnostics = mutableListOf<RemoteControllerDiagnosticKind>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events, failStart = true),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                remoteControllerDiagnosticSink = { diagnostics += it.kind },
+            ),
+        )
+
+        connection.start()
+
+        assertEquals(listOf(RemoteControllerDiagnosticKind.PORT_FAILURE), diagnostics)
+    }
+
+    @Test
+    fun forwardsPairingObservationFailuresToConfiguredDiagnosticSink() {
+        val events = mutableListOf<String>()
+        val diagnostics = mutableListOf<PairingStatusDiagnosticKind>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events, failStart = true),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                pairingStatusDiagnosticSink = { diagnostics += it.kind },
+            ),
+        )
+
+        connection.start()
+
+        assertEquals(listOf(PairingStatusDiagnosticKind.PORT_FAILURE), diagnostics)
+    }
+
+    @Test
+    fun forwardsAircraftObservationFailuresToConfiguredDiagnosticSink() {
+        val events = mutableListOf<String>()
+        val diagnostics = mutableListOf<AircraftDiagnosticKind>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events, failStart = true),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                aircraftDiagnosticSink = { diagnostics += it.kind },
+            ),
+        )
+
+        connection.start()
+
+        assertEquals(listOf(AircraftDiagnosticKind.PORT_FAILURE), diagnostics)
+    }
+
     @Test
     fun startsPairingStatusObservationAndDropsItsLateCallbackAfterStop() {
         val events = mutableListOf<String>()

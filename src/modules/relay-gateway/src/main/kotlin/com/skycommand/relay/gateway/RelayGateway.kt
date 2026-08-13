@@ -27,10 +27,13 @@ import com.skycommand.relay.gateway.session.StopResult
 import com.skycommand.relay.gateway.session.TransportConnector
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.CommandResultFrame
+import com.skycommand.relay.protocol.DiagnosticAcknowledgementFrame
+import com.skycommand.relay.protocol.DiagnosticReportFrame
 import com.skycommand.relay.protocol.MissionBeginFrame
 import com.skycommand.relay.protocol.MissionChunkFrame
 import com.skycommand.relay.protocol.MissionCompleteFrame
 import com.skycommand.relay.protocol.MissionResultFrame
+import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.protocol.TelemetryFrame
 import java.util.concurrent.ForkJoinPool
@@ -54,6 +57,7 @@ class RelayGateway private constructor(
     private val session: ConnectionSession,
     private val outbound: OutboundPublisher,
     private val commands: CommandDispatcher,
+    private val diagnosticAcknowledgements: DiagnosticAcknowledgementDispatcher,
 ) {
     fun start(): StartResult = session.start()
 
@@ -71,6 +75,14 @@ class RelayGateway private constructor(
     fun publishCommandResult(frame: CommandResultFrame): PublishResult = publish(frame)
 
     fun publishMissionResult(frame: MissionResultFrame): PublishResult = publish(frame)
+
+    fun publishMissionPhase(frame: MissionPhaseFrame): PublishResult = publish(frame)
+
+    fun publishDiagnosticReport(frame: DiagnosticReportFrame): PublishResult = publish(frame)
+
+    fun registerDiagnosticAcknowledgementHandler(
+        handler: DiagnosticAcknowledgementHandler,
+    ): Registration = diagnosticAcknowledgements.register(handler)
 
     fun onStateChanged(listener: SessionStateListener): Registration = session.onStateChanged(listener)
 
@@ -92,6 +104,7 @@ class RelayGateway private constructor(
                 config.missionSink,
                 MissionResultPublisher { activeSession, frame -> outbound.publish(activeSession, frame) },
             )
+            val diagnosticAcknowledgements = DiagnosticAcknowledgementDispatcher()
             val activeFrameConsumer = ActiveFrameConsumer { activeSession, frame ->
                 when (frame) {
                     is CommandFrame -> commands.dispatch(activeSession, frame)
@@ -99,6 +112,8 @@ class RelayGateway private constructor(
                     is MissionChunkFrame,
                     is MissionCompleteFrame,
                     -> missions.accept(activeSession, frame)
+
+                    is DiagnosticAcknowledgementFrame -> diagnosticAcknowledgements.dispatch(frame)
 
                     else -> Unit
                 }
@@ -123,9 +138,28 @@ class RelayGateway private constructor(
                 ),
             )
             return when (creation) {
-                is SessionCreated -> RelayGateway(creation.session, outbound, commands)
+                is SessionCreated -> RelayGateway(creation.session, outbound, commands, diagnosticAcknowledgements)
                 is ConfigurationRejected -> throw IllegalArgumentException(creation.detail)
             }
         }
+    }
+}
+
+fun interface DiagnosticAcknowledgementHandler {
+    fun acknowledge(frame: DiagnosticAcknowledgementFrame)
+}
+
+private class DiagnosticAcknowledgementDispatcher {
+    private val lock = Any()
+    private val handlers = mutableListOf<DiagnosticAcknowledgementHandler>()
+
+    fun register(handler: DiagnosticAcknowledgementHandler): Registration {
+        synchronized(lock) { handlers += handler }
+        return Registration { synchronized(lock) { handlers.remove(handler) } }
+    }
+
+    fun dispatch(frame: DiagnosticAcknowledgementFrame) {
+        val targets = synchronized(lock) { handlers.toList() }
+        targets.forEach { handler -> runCatching { handler.acknowledge(frame) } }
     }
 }

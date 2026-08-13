@@ -25,11 +25,16 @@ import com.skycommand.relay.gateway.session.TransportWriteResult
 import com.skycommand.relay.gateway.session.TransportWriter
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.CommandResultFrame
+import com.skycommand.relay.protocol.DiagnosticAcknowledgementFrame
+import com.skycommand.relay.protocol.DiagnosticEventFrame
+import com.skycommand.relay.protocol.DiagnosticReportFrame
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.MissionBeginFrame
 import com.skycommand.relay.protocol.MissionChunkFrame
 import com.skycommand.relay.protocol.MissionCompleteFrame
 import com.skycommand.relay.protocol.MissionResultFrame
+import com.skycommand.relay.protocol.MissionPhase
+import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.PairedFrame
 import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.protocol.RelayFrameCodec
@@ -147,6 +152,50 @@ class RelayGatewayContractTest {
             com.skycommand.relay.gateway.command.UnregistrationResult.NotRegistered,
             fixture.gateway.unregisterCommandHandler("pairing.status"),
         )
+    }
+
+    @Test
+    fun publishesDiagnosticReportsOnlyWhenActiveAndRoutesAcknowledgements() {
+        val fixture = GatewayFixture()
+        val acknowledgements = mutableListOf<DiagnosticAcknowledgementFrame>()
+        fixture.gateway.registerDiagnosticAcknowledgementHandler { acknowledgements += it }
+        val report = DiagnosticReportFrame(
+            "run-1",
+            listOf(DiagnosticEventFrame(1, 0, "ERROR", "device-connection", "SDK_FAILURE", null, "safe")),
+        )
+
+        assertEquals(
+            PublishResult.Rejected(PublishRejectionKind.STALE_SESSION),
+            fixture.gateway.publishDiagnosticReport(report),
+        )
+        fixture.activate()
+        assertEquals(PublishResult.Delivered, fixture.gateway.publishDiagnosticReport(report))
+        fixture.connector.current.receive(DiagnosticAcknowledgementFrame("run-1", 1))
+
+        assertEquals(report, fixture.sentFrames().last())
+        assertEquals(listOf(DiagnosticAcknowledgementFrame("run-1", 1)), acknowledgements)
+    }
+
+    @Test
+    fun publishesMissionPhaseFactsOnlyForTheCurrentActiveSession() {
+        val fixture = GatewayFixture()
+        val frame = MissionPhaseFrame(
+            missionRevision = 4,
+            deviceGeneration = 1,
+            sequence = 2,
+            phase = MissionPhase.ROUTE_EXECUTION_STARTED,
+            fileName = "survey.kmz",
+        )
+
+        assertEquals(
+            PublishResult.Rejected(PublishRejectionKind.STALE_SESSION),
+            fixture.gateway.publishMissionPhase(frame),
+        )
+
+        fixture.activate()
+
+        assertEquals(PublishResult.Delivered, fixture.gateway.publishMissionPhase(frame))
+        assertEquals(frame, fixture.sentFrames().last())
     }
 
     private class GatewayFixture {

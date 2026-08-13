@@ -56,9 +56,9 @@ class MissionExecutor private constructor(
     private val controlPort: MissionControlPort,
     private val coordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
+    private val sourceRevision: AtomicLong,
 ) {
     private val lock = ReentrantLock()
-    private val sourceRevision = AtomicLong(0)
     private var active: ActiveCommand? = null
 
     fun start(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.START, listener)
@@ -153,7 +153,7 @@ class MissionExecutor private constructor(
         val successState: ExecutionState,
         val allowed: Set<ExecutionState>,
     ) {
-        START(ExecutionState.STARTING, ExecutionState.EXECUTING, setOf(ExecutionState.NOT_STARTED, ExecutionState.FAILED)),
+        START(ExecutionState.STARTING, ExecutionState.STARTING, setOf(ExecutionState.NOT_STARTED, ExecutionState.FAILED)),
         PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING)),
         RESUME(ExecutionState.EXECUTING, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED)),
         STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED));
@@ -175,7 +175,8 @@ class MissionExecutor private constructor(
             controlPort: MissionControlPort,
             coordinator: DjiOperationCoordinator,
             timeoutMillis: Long = 30_000,
-        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis)
+            executionSourceRevision: AtomicLong = AtomicLong(0),
+        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis, executionSourceRevision)
     }
 
     private fun OperationOutcome.toTerminalOutcome(): ExecutionTerminalOutcome = when (this) {

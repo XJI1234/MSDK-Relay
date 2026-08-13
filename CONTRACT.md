@@ -49,6 +49,7 @@
 | `telemetry` | 读取、整理并发布遥测 |
 | `wayline-mission` | KMZ 航线传输、校验、暂存、上传和任务控制 |
 | `live-stream` | RTMP 地址校验、直播启动、停止和状态回报 |
+| `runtime-diagnostics` | 脱敏记录运行诊断，并经既有电脑会话可靠交付给电脑端 |
 
 模块之间应通过清晰的接口协作。`relay-gateway` 不得直接依赖 DJI SDK；业务模块不得自己创建 WebSocket 连接。这样更换网络库、JSON 库或 DJI SDK 版本时，不需要同时修改所有模块。
 
@@ -162,6 +163,16 @@
 
 视频数据走 RTMP 通道，命令和状态走 gateway 通道。两个通道不能互相代替。
 
+#### `runtime-diagnostics`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `diagnostic-core` | 把诊断事实转换成脱敏、可排序、可确认删除的有界事件队列 | Android、文件、WebSocket、DJI 和业务控制 |
+| `android-diagnostic-adapter` | 输出 Logcat、应用私有循环日志和重启恢复数据 | 脱敏规则、网络连接和业务状态解释 |
+| `gateway-diagnostic-publisher` | 通过现有 ACTIVE gateway 发送诊断并处理电脑确认 | 新建网络连接、写文件和调用 DJI |
+
+`runtime-diagnostics` 仅观察各模块公开的诊断接口。它不得改变连接、遥测、图传、航线、权限或 DJI SDK 的业务结果。详细的字段、隐私、确认和电脑端协作规则见 [`src/modules/runtime-diagnostics/CONTRACT.md`](src/modules/runtime-diagnostics/CONTRACT.md)。
+
 ### 2.3 模块依赖方向
 
 依赖方向固定为：
@@ -191,6 +202,10 @@ wayline-mission
 live-stream
   -> device-connection 的只读状态接口
   -> relay-gateway 的命令注册和结果发布接口
+
+runtime-diagnostics
+  -> relay-gateway 的诊断发布与确认注册接口
+  -> 各一级模块的只读诊断事件接口
 ```
 
 `wayline-mission` 和 `live-stream` 执行 DJI 操作时，必须使用 `device-connection` 提供的统一 DJI 操作调度接口。它们不能各自创建执行器或直接并发调用 DJI SDK。
@@ -234,6 +249,7 @@ live-stream
 | 上传航线 | `wayline-mission` | `mission-uploader`、`mission-state-store` |
 | 开始/暂停/恢复/停止航线 | `wayline-mission` | `mission-executor`、`mission-state-store` |
 | Android 前台运行和权限 | `app-runtime` | `foreground-service`、`permission-coordinator` |
+| 无线故障定位日志 | `runtime-diagnostics` + 电脑端 | `diagnostic-core`、`android-diagnostic-adapter`、`gateway-diagnostic-publisher` |
 
 没有列在表中的一级或二级模块不得自行增加新的业务能力；新增能力必须先更新本表和对应契约。
 
@@ -313,6 +329,7 @@ live-stream
 
 - 连接 USB 线或准备网络连接。
 - 允许 Android 的 USB 访问和运行时权限。
+- 为待安装的应用通过 Gradle 属性 `DJI_API_KEY` 注入已注册的 DJI API Key；密钥不得写入源码、契约或提交记录。未注入密钥时，APK 可以编译，但 DJI SDK 注册不会成功。
 - 打开遥控器和飞行器。
 - 在需要时按设备要求执行物理配对。
 - 处理 DJI 的系统提示、固件升级、校准和 FlySafe 提示。

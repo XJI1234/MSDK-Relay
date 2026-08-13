@@ -7,7 +7,10 @@ import com.skycommand.relay.gateway.session.SessionEndReason
 import com.skycommand.relay.gateway.session.SessionGeneration
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.CommandResultFrame
+import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.ProtocolLimits
+import com.skycommand.relay.protocol.Accepted
+import com.skycommand.relay.protocol.validate
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -17,6 +20,8 @@ fun interface CommandHandler {
 
 interface CommandCompletion {
     fun succeed(detail: String = "")
+
+    fun succeed(detail: String, result: JsonObject?) = succeed(detail)
 
     fun reject(detail: String = "")
 }
@@ -118,11 +123,17 @@ class CommandDispatcher(
         return DispatchResult.DispatchRejected(kind)
     }
 
-    private fun complete(key: PendingKey, ok: Boolean, detail: String) {
+    private fun complete(key: PendingKey, ok: Boolean, detail: String, result: JsonObject? = null) {
         val command = lock.withLock { pending.remove(key) } ?: return
         val detailIsValid = isValidDetail(detail)
         val safeDetail = if (detailIsValid) detail else "Command result is invalid"
-        publish(command.activeSession, CommandResultFrame(command.id, ok && detailIsValid, safeDetail))
+        val candidate = CommandResultFrame(command.id, ok && detailIsValid, safeDetail, result)
+        val safeFrame = if (validate(candidate) is Accepted) {
+            candidate
+        } else {
+            CommandResultFrame(command.id, false, "Command result is invalid")
+        }
+        publish(command.activeSession, safeFrame)
     }
 
     private fun publish(activeSession: ActiveSession, frame: CommandResultFrame) {
@@ -137,6 +148,8 @@ class CommandDispatcher(
         private val key: PendingKey,
     ) : CommandCompletion {
         override fun succeed(detail: String) = complete(key, ok = true, detail)
+
+        override fun succeed(detail: String, result: JsonObject?) = complete(key, ok = true, detail, result)
 
         override fun reject(detail: String) = complete(key, ok = false, detail)
     }
@@ -168,6 +181,13 @@ class CommandDispatcher(
             "wayline.stop",
             "live-stream.start",
             "live-stream.stop",
+            "flight.takeoff",
+            "flight.land",
+            "flight.return-home",
+            "device.settings.camera.read",
+            "device.settings.camera.write",
+            "device.settings.transmission.read",
+            "device.settings.transmission.write",
         )
     }
 }
