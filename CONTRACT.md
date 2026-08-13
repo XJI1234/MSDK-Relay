@@ -36,7 +36,9 @@
 4. 接收电脑端的 RTMP 直播命令，让飞行器视频推送到电脑端指定的 RTMP 地址。
 5. 接收电脑端的 KMZ 航线文件，校验完整性并暂存。
 6. 根据电脑端命令生成、上传、开始、暂停、恢复和停止航线任务。
-7. 在连接断开、设备未就绪或 DJI SDK 拒绝操作时，返回明确的失败结果，而不是假装操作成功。
+7. 在每次明确确认后，提交起飞、降落和返航命令，并把 DJI 终态结果与后续遥测分别回传。
+8. 读取或修改相机和图传设置，并在写入后重新读取完整设置快照。
+9. 在连接断开、设备未就绪或 DJI SDK 拒绝操作时，返回明确的失败结果，而不是假装操作成功。
 
 这些能力分别属于以下一级模块：
 
@@ -49,6 +51,8 @@
 | `telemetry` | 读取、整理并发布遥测 |
 | `wayline-mission` | KMZ 航线传输、校验、暂存、上传和任务控制 |
 | `live-stream` | RTMP 地址校验、直播启动、停止和状态回报 |
+| `flight-control` | 经明确确认后串行提交起飞、降落和返航，并返回 DJI 操作终态 |
+| `device-settings` | 读取和修改相机、图传设置，写入后回读完整快照 |
 | `runtime-diagnostics` | 脱敏记录运行诊断，并经既有电脑会话可靠交付给电脑端 |
 
 模块之间应通过清晰的接口协作。`relay-gateway` 不得直接依赖 DJI SDK；业务模块不得自己创建 WebSocket 连接。这样更换网络库、JSON 库或 DJI SDK 版本时，不需要同时修改所有模块。
@@ -163,6 +167,26 @@
 
 视频数据走 RTMP 通道，命令和状态走 gateway 通道。两个通道不能互相代替。
 
+#### `flight-control`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `flight-command-handler` | 严格校验三个 `flight.*` 命令和每次 `confirm: true` | 保存飞行状态、创建线程或调用 DJI |
+| `dji-flight-adapter` | 经共享 DJI 操作协调器串行提交飞行动作，并统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
+| `android-dji-flight-adapter` | 唯一调用 DJI 飞控 Action Key | 命令校验、排队、超时或业务状态 |
+
+`flight-control` 的命令成功只表示 DJI 已确认动作调用终态；它不推断飞行器是否已起飞、降落或返航完成，飞行事实仍由 `telemetry` 发布。实现已完成，真实 DJI 设备行为待实机验证。
+
+#### `device-settings`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `settings-command-handler` | 严格解析四个设备设置命令和平台无关设置模型 | 保存状态、创建线程或调用 DJI |
+| `settings-executor` | 经共享 DJI 操作协调器执行一次读写，统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
+| `android-dji-settings-adapter` | 唯一读写 DJI `CameraKey` 和 `AirLinkKey` | 命令校验、排队、超时或网关结果 |
+
+`device-settings` 写入成功后必须重新读取完整快照，作为 `command-result.result` 返回；它不管理 RTMP 推流或视频数据。实现已完成，目标机型上各 DJI 键的实际可用性待实机验证。
+
 #### `runtime-diagnostics`
 
 | 二级模块 | 只负责 | 明确不负责 |
@@ -203,12 +227,22 @@ live-stream
   -> device-connection 的只读状态接口
   -> relay-gateway 的命令注册和结果发布接口
 
+flight-control
+  -> device-connection 的只读状态接口和 DJI 操作调度接口
+  -> relay-gateway 的命令注册和结果发布接口
+
+device-settings
+  -> device-connection 的只读状态接口和 DJI 操作调度接口
+  -> relay-gateway 的命令注册和结果发布接口
+
 runtime-diagnostics
   -> relay-gateway 的诊断发布与确认注册接口
   -> 各一级模块的只读诊断事件接口
 ```
 
 `wayline-mission` 和 `live-stream` 执行 DJI 操作时，必须使用 `device-connection` 提供的统一 DJI 操作调度接口。它们不能各自创建执行器或直接并发调用 DJI SDK。
+
+`flight-control` 和 `device-settings` 也必须使用同一 DJI 操作调度接口。四类 DJI 业务操作不得绕开该协调器并发调用 DJI SDK。
 
 以下依赖永远禁止：
 
@@ -249,6 +283,8 @@ runtime-diagnostics
 | 上传航线 | `wayline-mission` | `mission-uploader`、`mission-state-store` |
 | 开始/暂停/恢复/停止航线 | `wayline-mission` | `mission-executor`、`mission-state-store` |
 | Android 前台运行和权限 | `app-runtime` | `foreground-service`、`permission-coordinator` |
+| 起飞、降落、返航 | `flight-control` | `flight-command-handler`、`dji-flight-adapter`、`android-dji-flight-adapter` |
+| 读取/修改相机与图传设置 | `device-settings` | `settings-command-handler`、`settings-executor`、`android-dji-settings-adapter` |
 | 无线故障定位日志 | `runtime-diagnostics` + 电脑端 | `diagnostic-core`、`android-diagnostic-adapter`、`gateway-diagnostic-publisher` |
 
 没有列在表中的一级或二级模块不得自行增加新的业务能力；新增能力必须先更新本表和对应契约。
@@ -288,7 +324,6 @@ runtime-diagnostics
 
 以下能力不属于当前手机端契约，电脑端不得调用，手机端也不得偷偷实现成半成品：
 
-- 起飞、降落、返航。
 - 虚拟摇杆或任何直接飞行动作控制。
 - 航线规划、地图编辑和航点绘制。
 - 电脑端 UI、地图显示和媒体播放界面。
@@ -405,17 +440,18 @@ sequenceDiagram
   "type": "command-result",
   "id": "与请求完全相同的命令ID",
   "ok": true,
-  "detail": "结果说明，必要时为JSON文本"
+  "detail": "结果说明",
+  "result": { "可选的结构化结果": "例如设置完整快照" }
 }
 ```
 
 约定：
 
 - `id` 是电脑端匹配结果的唯一依据，手机端不得修改、复用或省略它。
-- `ok: true` 只表示该命令已经完成，不表示未来状态一定保持不变。电脑端应同时查看后续遥测。
+- `ok: true` 只表示该命令已达到各命令小节约定的成功终态，不表示未来状态一定保持不变。电脑端应同时查看后续遥测；尤其飞行控制命令成功不等于飞行状态已经稳定改变。
 - `ok: false` 表示命令没有完成。`detail` 必须说明人或电脑端下一步能做什么。
 - 当前 v1 的结果错误信息通过 `detail` 传递，没有要求电脑端依赖某一段英文文本。电脑端应展示或分类处理，而不是用字符串猜测内部异常类型。
-- `detail` 可以是简短文字，也可以是 JSON 对象的字符串表示。需要读取结构化结果的命令必须在自己的命令小节中约定字段。
+- `detail` 是简短、面向人类的文字。需要返回结构化数据的命令使用可选对象字段 `result`，电脑端可安全忽略未知字段；不得把 JSON 对象序列化后塞入 `detail`。
 - 未知命令必须返回失败结果，不能让 WebSocket 因此崩溃或断开。
 - 命令处理失败不能泄露 Android 文件路径、原始 KMZ 内容、访问令牌、DJI 私有对象或异常堆栈。
 
@@ -432,7 +468,7 @@ sequenceDiagram
 
 作用：要求手机端立即返回一次当前遥测快照。手机端平时也会主动推送遥测，因此这个命令不是唯一的状态来源。
 
-成功时，`detail` 是遥测 `payload` 的 JSON 文本；失败时返回原因。
+成功时，`result` 是遥测 `payload` 的 JSON 对象，`detail` 是简短结果说明；失败时返回原因。
 
 ### 7.2 开始配对
 
@@ -584,6 +620,42 @@ wayline.stop
 **请求字段：** 无
 
 手机端停止直播并返回结果。重复停止应返回稳定结果，不得使连接断开。
+
+### 7.10 起飞、降落和返航
+
+命令分别为：
+
+```text
+flight.takeoff
+flight.land
+flight.return-home
+```
+
+三个命令均只接受字段 `{ "confirm": true }`。`confirm` 是电脑端针对本次高风险飞行动作的明确确认，手机端不得默认补全、缓存或复用。缺少确认、额外字段、字段类型错误、设备不可用、超时、取消或 DJI 拒绝都必须返回 `ok: false`。
+
+`ok: true` 仅表示 DJI 已确认对应动作调用的终态，不表示飞行器已经起飞、已经着陆或已经到家；电脑端必须继续以遥测中的飞行状态作为事实来源。手机端实现已完成，真实 DJI 设备上的机型支持、前置条件和回调语义仍待实机验证。虚拟摇杆和任意连续手动飞行控制仍不属于本契约。
+
+### 7.11 读取和修改设备设置
+
+命令如下：
+
+```text
+device.settings.camera.read
+device.settings.camera.write
+device.settings.transmission.read
+device.settings.transmission.write
+```
+
+两个 `read` 命令不接受额外字段。相机 `write` 只能修改 `autoExposureLockEnabled`、`focusMode`；图传 `write` 只能修改 `frequencyBand`、`channelSelectionMode`、`bandwidth`，且写入补丁必须非空。写入成功时，手机端必须重新读取并在 `command-result.result` 中返回完整快照：
+
+```json
+{
+  "domain": "camera 或 transmission",
+  "settings": { "完整、已回读的设置快照": "..." }
+}
+```
+
+`ok: true` 表示 DJI 已确认该次读写且写入后完整快照回读成功，不表示桌面端已持久化或显示它。该模块实现已完成，实际 DJI 键在目标机型上的可用性和写入结果仍待实机验证。
 
 ---
 

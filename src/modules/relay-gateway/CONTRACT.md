@@ -1,6 +1,6 @@
 # relay-gateway 一级模块契约
 
-状态：已修订；航线阶段上报扩展待实施
+状态：已修订；协议与命令目录已实现，真实 DJI 业务待实机验证
 版本：0.3.0
 所属程序：MSDK Relay Android
 模块标识：`relay-gateway`
@@ -208,18 +208,22 @@ wayline.resume
 wayline.stop
 live-stream.start
 live-stream.stop
+flight.takeoff
+flight.land
+flight.return-home
+device.settings.camera.read
+device.settings.camera.write
+device.settings.transmission.read
+device.settings.transmission.write
 ```
 
 下列命令不属于本阶段，必须被稳定拒绝：
 
 ```text
-flight.takeoff
-flight.land
-flight.return-home
 virtual-stick.*
 ```
 
-命令处理器必须返回成功结果或稳定错误结果。未注册命令不得导致 WebSocket 断开。每个命令必须使用电脑提供的 `id` 关联结果，处理器异常不得泄漏堆栈、文件路径、原始 KMZ、令牌或 DJI 私有对象。
+命令处理器必须返回成功结果或稳定错误结果。未注册命令不得导致 WebSocket 断开。每个命令必须使用电脑提供的 `id` 关联结果；设置读取和写入可在 `command-result.result` 中返回结构化快照。处理器异常不得泄漏堆栈、文件路径、原始 KMZ、令牌或 DJI 私有对象。
 
 ## 6. 并发与顺序
 

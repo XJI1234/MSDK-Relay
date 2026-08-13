@@ -1,6 +1,6 @@
 # relay-gateway.protocol-core 二级模块契约
 
-状态：已批准；`mission-phase` 扩展待实施
+状态：已批准并实现；`mission-phase` 编解码已实现，真实 DJI 航线阶段来源待实机验证
 版本：0.3.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 模块标识：`relay-protocol-core`
@@ -204,13 +204,16 @@ command-result {
   type: "command-result",
   id: 合法命令 ID,
   ok: boolean,
-  detail: 有界字符串
+  detail: 有界字符串,
+  result: object | 缺失
 }
 ```
 
 - `id` 和 `ok` 必填；
 - v1 解码兼容缺失 `detail`，缺失时转换为空字符串；
 - 编码器始终写出 `detail`。
+- `result` 是可选结构化结果对象；缺失时构造为 `null`，存在但不是对象时必须拒绝；
+- 编码器仅在 `result` 非空时写出它，并按通用 JSON 限制校验其内容；该字段用于设置快照等结构化结果，不改变 `ok` 或 `detail` 的语义。
 
 ### 5.6 `mission-begin`
 
@@ -541,7 +544,7 @@ Activity、Service、Context
 
 - 十二种帧分别完成编码和解码往返；
 - `paired` 分别覆盖显式 `"1"` 和省略版本；
-- 两种结果帧分别覆盖有详情和缺失详情；
+- 两种结果帧分别覆盖有详情和缺失详情；`command-result` 还必须覆盖结构化 `result`、缺失 `result` 和非对象 `result`；
 - `mission-phase` 覆盖两种阶段、每个整数边界、文件名边界、阶段枚举非法值、错误数值类型与同一任务代际的相邻顺序；
 - 通用 JSON 覆盖 null、字符串、数字、布尔、数组和嵌套对象；
 - 已知帧额外字段可忽略，未知合法类型返回 `Ignored`。
