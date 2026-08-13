@@ -45,7 +45,7 @@ DeviceConnection.operations().submit(action, timeoutMillis, completion)
 
 - `device-state-store` 是 SDK 可用性、遥控器连接、飞行器连接和配对状态的唯一状态拥有者。
 - 所有读者只能取得不可变快照，不能持有或修改内部可变对象。
-- `dji-operation-coordinator` 是直播、航线和配对执行 DJI SDK 调用的唯一调度入口；这些模块不得自行创建 DJI 操作线程。
+- `dji-operation-coordinator` 是直播、航线、配对、飞行控制和设备设置执行 DJI SDK 调用的唯一调度入口；这些模块不得自行创建 DJI 操作线程或绕开协调器并发调用 DJI。
 - DJI 回调先由对应适配器规范化为公开观察值，再写入状态仓库；业务模块不得直接监听 DJI 回调。
 - `pairing-controller` 在接受开始或停止命令时只能写入临时命令阶段 `PAIRING` 或 `STOPPING`。命令成功绝不代表已配对或已停止配对；`PAIRED`、`IDLE` 与 `UNKNOWN` 的设备事实必须由 `pairing-status-link` 的真实观察写入。命令失败可以安全地写入 `FAILED`，而真实观察到的 `FAILED` 同样由 `pairing-status-link` 写入。
 - `pairing-status-link` 是配对事实的唯一观察入口。门面层只负责其生命周期编排，不解释配对状态、不过滤有效状态、也不接触 DJI 回调。

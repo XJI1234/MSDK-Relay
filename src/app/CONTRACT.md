@@ -6,13 +6,13 @@ Gradle 路径：`:app`
 
 ## 唯一职责
 
-本模块只负责把 `relay-settings`、`app-runtime`、`device-connection`、`telemetry`、`live-stream`、`wayline-mission` 和 `relay-gateway` 七个一级模块与其 Android 适配器组装成可运行应用，并提供保存电脑端 WebSocket 地址、启动和停止中继、查看关键状态的最小界面。业务规则仍由各一级模块拥有。
+本模块只负责把 `relay-settings`、`app-runtime`、`device-connection`、`telemetry`、`live-stream`、`wayline-mission`、`flight-control`、`device-settings` 和 `relay-gateway` 九个一级模块与其 Android 适配器组装成可运行应用，并提供保存电脑端 WebSocket 地址、启动和停止中继、查看关键状态的最小界面。业务规则仍由各一级模块拥有。
 
 ## 二级职责
 
 1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。
-2. `MobileRelayGraph`：只创建七个一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则。
-3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次，并在设备失效时通知直播和航线。
+2. `MobileRelayGraph`：只创建九个一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则。
+3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次，并在设备失效时通知直播、航线、飞行控制和设备设置模块。
 4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。
 5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。
 
@@ -31,16 +31,16 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 3. 组合启动模块先启动 `device-connection`；仅在 DJI 状态为 `READY` 后启动飞行遥测源、`telemetry` 和 `relay-gateway`。
 4. 网关进入 `ACTIVE` 时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。
 5. 停止顺序严格反向：网关、遥测、飞行源、设备；同时关闭航线缓存、DJI 航线适配器、权限适配器、前台服务端口和线程资源。
-6. 设备离线时必须通知直播和航线模块失效；旧 DJI、网络和状态回调不得恢复已停止代次。
+6. 设备离线时必须通知直播、航线、飞行控制和设备设置模块失效；旧 DJI、网络和状态回调不得恢复已停止代次。
 7. 任一启动步骤抛出异常时，必须注销已建立的监听、逆序停止已启动资源，并允许后续完整重试。
 8. 任何可安装 APK 都必须在打包时通过 Gradle 属性 `DJI_API_KEY` 注入已注册的 DJI API Key；未提供时打包必须失败，不能生成携带空密钥的伪可用 APK。该密钥不得进入源码、契约或版本控制。
 9. 组合启动、异步进入 SDK 就绪后的遥测/网关启动、监听注销及各停止步骤发生异常时，`RelayBootstrapModule` 必须产生稳定的生命周期诊断事件。诊断只包含事件码与固定安全说明；记录失败不能改变回滚、停止或后续重试语义。
 
 ## 命令与数据
 
-组合根注册 `telemetry.read`、`pairing.start`、`pairing.stop`、`pairing.status`、`live-stream.start|stop` 和全部 `wayline.*` 命令。遥测快照必须完整映射为协议 `TelemetryFrame`，可选值缺失时使用 JSON null，不伪造零值。任何结果不得泄露密钥、路径或原始异常。
+组合根注册 `telemetry.read`、`pairing.start`、`pairing.stop`、`pairing.status`、`live-stream.start|stop`、全部 `wayline.*` 命令、`flight.takeoff`、`flight.land`、`flight.return-home`、`device.settings.camera.read`、`device.settings.camera.write`、`device.settings.transmission.read` 和 `device.settings.transmission.write`。遥测快照必须完整映射为协议 `TelemetryFrame`，可选值缺失时使用 JSON null，不伪造零值。任何结果不得泄露密钥、路径或原始异常。
 
-`telemetry.read` 主动发布当前完整快照；配对命令使用 30 秒超时并且每条命令恰好产生一个终态。直播和航线命令直接复用各一级模块门面提供的处理器。
+`telemetry.read` 主动发布当前完整快照；配对命令使用 30 秒超时并且每条命令恰好产生一个终态。直播、航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
 
 ## 验证
 

@@ -122,13 +122,15 @@ cancel(generation, endReason)
 CommandHandler.handle(command, completion)
 
 completion.succeed(detail)
+completion.succeed(detail, result)
 completion.reject(detail)
 ```
 
 - `command` 是不可变 `CommandFrame`，处理器可读取 `id`、`name` 与通用 JSON fields，但不得修改它；
 - `completion` 只能为该次调用使用，不得跨命令复用；
 - 第一次 `succeed` 或 `reject` 获胜，随后任何完成调用安静丢弃；
-- `succeed(detail)` 形成 `CommandResultFrame(id, true, detail)`；`reject(detail)` 形成 `CommandResultFrame(id, false, detail)`；
+- `succeed(detail)` 形成 `CommandResultFrame(id, true, detail)`；`succeed(detail, result)` 形成 `CommandResultFrame(id, true, detail, result)`；`reject(detail)` 形成 `CommandResultFrame(id, false, detail)`；
+- `result` 是可选的不可变 JSON 对象，写入 `command-result.result`；它适用于设备设置完整快照等结构化业务结果。缺失 `result` 与 `null` 都不写入协议帧，且不改变 `ok` 或 `detail` 的语义；
 - detail 必须满足 `protocol-core` 对 result detail 的限制：最多 1024 个 Unicode code point，且不含控制字符；空 detail 合法；
 - detail 不合法时不回显输入，统一形成 `CommandResultFrame(id, false, "Command result is invalid")`；
 - 处理器负责参数语义、业务授权和 DJI 操作；分发器只负责名称与结果关联。
@@ -164,7 +166,7 @@ DuplicateInFlight
 
 - 未知命令与容量拒绝都尝试通过 `outbound-publisher` 发送关联 ID 的失败结果；若会话已失效，publisher 返回旧会话拒绝，本模块安静结束；
 - `outbound-publisher` 的编码或写入拒绝不改变 dispatch 结果，不触发重试或断线；
-- `CommandResultFrame` 只携带命令 ID、成功布尔值与受限 detail，不增加私有错误字段；
+- `CommandResultFrame` 只携带命令 ID、成功布尔值、受限 detail 与可选的结构化 `result` 对象，不增加私有错误字段；
 - 任何诊断只能使用固定分类和脱敏短消息，不能包含原始处理器异常。
 
 ## 7. 依赖和可替换性
@@ -185,7 +187,7 @@ outbound-publisher 的 publish 接口和结构化 PublishResult
 - 目录内每个命令可注册一次，目录外和 `virtual-stick.*` 稳定拒绝；
 - 重复注册不替换处理器；注销只影响未来分发；
 - 同步成功、同步拒绝、异步成功、异步拒绝均产生关联原 ID 的唯一结果；
-- 空 detail、1024 code point detail、超长 detail 和控制字符 detail；
+- 空 detail、1024 code point detail、超长 detail 和控制字符 detail；带合法结构化 `result`、无 `result` 与非法非对象/超限 `result`；
 - 未知命令稳定失败且不调用任何处理器；
 - 同一代次相同 ID 并发分发只调用一次处理器、只产生一个结果；完成后允许新命令再次使用该 ID；
 - 同一代次第 65 条待完成命令稳定拒绝，不泄漏待完成记录；

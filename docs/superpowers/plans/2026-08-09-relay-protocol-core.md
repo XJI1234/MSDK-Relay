@@ -1,6 +1,6 @@
 # Relay Protocol Core Implementation Plan
 
-> **状态：已废弃。** 本计划对应旧版契约，包含已经移出 `protocol-core` 职责的运行状态机。不得继续按本文件实施；唯一有效依据是 `relay-gateway/protocol-core/CONTRACT.md` v0.2.0 或更高版本。
+> **状态：已废弃，非当前契约。** 本计划对应旧版契约，包含已经移出 `protocol-core` 职责的运行状态机，也保留了已过时的飞行命令范围假设。不得继续按本文件实施或联调；唯一有效依据是 `relay-gateway/protocol-core/CONTRACT.md` v0.2.0 或更高版本及仓库根 `CONTRACT.md`。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
