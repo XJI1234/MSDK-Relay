@@ -12,8 +12,54 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         manifestPlaceholders["DJI_API_KEY"] = djiApiKey ?: "UNCONFIGURED_DJI_API_KEY"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += setOf(
+                "**/libconstants.so",
+                "**/libdji_innertools.so",
+                "**/libdjibase.so",
+                "**/libDJICSDKCommon.so",
+                "**/libDJIFlySafeCore-CSDK.so",
+                "**/libdjifs_jni-CSDK.so",
+                "**/libDJIRegister.so",
+                "**/libdjisdk_jni.so",
+                "**/libDJIUpgradeCore.so",
+                "**/libDJIUpgradeJNI.so",
+                "**/libDJIWaypointV2Core-CSDK.so",
+                "**/libdjiwpv2-CSDK.so",
+                "**/libFlightRecordEngine.so",
+                "**/libvideo-framing.so",
+                "**/libwaes.so",
+                "**/libagora-rtsa-sdk.so",
+                "**/libc++.so",
+                "**/libc++_shared.so",
+                "**/libmrtc_28181.so",
+                "**/libmrtc_agora.so",
+                "**/libmrtc_core.so",
+                "**/libmrtc_core_jni.so",
+                "**/libmrtc_data.so",
+                "**/libmrtc_log.so",
+                "**/libmrtc_onvif.so",
+                "**/libmrtc_rtmp.so",
+                "**/libmrtc_rtsp.so",
+                "**/libSdkyclx_clx.so",
+                "**/libdataclx.so",
+            )
+            pickFirsts += setOf(
+                "lib/arm64-v8a/libc++_shared.so",
+                "lib/armeabi-v7a/libc++_shared.so",
+            )
+        }
+    }
+    androidResources {
+        noCompress += listOf("so", "zip")
+    }
 }
 kotlin { jvmToolchain(17) }
 
@@ -70,6 +116,9 @@ tasks.register("verifyAndroidManifestContract") {
         }
         check(application.attributes.getNamedItemNS(androidNamespace, "usesCleartextTraffic")?.nodeValue == "true") {
             "AndroidManifest.xml must allow cleartext traffic because the relay contract supports ws:// endpoints"
+        }
+        check(application.attributes.getNamedItemNS(androidNamespace, "extractNativeLibs")?.nodeValue == "true") {
+            "AndroidManifest.xml must extract native libraries so DJI Helper.install can bind JNI"
         }
     }
 }

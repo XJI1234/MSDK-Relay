@@ -18,6 +18,7 @@ android {
 kotlin { jvmToolchain(17) }
 
 dependencies {
+    api(project(":telemetry:flight-telemetry-port"))
     api(project(":telemetry:snapshot-assembler"))
     implementation("com.dji:dji-sdk-v5-aircraft:5.17.0")
     compileOnly("com.dji:dji-sdk-v5-aircraft-provided:5.17.0")

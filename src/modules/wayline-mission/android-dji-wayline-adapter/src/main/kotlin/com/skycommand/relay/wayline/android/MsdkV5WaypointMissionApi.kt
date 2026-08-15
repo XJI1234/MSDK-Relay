@@ -31,7 +31,7 @@ internal class MsdkV5WaypointMissionApi(
         manager.addWaypointMissionExecuteStateListener(sdkListener)
         return DjiExecutionStateRegistration { manager.removeWaypointMissionExecuteStateListener(sdkListener) }
     }
-    override fun close() = Unit
+    override fun close() = manager.destroy()
 
     private fun DjiControlCompletion.sdk() = object : CommonCallbacks.CompletionCallback {
         override fun onSuccess() = succeed()
@@ -42,19 +42,19 @@ internal class MsdkV5WaypointMissionApi(
         if (!initialized) { manager.init(); initialized = true }
     }
 
-    private fun WaypointMissionExecuteState.toDjiExecutionState(): DjiMissionExecutionState = when (this) {
-        WaypointMissionExecuteState.PREPARING,
-        WaypointMissionExecuteState.UPLOADING,
-        WaypointMissionExecuteState.RECOVERING -> DjiMissionExecutionState.PREPARING
-        WaypointMissionExecuteState.ENTER_WAYLINE -> DjiMissionExecutionState.ENTER_WAYLINE
-        WaypointMissionExecuteState.EXECUTING -> DjiMissionExecutionState.EXECUTING
-        WaypointMissionExecuteState.INTERRUPTED -> DjiMissionExecutionState.INTERRUPTED
-        WaypointMissionExecuteState.FINISHED,
-        WaypointMissionExecuteState.RETURN_TO_START_POINT -> DjiMissionExecutionState.COMPLETED
-        WaypointMissionExecuteState.DISCONNECTED -> DjiMissionExecutionState.DISCONNECTED
-        WaypointMissionExecuteState.IDLE,
-        WaypointMissionExecuteState.READY -> DjiMissionExecutionState.IDLE
-        WaypointMissionExecuteState.NOT_SUPPORTED,
-        WaypointMissionExecuteState.UNKNOWN -> DjiMissionExecutionState.UNKNOWN
-    }
+    private fun WaypointMissionExecuteState.toDjiExecutionState(): DjiMissionExecutionState =
+        mapWaypointMissionStateName(name)
+}
+
+/** DJI enum names are converted here so the terminal-state policy is unit-testable without a flight stack. */
+internal fun mapWaypointMissionStateName(name: String): DjiMissionExecutionState = when (name) {
+    "PREPARING", "UPLOADING", "RECOVERING" -> DjiMissionExecutionState.PREPARING
+    "ENTER_WAYLINE" -> DjiMissionExecutionState.ENTER_WAYLINE
+    "EXECUTING", "RETURN_TO_START_POINT" -> DjiMissionExecutionState.EXECUTING
+    "INTERRUPTED" -> DjiMissionExecutionState.INTERRUPTED
+    "FINISHED" -> DjiMissionExecutionState.COMPLETED
+    "DISCONNECTED" -> DjiMissionExecutionState.DISCONNECTED
+    "IDLE", "READY" -> DjiMissionExecutionState.IDLE
+    "NOT_SUPPORTED", "UNKNOWN" -> DjiMissionExecutionState.UNKNOWN
+    else -> DjiMissionExecutionState.UNKNOWN
 }

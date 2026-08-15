@@ -1,9 +1,15 @@
 package com.skycommand.relay.device.remote.android
 
 import dji.sdk.keyvalue.key.KeyTools
+import dji.sdk.keyvalue.key.ProductKey
 import dji.sdk.keyvalue.key.RemoteControllerKey
 import dji.sdk.keyvalue.value.remotecontroller.RemoteControllerType
 import dji.v5.manager.KeyManager
+
+internal fun groundUnitConnected(
+    remoteControllerKey: Boolean,
+    productConnectionKey: Boolean,
+): Boolean = remoteControllerKey || productConnectionKey
 
 internal class MsdkV5RemoteControllerApi(
     private val manager: KeyManager = KeyManager.getInstance(),
@@ -22,22 +28,28 @@ private class KeyManagerObservation(
     private val lock = Any()
     private val owner = Any()
     private val connectionKey = KeyTools.createKey(RemoteControllerKey.KeyConnection)
+    private val productKey = KeyTools.createKey(ProductKey.KeyConnection)
     private val typeKey = KeyTools.createKey(RemoteControllerKey.KeyRemoteControllerType)
     private var active = true
-    private var connected = false
+    private var remoteControllerConnected = false
+    private var productConnected = false
     private var type = RemoteControllerType.UNKNOWN
 
     fun start() {
         try {
             manager.listen(connectionKey, owner) { _, next ->
-                updateConnection(next == true)
+                publishCurrent(nextRemoteController = next == true, nextProduct = null, nextType = null)
+            }
+            manager.listen(productKey, owner) { _, next ->
+                publishCurrent(nextRemoteController = null, nextProduct = next == true, nextType = null)
             }
             manager.listen(typeKey, owner) { _, next ->
-                updateType(next ?: RemoteControllerType.UNKNOWN)
+                publishCurrent(nextRemoteController = null, nextProduct = null, nextType = next ?: RemoteControllerType.UNKNOWN)
             }
             publishCurrent(
-                manager.getValue(connectionKey, false),
-                manager.getValue(typeKey, RemoteControllerType.UNKNOWN),
+                nextRemoteController = manager.getValue(connectionKey, false),
+                nextProduct = manager.getValue(productKey, false),
+                nextType = manager.getValue(typeKey, RemoteControllerType.UNKNOWN),
             )
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
@@ -52,25 +64,20 @@ private class KeyManagerObservation(
         if (shouldClose) manager.cancelListen(owner)
     }
 
-    private fun updateConnection(next: Boolean) {
-        publishCurrent(next, null)
-    }
-
-    private fun updateType(next: RemoteControllerType) {
-        publishCurrent(null, next)
-    }
-
     private fun publishCurrent(
-        nextConnection: Boolean?,
+        nextRemoteController: Boolean?,
+        nextProduct: Boolean?,
         nextType: RemoteControllerType?,
     ) {
         val fact = synchronized(lock) {
             if (!active) {
                 null
             } else {
-                nextConnection?.let { connected = it }
+                nextRemoteController?.let { remoteControllerConnected = it }
+                nextProduct?.let { productConnected = it }
                 nextType?.let { type = it }
-                DjiRemoteControllerFact(connected, type.toDisplayModel())
+                val connected = groundUnitConnected(remoteControllerConnected, productConnected)
+                DjiRemoteControllerFact(connected, if (connected) type.toDisplayModel() else null)
             }
         }
         fact?.let { listener.onChanged(it) }

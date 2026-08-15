@@ -98,6 +98,9 @@ class RelayBootstrapModule(
                 ports.markMissionUnavailable()
                 ports.markFlightControlUnavailable()
                 ports.markDeviceSettingsUnavailable()
+                relayStarted = false
+                stopGateway()
+                stopTelemetry()
             }
         }
     }

@@ -320,7 +320,7 @@ mission-phase {
 
 - 仅手机端向电脑端发送，是航线运行阶段的事实通知，不是命令结果，也不要求电脑回复确认；
 - `missionRevision`、`deviceGeneration` 与 `sequence` 共同标识一个手机端运行代际内的事实顺序；电脑端必须按同一任务代际的 `sequence` 升序处理，重复或更旧序号不得倒退其显示状态；
-- `START_POINT_REACHED` 只表示手机已收到 DJI 的 `ENTER_WAYLINE` 状态；`ROUTE_EXECUTION_STARTED` 表示手机已确认进入航线执行。两帧必须按 `sequence` 递增顺序发送，且 `START_POINT_REACHED` 必须先于对应的 `ROUTE_EXECUTION_STARTED`；
+- `START_POINT_REACHED` 只表示手机已收到 DJI 的 `ENTER_WAYLINE` 状态；`ROUTE_EXECUTION_STARTED` 表示手机已确认航线开始执行，对应 DJI 的 `EXECUTING`，不得由 `ENTER_WAYLINE` 单独合成。若两条事实都产生，必须按 `sequence` 递增发送，且 `START_POINT_REACHED` 必须先于对应的 `ROUTE_EXECUTION_STARTED`；若从未收到 `ENTER_WAYLINE`，可以只发送 `ROUTE_EXECUTION_STARTED`，不得补造 `START_POINT_REACHED`；
 - 所有数值都必须是可精确转换为 Long 的 JSON 整数；`missionRevision` 与 `sequence` 必须大于 0，`deviceGeneration` 必须大于等于 0；
 - `fileName` 使用 §9.2 的安全文件名规则。该帧不得包含坐标、航点、路径、DJI 原始状态、异常、任务字节、endpoint、认证信息或任何密钥；
 - `Delivered` 只表示手机交给当前传输 writer，不表示电脑已收到。当前协议不为阶段帧提供离线重发；连接不活跃时的发送拒绝必须被手机记录为受限诊断，不能重新执行航线或伪造新阶段事实；

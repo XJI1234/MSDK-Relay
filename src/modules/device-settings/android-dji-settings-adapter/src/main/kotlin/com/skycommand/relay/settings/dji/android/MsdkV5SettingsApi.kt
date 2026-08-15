@@ -38,7 +38,7 @@ internal class MsdkV5SettingsApi(
 
     override fun execute(request: SettingsRequest, completion: DjiSettingsCompletion) {
         when (request) {
-            is SettingsRequest.Read -> completion.succeed(read(request.domain))
+            is SettingsRequest.Read -> read(request.domain)?.let(completion::succeed) ?: completion.fail()
             is SettingsRequest.WriteCamera -> writeCamera(request.patch, completion)
             is SettingsRequest.WriteTransmission -> writeTransmission(request.patch, completion)
         }
@@ -68,7 +68,7 @@ internal class MsdkV5SettingsApi(
     ) {
         fun next(index: Int) {
             if (index == writes.size) {
-                completion.succeed(read(domain))
+                read(domain)?.let(completion::succeed) ?: completion.fail()
                 return
             }
             writes[index](object : DjiWriteCompletion {
@@ -79,21 +79,17 @@ internal class MsdkV5SettingsApi(
         next(0)
     }
 
-    private fun read(domain: SettingsDomain): SettingsSnapshot = when (domain) {
-        SettingsDomain.CAMERA -> SettingsSnapshot.Camera(
-            CameraSettings(
-                autoExposureLockEnabled = manager.getValue(aeLockKey) ?: false,
-                focusMode = (manager.getValue<CameraFocusMode>(focusModeKey) ?: CameraFocusMode.UNKNOWN).name,
-                cameraIndex = cameraIndex.name,
-            ),
+    private fun read(domain: SettingsDomain): SettingsSnapshot? = when (domain) {
+        SettingsDomain.CAMERA -> verifiedCameraSnapshot(
+            autoExposureLockEnabled = manager.getValue(aeLockKey),
+            focusMode = manager.getValue<CameraFocusMode>(focusModeKey)?.name,
+            cameraIndex = cameraIndex.name,
         )
-        SettingsDomain.TRANSMISSION -> SettingsSnapshot.Transmission(
-            TransmissionSettings(
-                frequencyBand = (manager.getValue<FrequencyBand>(frequencyBandKey) ?: FrequencyBand.UNKNOWN).name,
-                channelSelectionMode = (manager.getValue<ChannelSelectionMode>(channelModeKey) ?: ChannelSelectionMode.UNKNOWN).name,
-                bandwidth = (manager.getValue<Bandwidth>(bandwidthKey) ?: Bandwidth.UNKNOWN).name,
-                dynamicDataRateMbps = (manager.getValue(dataRateKey) as? Number)?.toDouble(),
-            ),
+        SettingsDomain.TRANSMISSION -> verifiedTransmissionSnapshot(
+            frequencyBand = manager.getValue<FrequencyBand>(frequencyBandKey)?.name,
+            channelSelectionMode = manager.getValue<ChannelSelectionMode>(channelModeKey)?.name,
+            bandwidth = manager.getValue<Bandwidth>(bandwidthKey)?.name,
+            dynamicDataRateMbps = manager.getValue(dataRateKey) as? Number,
         )
     }
 
@@ -104,3 +100,34 @@ internal class MsdkV5SettingsApi(
         })
     }
 }
+
+/** Only values present in DJI's cache and within the relay wire contract become success snapshots. */
+internal fun verifiedCameraSnapshot(
+    autoExposureLockEnabled: Boolean?,
+    focusMode: String?,
+    cameraIndex: String?,
+): SettingsSnapshot.Camera? {
+    val confirmedFocusMode = focusMode.takeIf(::isConfirmedToken) ?: return null
+    val confirmedCameraIndex = cameraIndex.takeIf(::isConfirmedToken) ?: return null
+    val confirmedAutoExposureLock = autoExposureLockEnabled ?: return null
+    return SettingsSnapshot.Camera(CameraSettings(confirmedAutoExposureLock, confirmedFocusMode, confirmedCameraIndex))
+}
+
+internal fun verifiedTransmissionSnapshot(
+    frequencyBand: String?,
+    channelSelectionMode: String?,
+    bandwidth: String?,
+    dynamicDataRateMbps: Number?,
+): SettingsSnapshot.Transmission? {
+    val rate = dynamicDataRateMbps?.toDouble()
+    val confirmedFrequencyBand = frequencyBand.takeIf(::isConfirmedToken) ?: return null
+    val confirmedChannelSelectionMode = channelSelectionMode.takeIf(::isConfirmedToken) ?: return null
+    val confirmedBandwidth = bandwidth.takeIf(::isConfirmedToken) ?: return null
+    if (rate != null && (!rate.isFinite() || rate < 0.0)) return null
+    return SettingsSnapshot.Transmission(
+        TransmissionSettings(confirmedFrequencyBand, confirmedChannelSelectionMode, confirmedBandwidth, rate),
+    )
+}
+
+private fun isConfirmedToken(value: String?): Boolean =
+    value != null && value != "UNKNOWN" && value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))

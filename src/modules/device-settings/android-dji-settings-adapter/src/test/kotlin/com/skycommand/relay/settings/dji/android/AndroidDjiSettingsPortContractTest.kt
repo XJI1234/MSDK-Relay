@@ -1,12 +1,14 @@
 package com.skycommand.relay.settings.dji.android
 
 import com.skycommand.relay.settings.command.CameraSettings
+import com.skycommand.relay.settings.command.TransmissionSettings
 import com.skycommand.relay.settings.command.SettingsDomain
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
 import com.skycommand.relay.settings.executor.SettingsDjiCompletion
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class AndroidDjiSettingsPortContractTest {
     @Test
@@ -36,6 +38,34 @@ class AndroidDjiSettingsPortContractTest {
         api.succeed(camera())
 
         assertEquals(listOf("fail"), outcomes)
+    }
+
+    @Test
+    fun doesNotSynthesizeConfirmedSettingsWhenDjiCacheIsMissingOrUnknown() {
+        assertNull(verifiedCameraSnapshot(null, "AUTO", "LEFT_OR_MAIN"))
+        assertNull(verifiedCameraSnapshot(false, "UNKNOWN", "LEFT_OR_MAIN"))
+        assertNull(verifiedTransmissionSnapshot(
+            "UNKNOWN",
+            "AUTO",
+            "BANDWIDTH_20MHZ",
+            null,
+        ))
+        assertNull(verifiedTransmissionSnapshot("BAND_2_DOT_4G", "AUTO", "BANDWIDTH_20MHZ", -1.0))
+        assertNull(verifiedTransmissionSnapshot("BAND_2_DOT_4G", "AUTO", "BANDWIDTH_20MHZ", Double.NaN))
+
+        assertEquals(
+            SettingsSnapshot.Camera(CameraSettings(false, "AUTO", "LEFT_OR_MAIN")),
+            verifiedCameraSnapshot(false, "AUTO", "LEFT_OR_MAIN"),
+        )
+        assertEquals(
+            SettingsSnapshot.Transmission(TransmissionSettings("BAND_2_DOT_4G", "AUTO", "BANDWIDTH_20MHZ", null)),
+            verifiedTransmissionSnapshot(
+                "BAND_2_DOT_4G",
+                "AUTO",
+                "BANDWIDTH_20MHZ",
+                null,
+            ),
+        )
     }
 
     private fun completion(outcomes: MutableList<String>) = object : SettingsDjiCompletion {

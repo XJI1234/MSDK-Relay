@@ -105,6 +105,7 @@ class WpmzGenerator private constructor() {
         private const val TEMPLATE_ENTRY = "wpmz/template.kml"
         private const val WPML_ENTRY = "wpmz/waylines.wpml"
         private const val MAX_WAYPOINTS = 10_000
+        private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
         private const val MIN_SPEED = 0.1
         private const val MAX_SPEED = 15.0
         private const val MAX_ALTITUDE = 10_000.0
@@ -114,7 +115,7 @@ class WpmzGenerator private constructor() {
         private fun valid(plan: WaylinePlan): Boolean =
             plan.fileName.isNotBlank() &&
                 plan.fileName.endsWith(".kmz", ignoreCase = true) &&
-                plan.fileName.codePointCount(0, plan.fileName.length) <= 255 &&
+                plan.fileName.codePointCount(0, plan.fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
                 plan.fileName.none { it == '/' || it == '\\' || it.isISOControl() } &&
                 plan.waypoints.size in 1..MAX_WAYPOINTS &&
                 plan.speedMetersPerSecond.isFinite() &&

@@ -54,6 +54,8 @@ internal class SerialEventLoop(
         return value as T
     }
 
+    fun <T> read(action: () -> T): T = if (isDrainingThread()) action() else call(action)
+
     private fun isDrainingThread(): Boolean = lock.withLock { drainingThread === Thread.currentThread() }
 
     private fun drain() {

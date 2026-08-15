@@ -20,7 +20,7 @@
 
 手机端是连接 DJI 设备的 Android 中继程序。
 
-电脑端负责界面、地图、航线文件选择与生成、媒体接收，以及向用户发起操作；手机端负责连接遥控器和飞行器，调用 DJI MSDK 完成设备侧操作，并把设备状态和操作结果回传给电脑端。
+外部工具负责生成航线文件；电脑端负责界面、地图、航线文件导入与选择、媒体接收，以及向用户发起操作；手机端负责连接遥控器和飞行器，调用 DJI MSDK 完成设备侧操作，并把设备状态和操作结果回传给电脑端。
 
 手机端不是第二个电脑端，也不是飞行控制器。它只执行本契约列出的设备侧能力。
 
@@ -37,7 +37,7 @@
 3. 持续发布设备遥测，包括连接状态、飞行状态、电量、位置、直播状态和航线任务状态。
 4. 接收电脑端的 RTMP 直播命令，让飞行器视频推送到电脑端指定的 RTMP 地址。
 5. 接收电脑端的 KMZ 航线文件，校验完整性并暂存。
-6. 根据电脑端命令生成、上传、开始、暂停、恢复和停止航线任务。
+6. 根据电脑端命令上传、开始、暂停、恢复和停止已接收的航线任务。
 7. 在每次明确确认后，提交起飞、降落和返航命令，并把 DJI 终态结果与后续遥测分别回传。
 8. 读取或修改相机和图传设置，并在写入后重新读取完整设置快照。
 9. 在连接断开、设备未就绪或 DJI SDK 拒绝操作时，返回明确的失败结果，而不是假装操作成功。
@@ -149,7 +149,6 @@
 | --- | --- | --- |
 | `wayline-command-handler` | 解释 `wayline.*` 命令、检查命令级前置条件并调用对应航线能力 | 不解析 WebSocket，不负责文件字节传输 |
 | `mission-staging` | 安全接收已校验的 KMZ 字节，临时写入、完整落盘、原子替换和清理 | 不调用 DJI 航线 SDK，不决定是否执行任务 |
-| `wpmz-generator` | 根据航点计划生成并校验 DJI WPMZ/KMZ | 不规划地图，不上传或执行任务 |
 | `mission-uploader` | 把当前暂存航线上传到 DJI 设备并报告上传进度 | 不生成航线，不开始飞行 |
 | `mission-executor` | 执行航线开始、暂停、恢复和停止操作 | 不接收文件，不决定用户是否确认 |
 | `mission-state-store` | 保存当前航线文件、上传进度、执行状态和任务说明 | 不直接调用 WebSocket，不调用 DJI 原始 API |
@@ -281,7 +280,6 @@ runtime-diagnostics
 | 即时读取遥测 | `telemetry` | `telemetry-command-handler`、`snapshot-assembler` |
 | RTMP 图传 | `live-stream` | `stream-command-handler`、`stream-config-validator`、`dji-stream-adapter`、`stream-state-store` |
 | KMZ 接收和完整性校验 | `relay-gateway` + `wayline-mission` | `mission-transfer`、`mission-staging` |
-| 根据航点生成 KMZ | `wayline-mission` | `wayline-command-handler`、`wpmz-generator` |
 | 上传航线 | `wayline-mission` | `mission-uploader`、`mission-state-store` |
 | 开始/暂停/恢复/停止航线 | `wayline-mission` | `mission-executor`、`mission-state-store` |
 | Android 前台运行和权限 | `app-runtime` | `foreground-service`、`permission-coordinator` |
@@ -307,18 +305,11 @@ runtime-diagnostics
 
 契约中可以使用语义化接口名称，不要求提前固定 Kotlin 类名；但接口的输入、输出、前置条件、失败方式和生命周期必须固定。没有契约的二级模块不得进入实现阶段。
 
-### 2.7 航线生成与航线文件传输的职责边界
+### 2.7 航线文件传输边界
 
-电脑端拥有航线规划、地图编辑和航点业务规则。手机端不规划航线，也不替电脑端决定航点。
+当前生产工作流由 Wayline-master 或其他外部工具完成航线规划并导出 KML/KMZ；Sky Command 只导入、预览和选择合格 KMZ，再通过 `mission-begin/chunk/complete` 传给手机端。手机端不规划航线，也不替电脑端决定航点。
 
-手机端保留 `wayline.generate` 的原因是旧项目已经具备这项能力：电脑端可以把已经确定好的完整航点计划交给手机端，由 `wpmz-generator` 调用 DJI WPMZ 能力生成并校验 KMZ。这个操作只是“格式生成适配”，不是“航线规划”。
-
-因此有两种等价的输入方式：
-
-- 电脑端已经生成 KMZ：通过 `mission-begin/chunk/complete` 传给手机端；
-- 电脑端只有完整航点计划：通过 `wayline.generate` 让手机端生成当前待上传 KMZ。
-
-两条路径最后都必须进入 `mission-staging`，再由 `wayline.upload` 单独上传。任何路径都不能自动开始飞行。
+`wayline.generate` 已从生产命令目录中删除，`wpmz-generator` 已从 Gradle 工程、生产依赖和 APK 组合中移除；仓库中的同名目录仅是未编译的历史源码。手机端收到 `wayline.generate` 必须按未知命令拒绝。重新增加任何手机端航线生成功能，必须先取得业务批准并完成新的跨端契约、格式校验和实机验证。
 
 ---
 
@@ -326,7 +317,7 @@ runtime-diagnostics
 
 以下能力不属于当前手机端契约，电脑端不得调用，手机端也不得偷偷实现成半成品：
 
-- 虚拟摇杆或任何直接飞行动作控制。
+- 虚拟摇杆或任何连续飞行姿态控制。
 - 航线规划、地图编辑和航点绘制。
 - 电脑端 UI、地图显示和媒体播放界面。
 - 电脑端的 RTMP 接收、转码、HLS 播放和录像管理。
@@ -354,8 +345,8 @@ runtime-diagnostics
 - 启动 WebSocket 服务，并把服务地址提供给手机端。
 - 生成唯一的命令 ID，等待并匹配相同 ID 的结果。
 - 在调用前检查是否选择了在线手机设备。
-- 负责航线规划、地图编辑、文件选择和电脑端文件管理；也可以在电脑端先生成 KMZ。
-- 如果调用 `wayline.generate`，只向手机端提供已经确定的完整航点计划，不把手机端当作地图规划器。
+- 负责外部航线文件的选择、导入、预览和电脑端文件管理；不在 Sky Command 内规划、编辑或生成航线。
+- 不得调用已移除的 `wayline.generate`；只发送经桌面端合格性判定的 KMZ 文件。
 - 负责接收 RTMP、转码、播放和媒体状态展示。
 - 根据遥测和结果向用户展示可理解的状态和错误。
 - 不直接依赖手机端的 Kotlin 类、Android 类或 DJI SDK 类型。
@@ -511,47 +502,9 @@ sequenceDiagram
 }
 ```
 
-### 7.5 根据航点生成航线
+`aircraftModel` 在缺失、空串或空白时必须为 `"UNKNOWN"`，不得省略该字段。`motorsOn` 在遥测未知时必须是 JSON `null`，不得写成 `false`。`sdkRegistered` 仅在 SDK 为 `READY` 时为 `true`。命令成功只表示本次查询完成，不等于已经配对。
 
-**命令名：** `wayline.generate`
-
-```json
-{
-  "name": "wayline.generate",
-  "fileName": "survey.kmz",
-  "waypoints": [
-    { "longitude": 120.123, "latitude": 30.123, "altitude": 80.0 }
-  ],
-  "speedMetersPerSecond": 5.0
-}
-```
-
-手机端使用 DJI WPMZ 能力生成并校验 KMZ，然后把它放入“当前待上传航线”。它不负责地图规划，也不负责上传或执行。
-
-要求：
-
-- `fileName` 必须是安全的 `.kmz` 文件名；
-- `waypoints` 必须包含 `2` 到 `99` 个航点；
-- 每个航点必须包含经度、纬度和高度；
-- 经度范围是 `-180` 到 `180`，纬度范围是 `-90` 到 `90`，高度范围是 `1` 到 `500` 米；
-- `speedMetersPerSecond` 范围是 `0.1` 到 `15.0` 米/秒；
-- 生成能力或当前飞行器不支持时必须失败；
-- 生成成功后，下一次 `wayline.upload` 默认使用这份待上传航线；
-- 新的成功生成会替换旧的待上传航线，旧文件必须清理。
-
-成功结果的 `detail` 只能包含文件名、大小和 SHA-256，例如：
-
-```json
-{
-  "fileName": "survey.kmz",
-  "size": 2048,
-  "sha256": "小写的64位SHA-256摘要"
-}
-```
-
-不得把 Android 绝对路径、临时文件名或文件句柄直接放进电脑端可见的结果。
-
-### 7.6 上传当前航线
+### 7.5 上传当前航线
 
 **命令名：** `wayline.upload`
 
@@ -566,7 +519,7 @@ sequenceDiagram
 
 注意：电脑端发送 KMZ 分块并收到 `mission-result.ok=true`，只代表文件已完整到达手机并已暂存；它不代表 DJI 已经上传。仍必须单独调用 `wayline.upload`。
 
-### 7.7 开始、暂停、恢复和停止航线
+### 7.6 开始、暂停、恢复和停止航线
 
 命令分别为：
 
@@ -598,7 +551,7 @@ wayline.stop
   -> wayline.stop（按需）
 ```
 
-### 7.8 开始 RTMP 直播
+### 7.7 开始 RTMP 直播
 
 **命令名：** `live-stream.start`
 
@@ -618,14 +571,14 @@ wayline.stop
 
 手机端不负责接收、转码或播放视频。视频走 RTMP 通道，不走 WebSocket 命令通道。
 
-### 7.9 停止 RTMP 直播
+### 7.8 停止 RTMP 直播
 
 **命令名：** `live-stream.stop`
 **请求字段：** 无
 
 手机端停止直播并返回结果。重复停止应返回稳定结果，不得使连接断开。
 
-### 7.10 起飞、降落和返航
+### 7.9 起飞、降落和返航
 
 命令分别为：
 
@@ -639,7 +592,7 @@ flight.return-home
 
 `ok: true` 仅表示 DJI 已确认对应动作调用的终态，不表示飞行器已经起飞、已经着陆或已经到家；电脑端必须继续以遥测中的飞行状态作为事实来源。手机端实现已完成，真实 DJI 设备上的机型支持、前置条件和回调语义仍待实机验证。虚拟摇杆和任意连续手动飞行控制仍不属于本契约。
 
-### 7.11 读取和修改设备设置
+### 7.10 读取和修改设备设置
 
 命令如下：
 

@@ -245,7 +245,9 @@ private fun DjiMissionExecutionState.toMissionExecutionSignal(): MissionExecutio
     DjiMissionExecutionState.UNKNOWN -> MissionExecutionSignal.UNKNOWN
 }
 
-private fun String.isSafeKmzName(): Boolean = isNotBlank() && codePointCount(0, length) <= 255 &&
+private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
+
+private fun String.isSafeKmzName(): Boolean = isNotBlank() && codePointCount(0, length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
     none(Char::isISOControl) && !contains('/') && !contains('\\') && this != "." && this != ".." &&
     endsWith(".kmz", ignoreCase = true) && File(this).name == this
 

@@ -34,6 +34,20 @@ class AndroidAircraftPortContractTest {
     }
 
     @Test
+    fun productConnectionWithoutFlightControllerIsNotAircraftConnected() {
+        val platform = FakePlatform(initial = Fact(true, false, "M350 RTK"))
+        val port = AndroidAircraftPort(platform)
+        val received = mutableListOf<String>()
+
+        port.start(AircraftListener { signal ->
+            received += "${signal.aircraftConnected}:${signal.flightControllerConnected}:${signal.displayModel}"
+        })
+        platform.publish(true, true, "M350 RTK")
+
+        assertEquals(listOf("false:false:null", "true:true:M350 RTK"), received)
+    }
+
+    @Test
     fun repeatedStartKeepsTheOriginalObservation() {
         val platform = FakePlatform()
         val port = AndroidAircraftPort(platform)

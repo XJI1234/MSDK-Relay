@@ -65,11 +65,11 @@ class AndroidAircraftPort internal constructor(
             if (active !== operation || generation != operation.generation) {
                 null
             } else {
-                val aircraftConnected = fact.aircraftConnected
+                val aircraftConnected = fact.aircraftConnected && fact.flightControllerConnected
                 AircraftSignal(
                     sourceRevision = ++sourceRevision,
                     aircraftConnected = aircraftConnected,
-                    flightControllerConnected = aircraftConnected && fact.flightControllerConnected,
+                    flightControllerConnected = aircraftConnected,
                     displayModel = fact.displayModel
                         ?.trim()
                         ?.takeIf { aircraftConnected && it.isNotEmpty() },

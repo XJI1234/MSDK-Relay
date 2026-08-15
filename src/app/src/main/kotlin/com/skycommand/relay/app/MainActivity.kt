@@ -2,6 +2,7 @@ package com.skycommand.relay.app
 
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -9,25 +10,31 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import com.skycommand.relay.device.pairing.PairingRequestResult
 import com.skycommand.relay.runtime.RuntimeState
 import com.skycommand.relay.settings.RelayConnectionSettingsResult
 import com.skycommand.relay.settings.RelaySettings
 import com.skycommand.relay.settings.android.AndroidRelaySettingsBackend
+import com.skycommand.relay.runtime.permission.android.AndroidPermissionAdapter
 import com.skycommand.relay.settings.store.EndpointSaveResult
 import com.skycommand.relay.settings.store.SettingsLoadResult
 
 class MainActivity : ComponentActivity() {
     private lateinit var settings: RelaySettings
+    private lateinit var permissionAdapter: AndroidPermissionAdapter
     private lateinit var endpointInput: EditText
     private lateinit var statusView: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var startPairingButton: Button
+    private lateinit var stopPairingButton: Button
     private var graph: MobileRelayGraph? = null
     private var graphEndpoint: String? = null
     private var statusRegistration: CloseableRegistration? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        permissionAdapter = AndroidPermissionAdapter.attach(this, activityResultRegistry, this)
         settings = RelaySettings.create(AndroidRelaySettingsBackend.create(this))
         setContentView(buildContent())
         val loaded = settings.loadEndpoint()
@@ -41,6 +48,7 @@ class MainActivity : ComponentActivity() {
         statusRegistration?.unregister()
         graph?.close()
         graph = null
+        permissionAdapter.close()
         super.onDestroy()
     }
 
@@ -87,6 +95,32 @@ class MainActivity : ComponentActivity() {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
         )
         content.addView(actions, matchWrap())
+        content.addView(TextView(this).apply {
+            text = getString(R.string.pairing_hint)
+            textSize = 13f
+            setTextColor(0xFF5B6B67.toInt())
+            setPadding(0, 8, 0, 8)
+        }, matchWrap())
+        val pairingActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, 16)
+        }
+        startPairingButton = Button(this).apply {
+            text = getString(R.string.start_pairing)
+            isEnabled = false
+            setOnClickListener { startPairing() }
+        }
+        stopPairingButton = Button(this).apply {
+            text = getString(R.string.stop_pairing)
+            isEnabled = false
+            setOnClickListener { stopPairing() }
+        }
+        pairingActions.addView(startPairingButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        pairingActions.addView(
+            stopPairingButton,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
+        )
+        content.addView(pairingActions, matchWrap())
         statusView = TextView(this).apply {
             textSize = 16f
             setTextColor(0xFF24312E.toInt())
@@ -120,19 +154,41 @@ class MainActivity : ComponentActivity() {
             graph = null
             graphEndpoint = null
             graph = runCatching {
-                MobileRelayGraph.create(this, endpoint, connection.settings.deviceId.value)
-            }.getOrElse {
+                MobileRelayGraph.create(this, endpoint, connection.settings.deviceId.value, permissionAdapter)
+            }.getOrElse { error ->
+                Log.e(TAG, "MobileRelayGraph.create failed", error)
                 renderMessage(R.string.message_graph_initialization_failed)
                 return
             }
             graphEndpoint = endpoint
             statusRegistration = graph?.onStatusChanged(::renderStatus)
         }
-        runCatching { graph?.start() }.onFailure { renderMessage(R.string.message_start_failed) }
+        runCatching { graph?.start() }.onFailure { error ->
+            Log.e(TAG, "MobileRelayGraph.start failed", error)
+            renderMessage(R.string.message_start_failed)
+        }
     }
 
     private fun stopRelay() {
         runCatching { graph?.stop() }.onFailure { renderMessage(R.string.message_stop_failed) }
+    }
+
+    private fun startPairing() {
+        val current = graph ?: return renderMessage(R.string.message_stopped)
+        when (current.startPairing()) {
+            is PairingRequestResult.Accepted -> Unit
+            is PairingRequestResult.Rejected ->
+                renderMessage(R.string.message_pairing_rejected)
+        }
+    }
+
+    private fun stopPairing() {
+        val current = graph ?: return renderMessage(R.string.message_stopped)
+        when (current.stopPairing()) {
+            is PairingRequestResult.Accepted -> Unit
+            is PairingRequestResult.Rejected ->
+                renderMessage(R.string.message_pairing_stop_rejected)
+        }
     }
 
     private fun renderStatus(status: MobileRelayStatus) {
@@ -142,12 +198,15 @@ class MainActivity : ComponentActivity() {
                 getString(R.string.status_gateway, status.gateway),
                 getString(R.string.status_sdk, status.sdk),
                 getString(R.string.status_aircraft, status.aircraft),
+                getString(R.string.status_pairing, status.pairing),
                 getString(R.string.status_stream, status.stream),
                 getString(R.string.status_mission, status.mission),
             ).joinToString("\n")
             val running = status.runtime != RuntimeState.STOPPED && status.runtime != RuntimeState.FAILED
             startButton.isEnabled = !running
             stopButton.isEnabled = running
+            startPairingButton.isEnabled = running
+            stopPairingButton.isEnabled = running
         }
     }
 
@@ -163,4 +222,8 @@ class MainActivity : ComponentActivity() {
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT,
     )
+
+    private companion object {
+        const val TAG = "MSDKRelay"
+    }
 }

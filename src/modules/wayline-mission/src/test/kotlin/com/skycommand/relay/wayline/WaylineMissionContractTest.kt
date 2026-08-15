@@ -9,11 +9,8 @@ import com.skycommand.relay.gateway.mission.MissionMetadata as GatewayMissionMet
 import com.skycommand.relay.gateway.mission.MissionSinkCompletionResult
 import com.skycommand.relay.gateway.mission.MissionSinkResult
 import com.skycommand.relay.protocol.CommandFrame
-import com.skycommand.relay.protocol.JsonArray
 import com.skycommand.relay.protocol.JsonBoolean
-import com.skycommand.relay.protocol.JsonNumber
 import com.skycommand.relay.protocol.JsonObject
-import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.executor.ControlCompletion
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
@@ -37,11 +34,11 @@ import kotlin.test.assertIs
 
 class WaylineMissionContractTest {
     @Test
-    fun djiEnterWaylineMovesTheCurrentMissionToExecutingAndPublishesBothPhaseFactsInOrder() {
+    fun djiEnterWaylineKeepsStartingUntilExecutingPublishesRouteExecutionStarted() {
         val fixture = Fixture()
         val facts = mutableListOf<MissionPhaseFact>()
         fixture.mission.onPhaseChanged { facts += it }
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
         fixture.upload.completeSuccess()
 
@@ -50,6 +47,14 @@ class WaylineMissionContractTest {
         assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
 
         fixture.signals.emit(MissionExecutionSignal.ENTER_WAYLINE)
+
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+        assertEquals(
+            listOf(MissionPhaseFact(1, 0, 1, MissionPhase.START_POINT_REACHED, "survey.kmz")),
+            facts,
+        )
+
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
 
         assertEquals(ExecutionState.EXECUTING, fixture.mission.snapshot().execution)
         assertEquals(
@@ -66,7 +71,7 @@ class WaylineMissionContractTest {
         val fixture = Fixture()
         val facts = mutableListOf<MissionPhaseFact>()
         fixture.mission.onPhaseChanged { facts += it }
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
         fixture.upload.completeSuccess()
         fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
@@ -84,21 +89,47 @@ class WaylineMissionContractTest {
     }
 
     @Test
-    fun generatesAndRecordsTheMissionBeforeReportingSuccess() {
+    fun djiTerminalSignalsUpdateOnlyTheCurrentArmedMissionWithoutInventingPhaseFacts() {
+        val fixture = Fixture()
+        val facts = mutableListOf<MissionPhaseFact>()
+        fixture.mission.onPhaseChanged { facts += it }
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.ENTER_WAYLINE)
+
+        fixture.signals.emit(MissionExecutionSignal.COMPLETED)
+
+        assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
+        assertEquals(
+            listOf(MissionPhaseFact(1, 0, 1, MissionPhase.START_POINT_REACHED, "survey.kmz")),
+            facts,
+        )
+
+        fixture.signals.emit(MissionExecutionSignal.INTERRUPTED)
+        assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
+    }
+
+    @Test
+    fun rejectsRemovedGenerationCommand() {
         val fixture = Fixture()
         val completion = Completion()
 
-        fixture.mission.commandHandler().handle(generate(), completion)
+        fixture.mission.commandHandler().handle(
+            CommandFrame("generate", "wayline.generate", JsonObject(emptyMap())),
+            completion,
+        )
 
-        assertEquals("survey.kmz", fixture.mission.snapshot().file?.fileName)
-        assertEquals(1, completion.events.size)
-        assertEquals(true, completion.events.single().contains("fileName=survey.kmz"))
+        assertEquals(null, fixture.mission.snapshot().file)
+        assertEquals(listOf("reject:Wayline command is not available"), completion.events)
     }
 
     @Test
     fun reportsUploadSuccessOnlyAfterTheAircraftConfirmsIt() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         val completion = Completion()
 
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), completion)
@@ -111,7 +142,7 @@ class WaylineMissionContractTest {
     @Test
     fun completesAnAcceptedUploadOnlyOnceWhenTheAdapterRepeatsItsCallback() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         val completion = Completion()
 
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), completion)
@@ -124,7 +155,7 @@ class WaylineMissionContractTest {
     @Test
     fun deviceUnavailabilityCancelsAnUploadAndDropsItsLateSuccess() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         val completion = Completion()
 
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), completion)
@@ -143,7 +174,7 @@ class WaylineMissionContractTest {
     @Test
     fun reportsControlFailureAfterTheAircraftRejectsIt() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
         fixture.upload.completeSuccess()
         val completion = Completion()
@@ -158,7 +189,7 @@ class WaylineMissionContractTest {
     @Test
     fun deviceUnavailabilityCancelsAControlOperationAndDropsItsLateSuccess() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
         fixture.upload.completeSuccess()
         val completion = Completion()
@@ -205,7 +236,7 @@ class WaylineMissionContractTest {
     @Test
     fun abortingAnIncompleteTransferPreservesThePreviouslyStagedMission() {
         val fixture = Fixture()
-        stageGenerated(fixture)
+        stageTransferred(fixture)
         val sink = fixture.mission.missionSink()
         val bytes = byteArrayOf(1, 2, 3)
 
@@ -224,30 +255,23 @@ class WaylineMissionContractTest {
         sink.append(bytes)
         val completed = assertIs<MissionSinkCompletionResult.Accepted>(sink.complete())
 
-        stageGenerated(fixture)
+        stageTransferred(fixture)
 
         assertFailsWith<IllegalStateException> {
             completed.mission.readableByMissionModule.openStream().readBytes()
         }
     }
 
-    private fun stageGenerated(fixture: Fixture) {
-        fixture.mission.commandHandler().handle(generate(), Completion())
+    private fun stageTransferred(fixture: Fixture) {
+        val bytes = byteArrayOf(1, 2, 3)
+        val sink = fixture.mission.missionSink()
+        assertEquals(MissionSinkResult.Accepted, sink.begin(GatewayMissionMetadata("transfer", "survey.kmz", bytes.size.toLong(), hash(bytes))))
+        assertEquals(MissionSinkResult.Accepted, sink.append(bytes))
+        assertIs<MissionSinkCompletionResult.Accepted>(sink.complete())
     }
-
-    private fun generate() = CommandFrame("generate", "wayline.generate", JsonObject(mapOf(
-        "fileName" to JsonString("survey.kmz"),
-        "speedMetersPerSecond" to JsonNumber("5"),
-        "waypoints" to JsonArray(listOf(point(120.0, 30.0), point(120.1, 30.1))),
-    )))
 
     private fun confirm(name: String) = CommandFrame("command", name, JsonObject(mapOf("confirm" to JsonBoolean(true))))
 
-    private fun point(longitude: Double, latitude: Double) = JsonObject(mapOf(
-        "longitude" to JsonNumber(longitude.toString()),
-        "latitude" to JsonNumber(latitude.toString()),
-        "altitude" to JsonNumber("80"),
-    ))
 
     private class Fixture {
         val storage = Storage()

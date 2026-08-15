@@ -124,7 +124,6 @@ class CommandDispatcherContractTest {
             "pairing.start",
             "pairing.stop",
             "pairing.status",
-            "wayline.generate",
             "wayline.upload",
             "wayline.start",
             "wayline.pause",
@@ -144,6 +143,7 @@ class CommandDispatcherContractTest {
         names.forEach { name ->
             assertEquals(RegistrationResult.Registered, dispatcher.register(name, handler), name)
         }
+        assertEquals(RegistrationResult.RegistrationRejected, dispatcher.register("wayline.generate", handler))
     }
 
     @Test

@@ -34,7 +34,7 @@ AircraftSignal(sourceRevision, aircraftConnected, flightControllerConnected, dis
 ```
 
 1. `sourceRevision` 必须严格为正，对每个已发布信号递增，且在进程存活期间不重置。
-2. `aircraftConnected` 只反映 MSDK 产品连接事实。
+2. `aircraftConnected` 表示飞行器是否连接。它必须同时满足 MSDK 产品已连接且飞控已连接；仅遥控器接入、产品键为 true 但飞控未连接时必须为 `false`。不得把 MSDK 产品连接键单独等同于飞行器已连接。
 3. `flightControllerConnected` 只在飞行器已连接时反映 MSDK 飞控连接事实。飞行器未连接时必须强制为 `false`，禁止发布相互矛盾的信号。
 4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`，飞行器未连接时始终为 `null`。
 5. 初始快照可以在 `start` 内同步到达；调用方必须将其视为普通信号。
@@ -59,4 +59,4 @@ AircraftSignal(sourceRevision, aircraftConnected, flightControllerConnected, dis
 
 JVM 测试必须覆盖初始连接和断开事实、型号标准化、飞行器断开时的飞控标准化、变更及重启后的递增版本、重复启动、取消、停止、重复停止、同步注册回调、取消/停止/新代际后的过期回调、平台注册和释放失败，以及用户监听器异常隔离。
 
-Android Debug 构建必须编译 MSDK v5.17 监听器封装。真实设备必须验证飞行器和飞控的接入/断开、产品型号可用性、应用重建和监听器清理。遥控器、配对、遥测、图传及航线验证均不属于本模块。
+Android Debug 构建必须编译 MSDK v5.17 监听器封装。真实设备必须验证飞行器和飞控的接入/断开、仅遥控器接入时飞行器为未连接、产品型号可用性、应用重建和监听器清理。遥控器、配对、遥测、图传及航线验证均不属于本模块。

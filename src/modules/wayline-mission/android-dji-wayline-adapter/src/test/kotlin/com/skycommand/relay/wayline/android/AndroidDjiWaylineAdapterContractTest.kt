@@ -53,6 +53,9 @@ class AndroidDjiWaylineAdapterContractTest {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji); val failed=UploadDone()
         adapter.upload(metadata("../bad.kmz"), byteArrayOf(1), {}, failed)
         assertEquals(listOf("failure"),failed.events); assertEquals(0,files.writes)
+        val tooLong = UploadDone()
+        adapter.upload(metadata("a".repeat(125) + ".kmz"), byteArrayOf(1), {}, tooLong)
+        assertEquals(listOf("failure"),tooLong.events); assertEquals(0,files.writes)
         val missing=ControlDone(); adapter.start(missing); assertEquals(listOf("failure"),missing.events)
         adapter.pause(ControlDone()); assertEquals("pause",dji.command); adapter.resume(ControlDone()); assertEquals("resume",dji.command)
     }

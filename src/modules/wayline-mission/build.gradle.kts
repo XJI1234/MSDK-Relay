@@ -6,7 +6,6 @@ dependencies {
     api(project(":device-connection:dji-operation-coordinator"))
     api(project(":wayline-mission:mission-staging"))
     api(project(":wayline-mission:mission-state-store"))
-    api(project(":wayline-mission:wpmz-generator"))
     api(project(":wayline-mission:mission-uploader"))
     api(project(":wayline-mission:mission-executor"))
     api(project(":wayline-mission:mission-flight-phase"))

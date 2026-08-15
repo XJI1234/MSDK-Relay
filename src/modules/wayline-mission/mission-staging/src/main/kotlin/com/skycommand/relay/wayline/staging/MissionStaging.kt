@@ -125,7 +125,7 @@ class MissionStaging private constructor(
         metadata.fileName.isNotBlank() &&
             metadata.fileName.endsWith(".kmz", ignoreCase = true) &&
             metadata.fileName.none { it == '/' || it == '\\' || it.isISOControl() } &&
-            metadata.fileName.length <= 255 &&
+            metadata.fileName.codePointCount(0, metadata.fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
             metadata.expectedSize in 1..MAX_FILE_SIZE &&
             metadata.sha256.length == 64 && metadata.sha256.all { it in "0123456789abcdefABCDEF" }
 
@@ -133,6 +133,7 @@ class MissionStaging private constructor(
 
     companion object {
         private const val MAX_FILE_SIZE = 512L * 1024 * 1024
+        private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
 
         fun create(storage: StagingStorage): MissionStaging = MissionStaging(storage)
     }

@@ -14,7 +14,7 @@ store.markDeviceUnavailable() -> Applied(snapshot)
 store.onChanged(listener) -> Registration
 ```
 
-`MissionSnapshot` 含严格递增 revision、当前暂存文件代际 `missionRevision`（无文件为 null）、严格递增的设备运行代际 `deviceGeneration`、只含文件名/期望大小/SHA-256 的 `MissionMetadata`、上传状态 `NOT_UPLOADED|UPLOADING(0..100)|UPLOADED|FAILED` 和执行状态 `NOT_STARTED|STARTING|EXECUTING|PAUSED|STOPPING|FINISHED|FAILED`。它不包含 `START_POINT_REACHED`，因为该事实是一次性阶段事件，可能与后续航线执行在同一 DJI 回调内连续发生；阶段事实由 `mission-flight-phase` 的独立事件流保存顺序。封闭事件集为 `FileStaged`、`FileCleared`、`UploadChanged`、`ExecutionChanged`，来源分别是 STAGING、UPLOAD、EXECUTION；上传和执行事件必须携带命令提交时捕获的 `deviceGeneration`。
+`MissionSnapshot` 含严格递增 revision、当前暂存文件代际 `missionRevision`（无文件为 null）、严格递增的设备运行代际 `deviceGeneration`、只含文件名/期望大小/SHA-256 的 `MissionMetadata`、上传状态 `NOT_UPLOADED|UPLOADING(0..100)|UPLOADED|FAILED` 和执行状态 `NOT_STARTED|STARTING|EXECUTING|PAUSED|STOPPING|FINISHED|FAILED`。文件名必须是 1..128 个 Unicode 码点的安全 `.kmz` 基名，确保快照可被中继协议编码。它不包含 `START_POINT_REACHED`，因为该事实是一次性阶段事件，随后可能由独立的 `EXECUTING` 信号紧接着产生 `ROUTE_EXECUTION_STARTED`；阶段事实由 `mission-flight-phase` 的独立事件流保存顺序。封闭事件集为 `FileStaged`、`FileCleared`、`UploadChanged`、`ExecutionChanged`，来源分别是 STAGING、UPLOAD、EXECUTION；上传和执行事件必须携带命令提交时捕获的 `deviceGeneration`。
 
 ## 提交规则与测试
 

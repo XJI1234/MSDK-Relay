@@ -292,6 +292,8 @@ class MissionStateStore private constructor(
     )
 
     companion object {
+        private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
+
         fun create(diagnosticSink: MissionStateDiagnosticSink = MissionStateDiagnosticSink { }): MissionStateStore =
             MissionStateStore(diagnosticSink)
 
@@ -325,7 +327,7 @@ class MissionStateStore private constructor(
         private fun validateMetadata(metadata: MissionMetadata) {
             require(metadata.fileName.isNotBlank()) { "Mission filename must not be blank" }
             require(metadata.fileName.endsWith(".kmz", ignoreCase = true)) { "Mission filename must use .kmz" }
-            require(metadata.fileName.length <= 255) { "Mission filename is too long" }
+            require(metadata.fileName.codePointCount(0, metadata.fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS) { "Mission filename is too long" }
             require(metadata.fileName.none { it == '/' || it == '\\' || it.isISOControl() }) {
                 "Mission filename must be a basename"
             }

@@ -53,7 +53,6 @@ telemetry.read
 pairing.start
 pairing.stop
 pairing.status
-wayline.generate
 wayline.upload
 wayline.start
 wayline.pause

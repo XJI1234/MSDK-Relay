@@ -1,5 +1,7 @@
 package com.skycommand.relay.app
 
+import com.skycommand.relay.device.state.LinkState
+import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.protocol.JsonBoolean
 import com.skycommand.relay.protocol.JsonNull
 import com.skycommand.relay.protocol.JsonNumber
@@ -54,6 +56,17 @@ object TelemetryFrameMapper {
         val frame = map(snapshot)
         return JsonObject(frame.payload.fields + ("capabilities" to frame.capabilities))
     }
+
+    fun pairingStatus(snapshot: TelemetrySnapshot): JsonObject = JsonObject(
+        mapOf(
+            "pairingState" to JsonString(snapshot.pairing.name),
+            "aircraftConnected" to JsonBoolean(snapshot.aircraft == LinkState.CONNECTED),
+            "flightControllerConnected" to JsonBoolean(snapshot.flightController == LinkState.CONNECTED),
+            "aircraftModel" to JsonString(snapshot.aircraftModel?.takeIf(String::isNotBlank) ?: "UNKNOWN"),
+            "motorsOn" to snapshot.motorsOn.json(),
+            "sdkRegistered" to JsonBoolean(snapshot.sdkAvailability == SdkAvailability.READY),
+        ),
+    )
 
     private fun String?.json(): JsonValue = this?.let(::JsonString) ?: JsonNull
     private fun Boolean?.json(): JsonValue = this?.let(::JsonBoolean) ?: JsonNull

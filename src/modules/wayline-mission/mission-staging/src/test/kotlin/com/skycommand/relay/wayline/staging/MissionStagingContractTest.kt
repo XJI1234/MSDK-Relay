@@ -51,6 +51,15 @@ class MissionStagingContractTest {
     }
 
     @Test
+    fun rejectsAFileNameThatCannotBeCarriedByTheRelayProtocol() {
+        val staging = MissionStaging.create(MemoryStorage())
+
+        val result = staging.begin(MissionMetadata("a".repeat(125) + ".kmz", 1, sha256(byteArrayOf(1))))
+
+        assertEquals(StagingRejection.INVALID_METADATA, assertIs<StagingRequestResult.Rejected>(result).reason)
+    }
+
+    @Test
     fun cleansUpTemporaryStorageWhenBeginningTheTransferFails() {
         val storage = MemoryStorage().apply { throwOnBegin = true }
         val staging = MissionStaging.create(storage)

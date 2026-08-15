@@ -100,6 +100,56 @@ class TelemetryFrameMapperTest {
         assertIs<Accepted<*>>(validate(frame))
     }
 
+    @Test fun mapsPairingStatusToTheRootContractResult() {
+        val result = TelemetryFrameMapper.pairingStatus(
+            TelemetrySnapshot(
+                4, SdkAvailability.READY, LinkState.CONNECTED, LinkState.CONNECTED,
+                LinkState.CONNECTED, PairingState.PAIRED, null, "DJI Mini 4 Pro",
+                TelemetryCapabilities(true, true, WaypointMissionSupport.SUPPORTED, false),
+                motorsOn = false,
+            ),
+        )
+
+        assertEquals(JsonString("PAIRED"), result["pairingState"])
+        assertEquals(JsonBoolean(true), result["aircraftConnected"])
+        assertEquals(JsonBoolean(true), result["flightControllerConnected"])
+        assertEquals(JsonString("DJI Mini 4 Pro"), result["aircraftModel"])
+        assertEquals(JsonBoolean(false), result["motorsOn"])
+        assertEquals(JsonBoolean(true), result["sdkRegistered"])
+    }
+
+    @Test fun pairingStatusUsesUnknownModelAndNullMotorsWhenMissing() {
+        val result = TelemetryFrameMapper.pairingStatus(
+            TelemetrySnapshot(
+                0, SdkAvailability.STOPPED, LinkState.DISCONNECTED, LinkState.DISCONNECTED,
+                LinkState.DISCONNECTED, PairingState.IDLE, null, null,
+                TelemetryCapabilities(false, false, WaypointMissionSupport.UNSUPPORTED, false),
+            ),
+        )
+
+        assertEquals(JsonString("IDLE"), result["pairingState"])
+        assertEquals(JsonBoolean(false), result["aircraftConnected"])
+        assertEquals(JsonBoolean(false), result["flightControllerConnected"])
+        assertEquals(JsonString("UNKNOWN"), result["aircraftModel"])
+        assertEquals(JsonNull, result["motorsOn"])
+        assertEquals(JsonBoolean(false), result["sdkRegistered"])
+    }
+
+    @Test fun pairingStatusUsesUnknownModelWhenBlankAndDoesNotTreatStartingSdkAsRegistered() {
+        val result = TelemetryFrameMapper.pairingStatus(
+            TelemetrySnapshot(
+                1, SdkAvailability.STARTING, LinkState.CONNECTED, LinkState.DISCONNECTED,
+                LinkState.DISCONNECTED, PairingState.PAIRING, null, "  ",
+                TelemetryCapabilities(false, false, WaypointMissionSupport.UNSUPPORTED, false),
+            ),
+        )
+
+        assertEquals(JsonString("PAIRING"), result["pairingState"])
+        assertEquals(JsonBoolean(false), result["aircraftConnected"])
+        assertEquals(JsonString("UNKNOWN"), result["aircraftModel"])
+        assertEquals(JsonBoolean(false), result["sdkRegistered"])
+    }
+
     @Test fun preservesMissingOptionalValuesAsJsonNull() {
         val frame = TelemetryFrameMapper.map(
             TelemetrySnapshot(

@@ -346,6 +346,7 @@ object RelayFrameCodec {
         return value.textValue()
     }
 
+
     private fun requiredMessageType(node: JsonNode): String {
         val type = requiredText(node, "type")
         if (

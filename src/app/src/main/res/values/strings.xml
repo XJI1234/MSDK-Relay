@@ -2,7 +2,7 @@
     <string name="app_name">MSDK Relay</string>
     <string name="relay_channel">MSDK Relay</string>
     <string name="relay_running">中继正在运行</string>
-    <string name="endpoint_label">电脑端 WebSocket 地址</string>
+    <string name="endpoint_label">电脑端中继 WebSocket 地址（默认 8080，不是图传口）</string>
     <string name="endpoint_hint">ws://192.168.1.10:8080/relay</string>
     <string name="start_relay">保存并启动</string>
     <string name="stop_relay">停止</string>
@@ -16,6 +16,12 @@
     <string name="status_gateway">电脑连接：%1$s</string>
     <string name="status_sdk">DJI SDK：%1$s</string>
     <string name="status_aircraft">飞行器：%1$s</string>
+    <string name="status_pairing">对频：%1$s</string>
     <string name="status_stream">图传：%1$s</string>
     <string name="status_mission">航线：%1$s</string>
+    <string name="pairing_hint">对频是遥控器与飞机的配对，由本机 DJI SDK 执行。请先启动中继，确认遥控器已连接且飞机未连接，再开始对频。</string>
+    <string name="start_pairing">开始对频</string>
+    <string name="stop_pairing">停止对频</string>
+    <string name="message_pairing_rejected">对频请求被拒绝。请确认中继已启动、遥控器已连接，且飞机当前未连接。</string>
+    <string name="message_pairing_stop_rejected">停止对频被拒绝。当前没有正在进行的对频。</string>
 </resources>

@@ -15,6 +15,7 @@
         android:name="com.skycommand.relay.device.sdk.android.DjiSdkApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:extractNativeLibs="true"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_relay_launcher"
         android:label="@string/app_name"

@@ -200,6 +200,9 @@ class MissionStateStoreContractTest {
         assertFailsWith<IllegalArgumentException> {
             store.apply(MissionStateEvent.FileStaged(1, MissionMetadata("", 1, "0".repeat(64))))
         }
+        assertFailsWith<IllegalArgumentException> {
+            store.apply(MissionStateEvent.FileStaged(1, metadata("a".repeat(125) + ".kmz")))
+        }
         val mission = staged(store, 2).missionRevision!!
         assertFailsWith<IllegalArgumentException> {
             store.apply(uploadChanged(1, mission, UploadState.Uploading(101)))

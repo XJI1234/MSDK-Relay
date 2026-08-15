@@ -133,13 +133,7 @@ class MissionFlightPhase private constructor(
         private fun enterWayline(): Delivery {
             if (startPointReached) return Delivery.EMPTY
             startPointReached = true
-            routeExecutionStarted = true
-            return Delivery(
-                facts = listOf(
-                    next(MissionPhase.START_POINT_REACHED),
-                    next(MissionPhase.ROUTE_EXECUTION_STARTED),
-                ),
-            )
+            return Delivery(facts = listOf(next(MissionPhase.START_POINT_REACHED)))
         }
 
         private fun executionObserved(): Delivery {
@@ -147,7 +141,11 @@ class MissionFlightPhase private constructor(
             routeExecutionStarted = true
             return Delivery(
                 facts = listOf(next(MissionPhase.ROUTE_EXECUTION_STARTED)),
-                diagnostics = listOf(MissionPhaseDiagnostic(MissionPhaseDiagnosticKind.ENTRY_STATE_MISSING)),
+                diagnostics = if (startPointReached) {
+                    emptyList()
+                } else {
+                    listOf(MissionPhaseDiagnostic(MissionPhaseDiagnosticKind.ENTRY_STATE_MISSING))
+                },
             )
         }
 
@@ -170,6 +168,8 @@ class MissionFlightPhase private constructor(
     }
 
     companion object {
+        private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
+
         fun create(
             sink: MissionPhaseSink,
             diagnosticSink: MissionPhaseDiagnosticSink = MissionPhaseDiagnosticSink { },
@@ -178,7 +178,7 @@ class MissionFlightPhase private constructor(
         private fun isSafeMissionFileName(fileName: String): Boolean =
             fileName.isNotBlank() &&
                 fileName.endsWith(".kmz", ignoreCase = true) &&
-                fileName.codePointCount(0, fileName.length) <= 255 &&
+                fileName.codePointCount(0, fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
                 fileName.none { it == '/' || it == '\\' || it.isISOControl() }
     }
 }

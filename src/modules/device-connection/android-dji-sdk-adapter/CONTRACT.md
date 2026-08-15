@@ -38,8 +38,9 @@ DjiSdkApplication.attachBaseContext(baseContext) -> 安装 DJI 运行时
 
 1. 在合并后的应用 Manifest 中声明 `com.dji.sdk.API_KEY`，并将应用专用 DJI App Key 作为其值。
 2. 在访问任何 DJI MSDK API 前，于 `Application.attachBaseContext` 调用 DJI 要求的运行时安装器。
-3. 打包所选 DJI MSDK v5 发行版要求的原生库和 ABI 配置。
-4. 通过独立的 app-runtime 权限流程请求网络和设备权限。本适配器既不请求也不解释权限。
+3. 应用模块必须 `packaging.jniLibs.useLegacyPackaging = true`，且合并后的 Manifest 必须 `android:extractNativeLibs="true"`，让 DJI 原生库解压到 `nativeLibraryDir`；否则 `Helper.install` 无法绑定 JNI。
+4. 打包所选 DJI MSDK v5 发行版要求的原生库和 ABI 配置：仅 `arm64-v8a`，保留 MSDK `doNotStrip` 列表中的 `.so`，并对 `.so` / `zip` 禁用压缩。
+5. 通过独立的 app-runtime 权限流程请求网络和设备权限。本适配器既不请求也不解释权限。
 
 本适配器不得存储、记录或创建默认 App Key。宿主配置缺失、无效或不可用时必须成为安全的初始化失败，绝不能伪造就绪状态。
 

@@ -100,12 +100,12 @@ class ConnectionSession private constructor(
     fun snapshot(): SessionSnapshot = currentSnapshot
 
     /** Returns the session token owned by the current ACTIVE generation, if any. */
-    fun activeSession(): ActiveSession? = eventLoop.call {
+    fun activeSession(): ActiveSession? = eventLoop.read {
         if (currentSnapshot.state != SessionState.ACTIVE) {
-            return@call null
+            return@read null
         }
-        val generation = currentGeneration ?: return@call null
-        val sessionId = currentSnapshot.sessionId ?: return@call null
+        val generation = currentGeneration ?: return@read null
+        val sessionId = currentSnapshot.sessionId ?: return@read null
         ActiveSession(generation, sessionId)
     }
 

@@ -36,6 +36,7 @@ import com.skycommand.relay.wayline.staging.MissionStaging
 import com.skycommand.relay.wayline.staging.StagingCompleteResult
 import com.skycommand.relay.wayline.staging.StagingRequestResult
 import com.skycommand.relay.wayline.staging.StagingStorage
+import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import com.skycommand.relay.wayline.state.MissionStateDiagnosticSink
 import com.skycommand.relay.wayline.state.MissionStateEvent
@@ -92,7 +93,7 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     @Suppress("unused")
     private val executionSignalRegistration: MissionExecutionSignalRegistration =
         dependencies.executionSignalSource.onSignal(::acceptExecutionSignal)
-    private val commands = WaylineCommandHandler.create(staging, Actions())
+    private val commands = WaylineCommandHandler.create(Actions())
     private val contentReader = dependencies.contentReader
 
     fun commandHandler(): CommandHandler = CommandHandler(::handleCommand)
@@ -117,25 +118,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     }
 
     private fun handleCommand(command: CommandFrame, completion: CommandCompletion) {
-        if (command.name == "wayline.generate") {
-            stagingLock.withLock {
-                when (val result = commands.handle(command)) {
-                    is WaylineCommandResult.Succeeded -> {
-                        val metadata = staging.current()
-                        if (metadata == null) {
-                            completion.reject("Mission staging failed")
-                        } else {
-                            recordStaged(metadata)
-                            completion.succeed(result.detail)
-                        }
-                    }
-                    is WaylineCommandResult.Rejected -> completion.reject(detailFor(result.reason))
-                    is WaylineCommandResult.Accepted -> completion.reject("Mission command is invalid")
-                }
-            }
-            return
-        }
-
         val terminal = RelayCompletion(completion, command.name)
         when (val result = commands.handle(command, terminal)) {
             is WaylineCommandResult.Accepted -> Unit
@@ -154,8 +136,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         WaylineCommandRejection.UNKNOWN_COMMAND -> "Wayline command is not available"
         WaylineCommandRejection.INVALID_FIELDS -> "Wayline command fields are invalid"
         WaylineCommandRejection.CONFIRMATION_REQUIRED -> "Confirmation is required"
-        WaylineCommandRejection.GENERATION_FAILED -> "Mission generation failed"
-        WaylineCommandRejection.STAGING_FAILED -> "Mission staging failed"
         WaylineCommandRejection.CAPABILITY_REJECTED -> "Mission operation was rejected"
     }
 
@@ -255,7 +235,47 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private fun acceptExecutionSignal(signal: MissionExecutionSignal) {
         val snapshot = state.snapshot()
         val missionRevision = snapshot.missionRevision ?: return
-        flightPhase.accept(signal, missionRevision, snapshot.deviceGeneration)
+        val accepted = flightPhase.accept(signal, missionRevision, snapshot.deviceGeneration)
+        if (accepted !is com.skycommand.relay.wayline.phase.MissionSignalAcceptance.Accepted) return
+
+        val current = state.snapshot()
+        if (
+            current.missionRevision != missionRevision ||
+            current.deviceGeneration != snapshot.deviceGeneration
+        ) {
+            return
+        }
+
+        val target = when (signal) {
+            MissionExecutionSignal.PAUSED ->
+                if (current.execution == ExecutionState.EXECUTING) ExecutionState.PAUSED else null
+            MissionExecutionSignal.COMPLETED ->
+                if (current.execution in setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED)) {
+                    ExecutionState.FINISHED
+                } else {
+                    null
+                }
+            MissionExecutionSignal.INTERRUPTED,
+            MissionExecutionSignal.DISCONNECTED,
+            -> if (current.execution in setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED)) {
+                ExecutionState.FAILED
+            } else {
+                null
+            }
+            else -> null
+        } ?: return
+
+        state.apply(
+            MissionStateEvent.ExecutionChanged(
+                sourceRevision = executionStateRevision.incrementAndGet(),
+                missionRevision = missionRevision,
+                deviceGeneration = snapshot.deviceGeneration,
+                state = target,
+            ),
+        )
+        if (target == ExecutionState.FINISHED || target == ExecutionState.FAILED) {
+            flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
+        }
     }
 
     private fun acceptPhaseFact(fact: MissionPhaseFact) = lifecycleLock.withLock {

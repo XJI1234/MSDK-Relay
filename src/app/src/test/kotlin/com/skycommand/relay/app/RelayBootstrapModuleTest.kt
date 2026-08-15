@@ -36,11 +36,29 @@ class RelayBootstrapModuleTest {
         assertEquals(
             listOf(
                 "device-listen", "gateway-listen", "device-start", "telemetry-start", "gateway-start",
-                "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable", "gateway-unlisten", "device-unlisten",
-                "gateway-stop", "telemetry-stop", "flight-close", "device-stop",
+                "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable",
+                "gateway-stop", "telemetry-stop", "gateway-unlisten", "device-unlisten",
+                "flight-close", "device-stop",
             ),
             ports.events,
         )
+    }
+
+    @Test fun sdkLossStopsGatewayAndReadyAgainRestarts() {
+        val ports = FakePorts().apply { sdk = SdkAvailability.READY }
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        assertEquals(1, ports.events.count { it == "gateway-start" })
+
+        ports.sdk = SdkAvailability.FAILED
+        ports.deviceChanged()
+        assertEquals(1, ports.events.count { it == "gateway-stop" })
+        assertEquals(1, ports.events.count { it == "telemetry-stop" })
+
+        ports.sdk = SdkAvailability.READY
+        ports.deviceChanged()
+        assertEquals(2, ports.events.count { it == "gateway-start" })
+        assertEquals(2, ports.events.count { it == "telemetry-start" })
     }
 
     @Test fun failedStartCleansRegistrationsAndAllowsACompleteRetry() {

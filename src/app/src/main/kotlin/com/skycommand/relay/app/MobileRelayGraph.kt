@@ -22,8 +22,10 @@ import com.skycommand.relay.gateway.command.RegistrationResult
 import com.skycommand.relay.gateway.outbound.PublishResult
 import com.skycommand.relay.gateway.session.MonotonicScheduler
 import com.skycommand.relay.gateway.session.ScheduledCancellation
+import com.skycommand.relay.gateway.session.SessionEndKind
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
+import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.diagnostics.DiagnosticClock
 import com.skycommand.relay.diagnostics.DiagnosticJournal
@@ -52,7 +54,7 @@ import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.telemetry.Telemetry
 import com.skycommand.relay.telemetry.command.TelemetryReadResult
 import com.skycommand.relay.telemetry.flight.android.AndroidFlightTelemetrySource
-import com.skycommand.relay.telemetry.flight.android.FlightTelemetrySource
+import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
 import com.skycommand.relay.telemetry.publish.PublishTelemetryResult
 import com.skycommand.relay.telemetry.publish.TelemetrySink
 import com.skycommand.relay.wayline.WaylineMission
@@ -70,6 +72,7 @@ data class MobileRelayStatus(
     val gateway: SessionState,
     val sdk: String,
     val aircraft: String,
+    val pairing: String,
     val stream: String,
     val mission: String,
 )
@@ -87,9 +90,9 @@ class MobileRelayGraph private constructor(
     private val wayline: WaylineMission,
     private val waylineAdapter: AndroidDjiWaylineAdapter,
     private val staging: AndroidMissionStagingStorage,
-    private val permissionAdapter: AndroidPermissionAdapter,
     private val foregroundPort: AndroidForegroundServicePort,
     private val executor: ScheduledThreadPoolExecutor,
+    private val journal: DiagnosticJournal,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val listeners = CopyOnWriteArraySet<(MobileRelayStatus) -> Unit>()
@@ -97,6 +100,9 @@ class MobileRelayGraph private constructor(
 
     fun start() = runtime.start(setOf(PermissionKind.RUNTIME, PermissionKind.USB_ACCESS))
     fun stop() = runtime.stop()
+
+    fun startPairing(): PairingRequestResult = device.requestPairingStart(30_000) { notifyStatus() }
+    fun stopPairing(): PairingRequestResult = device.requestPairingStop(30_000) { notifyStatus() }
 
     fun status(): MobileRelayStatus {
         val deviceSnapshot = device.snapshot()
@@ -106,6 +112,7 @@ class MobileRelayGraph private constructor(
             gateway.connectionState(),
             deviceSnapshot.sdkAvailability.name,
             deviceSnapshot.aircraft.name,
+            deviceSnapshot.pairing.name,
             stream.snapshot().state.name,
             missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
         )
@@ -124,7 +131,30 @@ class MobileRelayGraph private constructor(
         registrations += device.onChanged { notifyStatus() }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
-        registrations += gateway.onStateChanged { notifyStatus() }.let { registration ->
+        registrations += gateway.onStateChanged { event ->
+            val ended = event.endReason
+            val code = if (ended != null) "SESSION_${ended.kind.name}" else "SESSION_${event.snapshot.state.name}"
+            val level = when (ended?.kind) {
+                SessionEndKind.HANDSHAKE_TIMEOUT,
+                SessionEndKind.NOT_CONNECTED,
+                SessionEndKind.INVALID_FRAME,
+                SessionEndKind.UNSUPPORTED_FRAME,
+                SessionEndKind.PROTOCOL_VERSION_UNSUPPORTED,
+                -> DiagnosticLevel.WARN
+                else -> DiagnosticLevel.INFO
+            }
+            val detail = when (ended?.kind) {
+                SessionEndKind.HANDSHAKE_TIMEOUT -> "Phone did not receive paired within handshake timeout"
+                SessionEndKind.NOT_CONNECTED -> "Phone to desktop transport closed"
+                SessionEndKind.EXPLICIT_STOP -> "Phone stopped the desktop session"
+                SessionEndKind.INVALID_FRAME -> "Phone discarded an invalid protocol frame"
+                SessionEndKind.UNSUPPORTED_FRAME -> "Phone received an unsupported protocol frame"
+                SessionEndKind.PROTOCOL_VERSION_UNSUPPORTED -> "Phone and desktop protocol versions do not match"
+                null -> "Phone to desktop session is ${event.snapshot.state.name}"
+            }
+            journal.record(level, "relay-gateway", code, null, detail)
+            notifyStatus()
+        }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
         registrations += stream.onChanged { notifyStatus() }.let { registration ->
@@ -152,14 +182,18 @@ class MobileRelayGraph private constructor(
         runCatching { stream.close() }
         runCatching { waylineAdapter.close() }
         runCatching { staging.close() }
-        runCatching { permissionAdapter.close() }
         runCatching { foregroundPort.close() }
         executor.shutdownNow()
         listeners.clear()
     }
 
     companion object {
-        fun create(activity: ComponentActivity, endpoint: String, deviceId: String): MobileRelayGraph {
+        fun create(
+            activity: ComponentActivity,
+            endpoint: String,
+            deviceId: String,
+            permissionAdapter: AndroidPermissionAdapter,
+        ): MobileRelayGraph {
             val executor = ScheduledThreadPoolExecutor(2) { task ->
                 Thread(task, "msdk-relay").apply { isDaemon = true }
             }.apply { removeOnCancelPolicy = true }
@@ -247,7 +281,7 @@ class MobileRelayGraph private constructor(
                     executionSignalSource = waylineAdapter,
                     operationCoordinator = device.operations(),
                     uploadTimeoutMillis = 60_000,
-                    controlTimeoutMillis = 30_000,
+                    controlTimeoutMillis = 60_000,
                     diagnosticSink = { diagnostic ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -351,7 +385,7 @@ class MobileRelayGraph private constructor(
                     }
                 },
             )
-            registerCommands(gateway, telemetry, device, flightControl, deviceSettings, stream, wayline)
+            registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, stream, wayline)
             val lifecycle = RelayBootstrapModule(
                 object : RelayLifecyclePorts {
                     override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -391,7 +425,6 @@ class MobileRelayGraph private constructor(
                     }
                 },
             )
-            val permissionAdapter = AndroidPermissionAdapter.attach(activity, activity.activityResultRegistry, activity)
             val foregroundPort = AndroidForegroundServicePort.create(
                 activity,
                 ForegroundNotificationSpec(
@@ -406,7 +439,7 @@ class MobileRelayGraph private constructor(
             )
             return MobileRelayGraph(
                 runtime, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, wayline, waylineAdapter,
-                staging, permissionAdapter, foregroundPort, executor,
+                staging, foregroundPort, executor, journal,
             ).also { it.installStatusNotifications() }
         }
 
@@ -420,6 +453,7 @@ class MobileRelayGraph private constructor(
 
         private fun registerCommands(
             gateway: RelayGateway,
+            journal: DiagnosticJournal,
             telemetry: Telemetry,
             device: DeviceConnection,
             flightControl: FlightControl,
@@ -438,33 +472,37 @@ class MobileRelayGraph private constructor(
                     TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
                 }
             }
-            val pairingHandler = pairingHandler(device)
-            register(gateway, "telemetry.read", telemetryHandler)
+            val pairingHandler = pairingHandler(device, telemetry)
+            register(gateway, journal, "telemetry.read", telemetryHandler)
             listOf("pairing.start", "pairing.stop", "pairing.status").forEach {
-                register(gateway, it, pairingHandler)
+                register(gateway, journal, it, pairingHandler)
             }
             listOf("live-stream.start", "live-stream.stop").forEach {
-                register(gateway, it, stream.commandHandler())
+                register(gateway, journal, it, stream.commandHandler())
             }
             listOf("flight.takeoff", "flight.land", "flight.return-home").forEach {
-                register(gateway, it, flightControl.commandHandler())
+                register(gateway, journal, it, flightControl.commandHandler())
             }
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
-                register(gateway, it, deviceSettings.commandHandler())
+                register(gateway, journal, it, deviceSettings.commandHandler())
             }
             listOf(
-                "wayline.generate", "wayline.upload", "wayline.start", "wayline.pause",
+                "wayline.upload", "wayline.start", "wayline.pause",
                 "wayline.resume", "wayline.stop",
-            ).forEach { register(gateway, it, wayline.commandHandler()) }
+            ).forEach { register(gateway, journal, it, wayline.commandHandler()) }
         }
 
-        private fun pairingHandler(device: DeviceConnection) = CommandHandler { command, completion ->
+        private fun pairingHandler(device: DeviceConnection, telemetry: Telemetry) = CommandHandler { command, completion ->
             if (command.fields.fields.isNotEmpty()) {
                 completion.reject("Pairing command fields are invalid")
                 return@CommandHandler
             }
             if (command.name == "pairing.status") {
-                completion.succeed("Pairing state: " + device.snapshot().pairing.name)
+                when (val read = telemetry.read()) {
+                    is TelemetryReadResult.ReadSucceeded ->
+                        completion.succeed("Pairing status", TelemetryFrameMapper.pairingStatus(read.snapshot))
+                    TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
+                }
                 return@CommandHandler
             }
             val once = OnceCommandCompletion(completion)
@@ -483,8 +521,8 @@ class MobileRelayGraph private constructor(
             }
         }
 
-        private fun register(gateway: RelayGateway, name: String, handler: CommandHandler) {
-            check(gateway.registerCommandHandler(name, handler) == RegistrationResult.Registered) {
+        private fun register(gateway: RelayGateway, journal: DiagnosticJournal, name: String, handler: CommandHandler) {
+            check(gateway.registerCommandHandler(name, recorded(journal, handler)) == RegistrationResult.Registered) {
                 "Command registration failed"
             }
         }
@@ -496,3 +534,49 @@ private class OnceCommandCompletion(private val completion: CommandCompletion) {
     fun succeed(detail: String) { if (finished.compareAndSet(false, true)) completion.succeed(detail) }
     fun reject(detail: String) { if (finished.compareAndSet(false, true)) completion.reject(detail) }
 }
+
+private fun commandModule(name: String): String = when {
+    name.startsWith("wayline.") -> "wayline-mission"
+    name.startsWith("live-stream.") -> "live-stream"
+    name.startsWith("flight.") -> "flight-control"
+    name.startsWith("device.settings.") -> "device-settings"
+    name.startsWith("pairing.") -> "device-connection"
+    name.startsWith("telemetry.") -> "telemetry"
+    else -> "relay-gateway"
+}
+
+private fun commandEventCode(name: String, ok: Boolean): String {
+    val stem = name.uppercase().replace('.', '_').replace('-', '_')
+    return if (ok) "${stem}_OK" else "${stem}_REJECTED"
+}
+
+private fun recorded(journal: DiagnosticJournal, handler: CommandHandler): CommandHandler =
+    CommandHandler { command, completion ->
+        handler.handle(command, object : CommandCompletion {
+            private fun write(ok: Boolean, detail: String) {
+                if (ok && command.name == "telemetry.read") return
+                journal.record(
+                    if (ok) DiagnosticLevel.INFO else DiagnosticLevel.WARN,
+                    commandModule(command.name),
+                    commandEventCode(command.name, ok),
+                    command.id,
+                    "${command.name} $detail",
+                )
+            }
+
+            override fun succeed(detail: String) {
+                write(true, detail)
+                completion.succeed(detail)
+            }
+
+            override fun succeed(detail: String, result: JsonObject?) {
+                write(true, detail)
+                completion.succeed(detail, result)
+            }
+
+            override fun reject(detail: String) {
+                write(false, detail)
+                completion.reject(detail)
+            }
+        })
+    }

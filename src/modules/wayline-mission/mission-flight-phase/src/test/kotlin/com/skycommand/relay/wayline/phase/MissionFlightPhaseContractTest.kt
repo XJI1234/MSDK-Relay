@@ -2,20 +2,45 @@ package com.skycommand.relay.wayline.phase
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class MissionFlightPhaseContractTest {
 
     @Test
-    fun enterWaylinePublishesStartReachedThenRouteExecutionStartedExactlyOnce() {
+    fun rejectsAFileNameThatCannotBeEncodedAsAMissionPhaseFrame() {
+        val tracker = MissionFlightPhase.create(MissionPhaseSink { })
+
+        assertFailsWith<IllegalArgumentException> {
+            tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "a".repeat(125) + ".kmz")
+        }
+    }
+
+    @Test
+    fun enterWaylinePublishesOnlyStartPointReachedUntilExecutingIsObserved() {
         val facts = mutableListOf<MissionPhaseFact>()
-        val tracker = MissionFlightPhase.create(MissionPhaseSink { facts += it })
+        val diagnostics = mutableListOf<MissionPhaseDiagnosticKind>()
+        val tracker = MissionFlightPhase.create(
+            sink = MissionPhaseSink { facts += it },
+            diagnosticSink = MissionPhaseDiagnosticSink { diagnostics += it.kind },
+        )
         tracker.arm(missionRevision = 7, deviceGeneration = 2, fileName = "survey.kmz")
 
         assertIs<MissionSignalAcceptance.Accepted>(
             tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 7, deviceGeneration = 2),
         )
+        assertEquals(
+            listOf(MissionPhaseFact(7, 2, 1, MissionPhase.START_POINT_REACHED, "survey.kmz")),
+            facts,
+        )
+
         tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 7, deviceGeneration = 2)
+        assertEquals(
+            listOf(MissionPhaseFact(7, 2, 1, MissionPhase.START_POINT_REACHED, "survey.kmz")),
+            facts,
+        )
+
+        tracker.accept(MissionExecutionSignal.EXECUTING, missionRevision = 7, deviceGeneration = 2)
         tracker.accept(MissionExecutionSignal.EXECUTING, missionRevision = 7, deviceGeneration = 2)
 
         assertEquals(
@@ -25,6 +50,7 @@ class MissionFlightPhaseContractTest {
             ),
             facts,
         )
+        assertEquals(emptyList(), diagnostics)
     }
 
     @Test
@@ -78,6 +104,11 @@ class MissionFlightPhaseContractTest {
         tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "route.kmz")
 
         tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 1, deviceGeneration = 0)
+
+        assertEquals(listOf(MissionPhase.START_POINT_REACHED), delivered.map { it.phase })
+        assertEquals(listOf(MissionPhaseDiagnosticKind.PHASE_SINK_FAILURE), diagnostics)
+
+        tracker.accept(MissionExecutionSignal.EXECUTING, missionRevision = 1, deviceGeneration = 0)
 
         assertEquals(
             listOf(MissionPhase.START_POINT_REACHED, MissionPhase.ROUTE_EXECUTION_STARTED),

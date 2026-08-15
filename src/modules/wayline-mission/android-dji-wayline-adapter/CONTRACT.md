@@ -21,10 +21,12 @@ adapter.close() -> Unit
 
 同一个实例必须同时注入上传器和执行器。只有上传成功终态可替换当前文件名；失败上传不得破坏此前成功文件名。开始和停止使用该精确 basename，缺少成功上传文件名时同步失败；暂停和继续不需要文件名。
 
-输入文件名必须是单一 `.kmz` basename，禁止绝对路径、父目录、分隔符、空白、控制字符和超过 255 个码点的名称。每次上传写入 `cacheDir/dji-waylines/<唯一代次>/<原始文件名>`，上传路径的 basename 必须与后续控制使用的任务名完全一致。写入失败必须删除该代次的目录和部分文件。
+输入文件名必须是单一 `.kmz` basename，禁止绝对路径、父目录、分隔符、空白、控制字符和超过 128 个 Unicode 码点的名称；该上限与中继协议一致，保证上传后的任务状态能够回传桌面端。每次上传写入 `cacheDir/dji-waylines/<唯一代次>/<原始文件名>`，上传路径的 basename 必须与后续控制使用的任务名完全一致。写入失败必须删除该代次的目录和部分文件。
 
 DJI 上传没有取消接口，因此新上传不得删除仍可能被旧上传读取的输入文件；每个上传终态只清理自己的目录，只有最新上传代次的成功终态可以替换当前文件名。上传进度 `Double` 四舍五入并限制到 `0..100`，非有限值忽略。控制提交、关闭和代次变更必须串行化；关闭后迟到控制回调不得完成上层。每个回调至多一次；`close()` 幂等，使全部迟到回调失效并清理所有剩余目录。
 
 `MissionExecutionSignalSource` 只发布归一化后的封闭信号集 `PREPARING|ENTER_WAYLINE|EXECUTING|PAUSED|COMPLETED|INTERRUPTED|IDLE|DISCONNECTED|UNKNOWN`，不发布 DJI 枚举或异常。监听必须在 `startMission` 调用前完成注册，关闭时必须取消注册；关闭、任务替换或设备代际失效后的回调不得投递。适配器不得把 `startMission` 成功回调转换为 `ENTER_WAYLINE` 或 `EXECUTING`，也不得从遥测位置推测信号。
 
-模块仅依赖 `mission-uploader`、`mission-executor`、`mission-flight-phase` 和 DJI MSDK v5.17。JVM 测试覆盖文件名防穿越、写入失败、进度、成功/失败、重复和迟到回调、当前文件名替换规则、四种控制、同步异常、关闭与清理、DJI 状态到封闭信号集的完整映射、监听先注册、关闭后静默及禁止从启动回调伪造阶段。Android Debug 构建必须编译真实 `IWaypointMissionManager`；真机仍需验证 `init()`、KMZ 上传、文件名匹配、飞行器控制以及 `ENTER_WAYLINE` 到 `EXECUTING` 的状态回调顺序。
+原始 `RETURN_TO_START_POINT` 表示飞行器仍在执行返航动作，不是任务完成；它必须保持为非终态 `EXECUTING`，直到 DJI 后续明确报告 `FINISHED`。只有 `FINISHED` 可以映射为 `COMPLETED`。`close()` 必须最终调用 `WaypointMissionManager.destroy()`，以取消其产品类型监听并销毁内部任务操作者；上层适配器负责隔离该调用异常。
+
+模块仅依赖 `mission-uploader`、`mission-executor`、`mission-flight-phase` 和 DJI MSDK v5.17。JVM 测试覆盖文件名防穿越、写入失败、进度、成功/失败、重复和迟到回调、当前文件名替换规则、四种控制、同步异常、关闭与清理、DJI 状态到封闭信号集的完整映射、返航中不提前完成、监听先注册、关闭后静默及禁止从启动回调伪造阶段。Android Debug 构建必须编译真实 `IWaypointMissionManager`；真机仍需验证 `init()`、KMZ 上传、文件名匹配、飞行器控制以及 `ENTER_WAYLINE` 到 `EXECUTING` 的状态回调顺序。

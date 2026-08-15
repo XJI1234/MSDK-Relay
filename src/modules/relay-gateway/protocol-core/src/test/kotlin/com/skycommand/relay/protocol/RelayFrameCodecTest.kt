@@ -151,6 +151,18 @@ class RelayFrameCodecTest {
     }
 
     @Test
+    fun ignoresCompatibleUndeclaredFieldsOnKnownFramesAndDiagnosticEvents() {
+        val frames = listOf(
+            """{"type":"hello","deviceId":"relay-1","protocolVersion":"1","unexpected":true}""",
+            """{"type":"diagnostic-report","runId":"run-1","events":[{"sequence":1,"timestampMillis":0,"level":"INFO","module":"relay","eventCode":"READY","safeDetail":"ready","unexpected":true}]}""",
+        )
+
+        frames.forEach { json ->
+            assertIs<DecodeResult.Decoded>(RelayFrameCodec.decode(json.encodeToByteArray()))
+        }
+    }
+
+    @Test
     fun ignoresUnknownFrameTypes() {
         val json = "{\"type\":\"future-event\",\"value\":true}"
 
