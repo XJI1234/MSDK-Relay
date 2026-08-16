@@ -1,6 +1,6 @@
 # wpmz-generator 模块契约
 
-状态：DJI 安全入场配置待按此契约重构；版本：2.0.0；所属一级模块：wayline-mission；Gradle 路径：:wayline-mission:wpmz-generator
+状态：历史研究代码，未纳入 Gradle 装配、生产依赖或 APK；版本：2.0.0；所属一级模块：wayline-mission；Gradle 路径：未注册（settings.gradle.kts 不含 :wayline-mission:wpmz-generator）
 
 ## 唯一职责与接口
 
