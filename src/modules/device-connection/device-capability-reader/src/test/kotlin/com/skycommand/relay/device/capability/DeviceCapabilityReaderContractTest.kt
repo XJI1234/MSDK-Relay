@@ -55,6 +55,49 @@ class DeviceCapabilityReaderContractTest {
     }
 
     @Test
+    fun allowsPairingRetryAfterFailureWhenAircraftIsDisconnected() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            pairing = PairingState.FAILED,
+        )
+
+        assertEquals(
+            DeviceCapabilities(true, false, false, false, false),
+            DeviceCapabilityReader.read(snapshot),
+        )
+    }
+
+    @Test
+    fun allowsPairingStartAfterStoppingWhenAircraftIsDisconnected() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            pairing = PairingState.STOPPING,
+        )
+
+        assertEquals(
+            DeviceCapabilities(true, true, false, false, false),
+            DeviceCapabilityReader.read(snapshot),
+        )
+    }
+
+    @Test
+    fun refusesPairingWhenAircraftIsAlreadyConnected() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            aircraft = LinkState.CONNECTED,
+            pairing = PairingState.IDLE,
+        )
+
+        assertEquals(
+            DeviceCapabilities(false, false, false, true, false),
+            DeviceCapabilityReader.read(snapshot),
+        )
+    }
+
+    @Test
     fun neverAllowsFlightCapabilitiesWhenTheSdkIsNotReady() {
         val snapshot = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.FAILED,

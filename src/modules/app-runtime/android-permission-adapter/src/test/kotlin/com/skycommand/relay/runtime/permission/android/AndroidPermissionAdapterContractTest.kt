@@ -164,6 +164,22 @@ class AndroidPermissionAdapterContractTest {
         assertEquals(emptyList(), results)
     }
 
+    @Test
+    fun forwardsUsbPresenceChangesUntilCancelled() {
+        val platform = FakePlatform(
+            PermissionSnapshot.of(mapOf(PermissionKind.USB_ACCESS to PermissionState.UNKNOWN)),
+        )
+        val adapter = AndroidPermissionAdapter(platform)
+        var changes = 0
+        val cancellation = adapter.onUsbPresenceChanged { changes += 1 }
+
+        platform.emitPresence()
+        cancellation.cancel()
+        platform.emitPresence()
+
+        assertEquals(1, changes)
+    }
+
     private fun callback(onCompleted: (PermissionSnapshot) -> Unit): PermissionPortCallback =
         callback(onCompleted, {})
 
@@ -188,6 +204,7 @@ class AndroidPermissionAdapterContractTest {
         var runtimeRequests = 0
         var usbRequests = 0
         var cancellations = 0
+        private val presence = mutableListOf<() -> Unit>()
 
         fun current(): PermissionSnapshot = snapshot
 
@@ -212,6 +229,10 @@ class AndroidPermissionAdapterContractTest {
             runtimeFailure?.invoke()
         }
 
+        fun emitPresence() {
+            presence.toList().forEach { it() }
+        }
+
         override fun snapshot(): PermissionSnapshot = snapshot
 
         override fun requestRuntimePermissions(callback: () -> Unit, failure: () -> Unit): PermissionCancellation {
@@ -226,6 +247,11 @@ class AndroidPermissionAdapterContractTest {
             usbCallback = callback
             usbFailure = failure
             return PermissionCancellation { cancellations += 1 }
+        }
+
+        override fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation {
+            presence += listener
+            return PermissionCancellation { presence -= listener }
         }
     }
 }

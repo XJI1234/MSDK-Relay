@@ -7,22 +7,39 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 class RelayBootstrapModuleTest {
-    @Test fun startsDeviceFirstAndDefersRelayUntilSdkReady() {
+    @Test fun startsDeviceAndGatewayThenDefersTelemetryUntilSdkReady() {
         val ports = FakePorts()
         val module = RelayBootstrapModule(ports)
         module.start()
-        assertEquals(listOf("device-listen", "gateway-listen", "device-start"), ports.events)
+        assertEquals(listOf("device-listen", "gateway-listen", "device-start", "gateway-start"), ports.events)
 
         ports.sdk = SdkAvailability.READY
         ports.deviceChanged()
         ports.gatewayStateChanged(SessionState.ACTIVE)
         assertEquals(
-            listOf("device-listen", "gateway-listen", "device-start", "telemetry-start", "gateway-start", "telemetry-publish"),
+            listOf(
+                "device-listen", "gateway-listen", "device-start", "gateway-start",
+                "telemetry-start", "telemetry-publish",
+            ),
             ports.events,
         )
 
         ports.deviceChanged()
         assertEquals(1, ports.events.count { it == "gateway-start" })
+        assertEquals(1, ports.events.count { it == "telemetry-start" })
+    }
+
+    @Test fun publishesWhenTelemetryStartsAfterGatewayIsAlreadyActive() {
+        val ports = FakePorts()
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        ports.gatewayStateChanged(SessionState.ACTIVE)
+        assertEquals(0, ports.events.count { it == "telemetry-publish" })
+
+        ports.sdk = SdkAvailability.READY
+        ports.deviceChanged()
+        assertEquals(1, ports.events.count { it == "telemetry-start" })
+        assertEquals(1, ports.events.count { it == "telemetry-publish" })
     }
 
     @Test fun invalidatesDeviceBoundFeaturesAndStopsInReverseOrder() {
@@ -35,16 +52,16 @@ class RelayBootstrapModuleTest {
 
         assertEquals(
             listOf(
-                "device-listen", "gateway-listen", "device-start", "telemetry-start", "gateway-start",
+                "device-listen", "gateway-listen", "device-start", "gateway-start", "telemetry-start",
                 "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable",
-                "gateway-stop", "telemetry-stop", "gateway-unlisten", "device-unlisten",
-                "flight-close", "device-stop",
+                "telemetry-stop", "gateway-unlisten", "device-unlisten",
+                "gateway-stop", "flight-close", "device-stop",
             ),
             ports.events,
         )
     }
 
-    @Test fun sdkLossStopsGatewayAndReadyAgainRestarts() {
+    @Test fun sdkLossStopsTelemetryButKeepsGateway() {
         val ports = FakePorts().apply { sdk = SdkAvailability.READY }
         val module = RelayBootstrapModule(ports)
         module.start()
@@ -52,12 +69,12 @@ class RelayBootstrapModuleTest {
 
         ports.sdk = SdkAvailability.FAILED
         ports.deviceChanged()
-        assertEquals(1, ports.events.count { it == "gateway-stop" })
+        assertEquals(0, ports.events.count { it == "gateway-stop" })
         assertEquals(1, ports.events.count { it == "telemetry-stop" })
 
         ports.sdk = SdkAvailability.READY
         ports.deviceChanged()
-        assertEquals(2, ports.events.count { it == "gateway-start" })
+        assertEquals(1, ports.events.count { it == "gateway-start" })
         assertEquals(2, ports.events.count { it == "telemetry-start" })
     }
 
@@ -70,24 +87,20 @@ class RelayBootstrapModuleTest {
         assertEquals(1, ports.events.count { it == "device-stop" })
     }
 
-    @Test fun asynchronousRelayFailureRollsBackWithoutEscapingAndCanRetry() {
-        val ports = FakePorts()
+    @Test fun failedGatewayStartRollsBackWithoutEscapingAndCanRetry() {
+        val ports = FakePorts().apply { failNextGatewayStart = true }
         val module = RelayBootstrapModule(ports)
-        module.start()
-        ports.sdk = SdkAvailability.READY
-        ports.failNextGatewayStart = true
 
-        val result = runCatching { ports.deviceChanged() }
+        val result = runCatching { module.start() }
 
-        assertFalse(result.isFailure)
-        assertEquals(1, ports.events.count { it == "gateway-stop" })
-        assertEquals(1, ports.events.count { it == "telemetry-stop" })
+        assertEquals(true, result.isFailure)
         assertEquals(1, ports.events.count { it == "diagnostic:RELAY_START_FAILURE" })
-        ports.deviceChanged()
+        module.start()
+        assertEquals(2, ports.events.count { it == "device-start" })
         assertEquals(2, ports.events.count { it == "gateway-start" })
     }
 
-    @Test fun reentrantStopCannotStartGatewayAfterTelemetryReturns() {
+    @Test fun reentrantStopCannotStartTelemetryAfterStopReturns() {
         val ports = FakePorts()
         lateinit var module: RelayBootstrapModule
         ports.afterTelemetryStart = { module.stop() }
@@ -97,7 +110,7 @@ class RelayBootstrapModuleTest {
 
         ports.deviceChanged()
 
-        assertEquals(0, ports.events.count { it == "gateway-start" })
+        assertEquals(1, ports.events.count { it == "gateway-start" })
         assertEquals(2, ports.events.count { it == "telemetry-stop" })
         assertEquals(1, ports.events.count { it == "device-stop" })
     }

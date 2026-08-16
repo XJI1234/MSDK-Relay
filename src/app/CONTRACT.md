@@ -10,8 +10,8 @@ Gradle 路径：`:app`
 
 ## 二级职责
 
-1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。它必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图；`onDestroy` 才关闭适配器。图重建不得再次 `attach`。
-2. `MobileRelayGraph`：只创建九个一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则。权限适配器由 Activity 持有，图关闭时不得关闭它。
+1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、遥控器、对频、飞机，不得把飞机画在对频前面。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。它必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图；`onDestroy` 才关闭适配器。图重建不得再次 `attach`。
+2. `MobileRelayGraph`：只创建九个一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。权限适配器由 Activity 持有，图关闭时不得关闭它。
 3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次，并在设备失效时通知直播、航线、飞行控制和设备设置模块。
 4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。
 5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成。
@@ -27,9 +27,9 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 中继地址允许 `ws://` 与 `wss://`。因此 Android 清单必须允许明文网络流量，确保用户配置的局域网 `ws://` 电脑端能够实际连接；地址中若含认证信息，任何状态文本和诊断事件都不得记录其完整内容。部署具备 TLS 的电脑端时应配置 `wss://`。
 
 1. 用户保存合法 `ws://` 或 `wss://` 地址后才能启动。
-2. `AppRuntime` 先取得运行时和 USB 权限，再启动前台服务，最后调用组合启动模块。
-3. 组合启动模块先启动 `device-connection`；仅在 DJI 状态为 `READY` 后启动飞行遥测源、`telemetry` 和 `relay-gateway`。SDK 离开 `READY` 时必须停止网关和遥测，允许后续再次就绪后完整重试。
-4. 网关进入 `ACTIVE` 时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。
+2. `AppRuntime` 先取得运行时权限，再启动前台服务，最后调用组合启动模块。电脑 WebSocket 不得等待 USB。中继进入 `RUNNING` 后，组合根单独请求 `USB_ACCESS`：没有附件时保持等待，接入后弹出系统授权；授权成功、USB 再次接入且已授权，或 SDK 首次进入 `READY` 时，都必须重启遥控器和飞机观察。USB 拒绝或失败后必须允许再次请求，不得把 USB 授权绑进 `AppRuntime.start()`。USB 广播接收器必须存活到权限适配器关闭，不能随 Activity 进入后台而注销。
+3. 组合启动模块先启动 `device-connection`，随即启动 `relay-gateway`。电脑 WebSocket 不得等待 DJI SDK。仅在 DJI 状态为 `READY` 后启动飞行遥测源和 `telemetry`。SDK 离开 `READY` 时必须停止遥测并通知直播/航线/飞行控制/设备设置失效，但不得因此断开电脑连接；SDK 再次 `READY` 后只重试遥测。
+4. 网关已是 `ACTIVE` 且遥测已启动时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。网关先于 SDK 就绪进入 `ACTIVE` 时，遥测启动后再补发首帧。
 5. 停止顺序严格反向：网关、遥测、飞行源、设备；同时关闭航线缓存、DJI 航线适配器、前台服务端口和线程资源。权限适配器随 Activity 销毁关闭，不随中继图重建关闭。
 6. 设备离线时必须通知直播、航线、飞行控制和设备设置模块失效；旧 DJI、网络和状态回调不得恢复已停止代次。
 7. 任一启动步骤抛出异常时，必须注销已建立的监听、逆序停止已启动资源，并允许后续完整重试。

@@ -10,6 +10,7 @@ import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
 import com.skycommand.relay.device.pairing.PairingOperationResult
 import com.skycommand.relay.device.pairing.PairingRequestResult
+import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.device.pairing.command.android.AndroidPairingPort
 import com.skycommand.relay.device.pairing.status.android.AndroidPairingStatusPort
 import com.skycommand.relay.device.remote.android.AndroidRemoteControllerPort
@@ -34,10 +35,16 @@ import com.skycommand.relay.diagnostics.android.AndroidDiagnosticStore
 import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
 import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.runtime.AppRuntime
+import com.skycommand.relay.runtime.RuntimeCancellation
+import com.skycommand.relay.runtime.RuntimeStartResult
 import com.skycommand.relay.runtime.RuntimeState
+import com.skycommand.relay.runtime.RuntimeStopResult
 import com.skycommand.relay.runtime.bootstrap.AppBootstrap
+import com.skycommand.relay.runtime.permission.PermissionCancellation
 import com.skycommand.relay.runtime.permission.PermissionCoordinator
 import com.skycommand.relay.runtime.permission.PermissionKind
+import com.skycommand.relay.runtime.permission.PermissionRequestResult
+import com.skycommand.relay.runtime.permission.PermissionState
 import com.skycommand.relay.runtime.permission.android.AndroidPermissionAdapter
 import com.skycommand.relay.runtime.service.ForegroundServiceController
 import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
@@ -70,15 +77,18 @@ import java.util.UUID
 data class MobileRelayStatus(
     val runtime: RuntimeState,
     val gateway: SessionState,
-    val sdk: String,
+    val remoteController: String,
     val aircraft: String,
     val pairing: String,
     val stream: String,
     val mission: String,
+    val canStartPairing: Boolean,
+    val canStopPairing: Boolean,
 )
 
 class MobileRelayGraph private constructor(
     private val runtime: AppRuntime,
+    private val permissions: PermissionCoordinator,
     private val device: DeviceConnection,
     private val gateway: RelayGateway,
     private val diagnostics: GatewayDiagnosticPublisher,
@@ -93,28 +103,48 @@ class MobileRelayGraph private constructor(
     private val foregroundPort: AndroidForegroundServicePort,
     private val executor: ScheduledThreadPoolExecutor,
     private val journal: DiagnosticJournal,
+    private val permissionAdapter: AndroidPermissionAdapter,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val listeners = CopyOnWriteArraySet<(MobileRelayStatus) -> Unit>()
     private val registrations = mutableListOf<CloseableRegistration>()
+    private var startCancellation: RuntimeCancellation? = null
+    private var usbWatchStarted = false
+    private var usbCancellation: PermissionCancellation? = null
+    private var hardwareRefreshedForSdkReady = false
 
-    fun start() = runtime.start(setOf(PermissionKind.RUNTIME, PermissionKind.USB_ACCESS))
-    fun stop() = runtime.stop()
+    fun start(): RuntimeStartResult {
+        val result = runtime.start(setOf(PermissionKind.RUNTIME))
+        if (result is RuntimeStartResult.Accepted) startCancellation = result.cancellation
+        return result
+    }
+
+    fun stop(): RuntimeStopResult {
+        cancelUsbWatch()
+        hardwareRefreshedForSdkReady = false
+        startCancellation?.cancel()
+        startCancellation = null
+        return runtime.stop()
+    }
 
     fun startPairing(): PairingRequestResult = device.requestPairingStart(30_000) { notifyStatus() }
     fun stopPairing(): PairingRequestResult = device.requestPairingStop(30_000) { notifyStatus() }
 
     fun status(): MobileRelayStatus {
         val deviceSnapshot = device.snapshot()
+        val capabilities = device.capabilities()
         val missionSnapshot = wayline.snapshot()
+        val running = runtime.snapshot() == RuntimeState.RUNNING
         return MobileRelayStatus(
             runtime.snapshot(),
             gateway.connectionState(),
-            deviceSnapshot.sdkAvailability.name,
+            deviceSnapshot.remoteController.name,
             deviceSnapshot.aircraft.name,
             deviceSnapshot.pairing.name,
             stream.snapshot().state.name,
             missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
+            canStartPairing = running && capabilities.canStartPairing,
+            canStopPairing = running && capabilities.canStopPairing,
         )
     }
 
@@ -125,11 +155,22 @@ class MobileRelayGraph private constructor(
     }
 
     private fun installStatusNotifications() {
-        registrations += runtime.onChanged { notifyStatus() }.let { registration ->
+        registrations += runtime.onChanged {
+            notifyStatus()
+            if (runtime.snapshot() == RuntimeState.RUNNING) watchUsbAccessory()
+        }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
-        registrations += device.onChanged { notifyStatus() }.let { registration ->
+        registrations += device.onChanged {
+            notifyStatus()
+            refreshHardwareIfSdkReady()
+        }.let { registration ->
             CloseableRegistration { registration.unregister() }
+        }
+        registrations += permissionAdapter.onUsbPresenceChanged {
+            onUsbPresenceChanged()
+        }.let { cancellation ->
+            CloseableRegistration { cancellation.cancel() }
         }
         registrations += gateway.onStateChanged { event ->
             val ended = event.endReason
@@ -165,6 +206,60 @@ class MobileRelayGraph private constructor(
         }
     }
 
+    private fun watchUsbAccessory() {
+        if (usbWatchStarted) return
+        usbWatchStarted = true
+        when (
+            val result = permissions.request(setOf(PermissionKind.USB_ACCESS)) { terminal ->
+                usbCancellation = null
+                usbWatchStarted = false
+                if (terminal is PermissionRequestResult.Terminal.Completed) {
+                    device.refreshHardwareLinks()
+                }
+                notifyStatus()
+            }
+        ) {
+            is PermissionRequestResult.AlreadySatisfied -> {
+                usbWatchStarted = false
+                device.refreshHardwareLinks()
+                notifyStatus()
+            }
+            is PermissionRequestResult.Started -> usbCancellation = result.cancellation
+            is PermissionRequestResult.Rejected,
+            is PermissionRequestResult.Terminal,
+            -> usbWatchStarted = false
+        }
+    }
+
+    private fun onUsbPresenceChanged() {
+        if (runtime.snapshot() != RuntimeState.RUNNING) return
+        val usb = runCatching { permissionAdapter.snapshot().stateOf(PermissionKind.USB_ACCESS) }.getOrNull()
+            ?: return
+        if (usb == PermissionState.GRANTED) {
+            device.refreshHardwareLinks()
+        } else if (!usbWatchStarted) {
+            watchUsbAccessory()
+        }
+        notifyStatus()
+    }
+
+    private fun refreshHardwareIfSdkReady() {
+        val sdk = runCatching { device.snapshot().sdkAvailability }.getOrNull() ?: return
+        if (sdk == SdkAvailability.READY) {
+            if (hardwareRefreshedForSdkReady) return
+            hardwareRefreshedForSdkReady = true
+            device.refreshHardwareLinks()
+        } else {
+            hardwareRefreshedForSdkReady = false
+        }
+    }
+
+    private fun cancelUsbWatch() {
+        usbCancellation?.cancel()
+        usbCancellation = null
+        usbWatchStarted = false
+    }
+
     private fun notifyStatus() {
         val current = runCatching(::status).getOrNull() ?: return
         listeners.forEach { listener -> runCatching { listener(current) } }
@@ -172,6 +267,9 @@ class MobileRelayGraph private constructor(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        runCatching { startCancellation?.cancel() }
+        startCancellation = null
+        runCatching { cancelUsbWatch() }
         runCatching { runtime.stop() }
         runCatching { diagnostics.stop() }
         registrations.asReversed().forEach { runCatching { it.unregister() } }
@@ -432,14 +530,15 @@ class MobileRelayGraph private constructor(
                     android.R.drawable.stat_sys_upload,
                 ),
             )
+            val permissions = PermissionCoordinator.create(permissionAdapter)
             val runtime = AppRuntime.create(
-                PermissionCoordinator.create(permissionAdapter),
+                permissions,
                 ForegroundServiceController.create(foregroundPort),
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, wayline, waylineAdapter,
-                staging, foregroundPort, executor, journal,
+                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, wayline, waylineAdapter,
+                staging, foregroundPort, executor, journal, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
 

@@ -13,7 +13,7 @@
 
 ## 对外接口
 
-适配器向运行时组合根暴露既有 `PermissionPort`，并提供一个 Android 专用生命周期操作：
+适配器向运行时组合根暴露既有 `PermissionPort`，并提供 Android 专用生命周期操作：
 
 ```text
 AndroidPermissionAdapter.attach(activity, activityResultRegistry, lifecycleOwner)
@@ -22,10 +22,11 @@ AndroidPermissionAdapter.attach(activity, activityResultRegistry, lifecycleOwner
 adapter implements PermissionPort
 adapter.snapshot() -> PermissionSnapshot
 adapter.request(required, callback) -> PermissionCancellation
+adapter.onUsbPresenceChanged(listener) -> PermissionCancellation
 adapter.close() -> Unit
 ```
 
-必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；调用方持有实例，并在所属 Android 生命周期销毁前调用 `close`。
+必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；USB 接收器从 Activity `STARTED` 起保持注册，直到 `close`，不得在 `onStop` 注销。调用方持有实例，并在所属 Android 生命周期销毁前调用 `close`。`onUsbPresenceChanged` 只通知附件接入或拔出，不完成权限请求。
 
 适配器不得通过 `PermissionPort` 暴露 `Activity`、`Intent`、`UsbAccessory`、权限字符串、`Exception` 或 Android 回调对象。
 
@@ -59,7 +60,7 @@ adapter.close() -> Unit
 
 ## 生命周期、失败与验证
 
-- 仅在给定生命周期有效时注册；USB 接收器非导出，只接收适配器生成的授权 action 及 Android 附件接入/断开 action。
+- 仅在给定生命周期有效时注册 Activity Result；USB 接收器非导出，从 `STARTED` 起保持注册直到 `close`，只接收适配器生成的授权 action 及 Android 附件接入/断开 action。
 - USB 授权广播必须读取 Android 的 `EXTRA_PERMISSION_GRANTED`。仅值为真时才交付 USB 请求成功；值为假或缺失时必须交付失败，绝不能把“用户拒绝授权”当作成功。
 - USB `PendingIntent` 必须显式、不可变，并使用由包名派生的唯一 action；`close` 只能由组合根调用，适配器不拥有 Activity 或进程生命周期。
 - 不得记录权限名、附件身份、Intent 内容或异常消息。平台检查失败映射为协调器的 `PORT_FAILURE` 拒绝或终态 `Failed`；拒绝运行时请求产生 `DENIED` 或 `PERMANENTLY_DENIED` 快照；缺失 USB 附件始终为 `UNKNOWN`；完成、取消或关闭后的重复/延迟回调必须忽略。

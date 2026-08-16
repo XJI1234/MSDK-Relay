@@ -18,6 +18,8 @@ internal interface PermissionAdapterPlatform {
 
     fun requestUsbPermission(callback: () -> Unit, failure: () -> Unit): PermissionCancellation
 
+    fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation = PermissionCancellation { }
+
     fun close() = Unit
 }
 
@@ -81,6 +83,9 @@ class AndroidPermissionAdapter internal constructor(
 
         return PermissionCancellation { cancel(operation) }
     }
+
+    fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation =
+        platform.onUsbPresenceChanged(listener)
 
     override fun close() {
         val operation = synchronized(lock) {

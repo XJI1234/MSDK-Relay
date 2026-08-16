@@ -27,7 +27,7 @@ canRunWayline
 
 ## 3. 推导规则
 
-- `canStartPairing`：SDK `READY`、遥控器连接、飞行器断开，且配对为 `UNKNOWN` 或 `IDLE`。
+- `canStartPairing`：SDK `READY`、遥控器连接、飞行器断开，且配对为 `UNKNOWN`、`IDLE`、`FAILED` 或 `STOPPING`。飞行器已连接时必须为假。停止对频后必须仍可再次开始。
 - `canStopPairing`：配对为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - `canReadTelemetry`：SDK `READY`、飞行器连接、飞控连接。
 - `canStreamVideo`：SDK `READY`、飞行器连接。

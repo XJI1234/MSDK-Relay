@@ -14,6 +14,7 @@
 ```text
 DeviceConnection.start() -> StartAccepted | AlreadyRunning | StartRejected
 DeviceConnection.stop() -> Stopped | AlreadyStopped
+DeviceConnection.refreshHardwareLinks()
 DeviceConnection.snapshot() -> DeviceSnapshot
 DeviceConnection.capabilities() -> DeviceCapabilities
 DeviceConnection.onChanged(listener) -> Registration
@@ -61,7 +62,7 @@ READY -> STOPPED
 FAILED -> STOPPED
 ```
 
-`READY` 只表示设备连接模块已经可观察 DJI SDK，不表示遥控器、飞行器或配对已经就绪。`start()` 被重复调用不重启 SDK；`stop()` 被重复调用不再次注销监听。停止后到达的旧 DJI 回调必须被丢弃。
+`READY` 只表示设备连接模块已经可观察 DJI SDK，不表示遥控器、飞行器或配对已经就绪。`start()` 被重复调用不重启 SDK；`stop()` 被重复调用不再次注销监听。停止后到达的旧 DJI 回调必须被丢弃。USB 授权或 SDK 稍后变为 `READY` 时，组合根可以调用 `refreshHardwareLinks()`：它只重启遥控器、飞行器和配对状态观察，不得停止或重新初始化 SDK。SDK 已 `STOPPED` 时该调用是空操作。
 
 门面层的 `start()` 与 `stop()` 必须线性化执行：任一调用的全部启动、回滚或停止步骤完成前，另一个调用不得穿插执行。若停止请求在启动过程中到达，它必须等待该次启动完成或回滚，再执行完整停止；停止返回后，不得遗留任何有效观察链接，也不得让该次启动的后续步骤重新写入运行时状态。
 

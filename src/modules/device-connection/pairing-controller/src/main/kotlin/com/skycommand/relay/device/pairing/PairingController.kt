@@ -93,7 +93,14 @@ class PairingController private constructor(
         store.applyPairing(targetState)
         val submission = coordinator.submit(action, timeoutMillis, OperationResultListener { outcome ->
             when (outcome) {
-                OperationOutcome.SUCCEEDED -> listener(PairingOperationResult.RequestAccepted)
+                OperationOutcome.SUCCEEDED -> {
+                    if (targetState == PairingState.STOPPING &&
+                        store.snapshot().aircraft == LinkState.DISCONNECTED
+                    ) {
+                        store.applyPairing(PairingState.IDLE)
+                    }
+                    listener(PairingOperationResult.RequestAccepted)
+                }
                 OperationOutcome.FAILED -> fail(listener, PairingOperationResult.RequestFailed)
                 OperationOutcome.TIMED_OUT -> fail(listener, PairingOperationResult.RequestTimedOut)
                 OperationOutcome.CANCELLED -> fail(listener, PairingOperationResult.RequestCancelled)
@@ -117,7 +124,12 @@ class PairingController private constructor(
         sdkAvailability == SdkAvailability.READY &&
             remoteController == LinkState.CONNECTED &&
             aircraft == LinkState.DISCONNECTED &&
-            pairing in setOf(PairingState.UNKNOWN, PairingState.IDLE)
+            pairing in setOf(
+                PairingState.UNKNOWN,
+                PairingState.IDLE,
+                PairingState.FAILED,
+                PairingState.STOPPING,
+            )
 
     companion object {
         private const val MIN_TIMEOUT_MILLIS = 1_000L

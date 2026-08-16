@@ -128,6 +128,54 @@ class DeviceConnectionContractTest {
     }
 
     @Test
+    fun refreshHardwareLinksRestartsObserversWithoutStoppingSdk() {
+        val events = mutableListOf<String>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        connection.start()
+        connection.refreshHardwareLinks()
+
+        assertEquals(1, events.count { it == "sdk.start" })
+        assertEquals(0, events.count { it == "sdk.stop" })
+        assertEquals(2, events.count { it == "remote.start" })
+        assertEquals(1, events.count { it == "remote.stop" })
+        assertEquals(2, events.count { it == "aircraft.start" })
+        assertEquals(1, events.count { it == "aircraft.stop" })
+        assertEquals(2, events.count { it == "pairing-status.start" })
+        assertEquals(1, events.count { it == "pairing-status.stop" })
+    }
+
+    @Test
+    fun refreshHardwareLinksWhileStoppedDoesNotStartObservers() {
+        val events = mutableListOf<String>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        connection.refreshHardwareLinks()
+
+        assertEquals(emptyList(), events)
+    }
+
+    @Test
     fun startsPairingStatusObservationAndDropsItsLateCallbackAfterStop() {
         val events = mutableListOf<String>()
         val sdk = FakeSdk(events)

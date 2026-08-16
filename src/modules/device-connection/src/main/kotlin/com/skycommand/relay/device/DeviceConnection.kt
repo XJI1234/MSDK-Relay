@@ -28,6 +28,7 @@ import com.skycommand.relay.device.state.DeviceStateDiagnosticSink
 import com.skycommand.relay.device.state.DeviceStateListener
 import com.skycommand.relay.device.state.DeviceStateStore
 import com.skycommand.relay.device.state.Registration
+import com.skycommand.relay.device.state.SdkAvailability
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -128,6 +129,18 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     fun capabilities(): DeviceCapabilities = DeviceCapabilityReader.read(snapshot())
 
     fun onChanged(listener: DeviceStateListener): Registration = store.onChanged(listener)
+
+    fun refreshHardwareLinks() {
+        lifecycleLock.withLock {
+            if (store.snapshot().sdkAvailability == SdkAvailability.STOPPED) return@withLock
+            pairingStatusLink.stop()
+            aircraftLink.stop()
+            remoteControllerLink.stop()
+            remoteControllerLink.start()
+            aircraftLink.start()
+            pairingStatusLink.start()
+        }
+    }
 
     fun operations(): DjiOperationCoordinator = operations
 

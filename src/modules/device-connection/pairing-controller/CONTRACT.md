@@ -21,12 +21,11 @@ PairingController.state() -> PairingState
 
 ## 3. 规则
 
-- 开始配对要求 SDK `READY`、遥控器 `CONNECTED`、飞行器 `DISCONNECTED`，且当前配对状态为 `UNKNOWN` 或 `IDLE`。
+- 开始配对要求 SDK `READY`、遥控器 `CONNECTED`、飞行器 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`FAILED` 或 `STOPPING`。`FAILED` 和停止完成后的 `STOPPING` 必须允许再次开始。已连接飞行器时不得开始对频。
 - 停止配对要求当前状态为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - 开始/停止请求被接受只表示请求进入 DJI 调度队列，不表示设备已经配对或已经停止配对。
 - 接受开始请求后进入 `PAIRING`；接受停止请求后进入 `STOPPING`。
-- 操作成功不直接伪造 `PAIRED` 或 `IDLE`；这些状态必须由真实 DJI 配对状态观察更新。
-- 操作失败、超时或取消进入 `FAILED`，并通过监听器返回稳定结果；旧操作的晚到回调不能修改新状态。
+- 开始操作成功不得写成 `PAIRED`。停止操作成功且飞行器仍未连接时，命令阶段从 `STOPPING` 收为 `IDLE`，以便再次开始对频；之后到达的真实观察仍可覆盖。失败、超时或取消进入 `FAILED`。
 - 端口创建 DJI 操作失败时请求被拒绝，状态进入 `FAILED`；调度器拒绝请求时也不保留半完成的过渡状态。
 - 时间限制与 `dji-operation-coordinator` 相同，为 `1_000..60_000` 毫秒；非法值在任何状态变更前拒绝。
 

@@ -50,6 +50,7 @@ internal class AndroidPermissionPlatform private constructor(
                     val accessory = accessoryFrom(intent) ?: currentAccessory()
                     synchronized(lock) { attachedAccessory = accessory }
                     requestPendingUsbPermission()
+                    notifyUsbPresenceChanged()
                 }
 
                 UsbManager.ACTION_USB_ACCESSORY_DETACHED -> {
@@ -57,6 +58,7 @@ internal class AndroidPermissionPlatform private constructor(
                         attachedAccessory = null
                         usbRequestInFlight = false
                     }
+                    notifyUsbPresenceChanged()
                 }
 
                 usbPermissionAction -> {
@@ -91,6 +93,7 @@ internal class AndroidPermissionPlatform private constructor(
     private var usbRequestInFlight = false
     private var receiverRegistered = false
     private var closed = false
+    private val usbPresenceListeners = mutableListOf<() -> Unit>()
 
     init {
         lifecycleOwner.lifecycle.addObserver(this)
@@ -118,11 +121,9 @@ internal class AndroidPermissionPlatform private constructor(
     }
 
     override fun onStop(owner: LifecycleOwner) {
-        synchronized(lock) {
-            if (!receiverRegistered) return
-            runCatching { activity.unregisterReceiver(usbReceiver) }
-            receiverRegistered = false
-        }
+        // Keep the USB receiver registered while the Activity exists. Unregistering
+        // here drops accessory attach and permission-result broadcasts whenever the
+        // operator backgrounds the screen, which leaves the RC stuck disconnected.
     }
 
     override fun snapshot(): PermissionSnapshot = synchronized(lock) {
@@ -168,6 +169,16 @@ internal class AndroidPermissionPlatform private constructor(
         }
     }
 
+    override fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation {
+        synchronized(lock) {
+            check(!closed) { "Permission platform is closed" }
+            usbPresenceListeners += listener
+        }
+        return PermissionCancellation {
+            synchronized(lock) { usbPresenceListeners -= listener }
+        }
+    }
+
     override fun requestUsbPermission(
         callback: () -> Unit,
         failure: () -> Unit,
@@ -198,6 +209,7 @@ internal class AndroidPermissionPlatform private constructor(
             usbCallback = null
             usbFailure = null
             usbRequestInFlight = false
+            usbPresenceListeners.clear()
             if (receiverRegistered) {
                 runCatching { activity.unregisterReceiver(usbReceiver) }
                 receiverRegistered = false
@@ -205,6 +217,11 @@ internal class AndroidPermissionPlatform private constructor(
         }
         lifecycleOwner.lifecycle.removeObserver(this)
         runCatching { runtimeLauncher.unregister() }
+    }
+
+    private fun notifyUsbPresenceChanged() {
+        val targets = synchronized(lock) { usbPresenceListeners.toList() }
+        targets.forEach { listener -> runCatching { listener() } }
     }
 
     private fun requestPendingUsbPermission() {

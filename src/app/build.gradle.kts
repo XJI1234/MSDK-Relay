@@ -106,6 +106,20 @@ tasks.register("verifyAndroidManifestContract") {
         check(features["android.hardware.usb.accessory"] == "true") {
             "AndroidManifest.xml must declare USB accessory support as required"
         }
+        val actions = (0 until document.getElementsByTagName("action").length)
+            .map { document.getElementsByTagName("action").item(it) }
+            .mapNotNull { it.attributes.getNamedItemNS(androidNamespace, "name")?.nodeValue }
+            .toSet()
+        check(actions.contains("android.hardware.usb.action.USB_ACCESSORY_ATTACHED")) {
+            "AndroidManifest.xml must register USB_ACCESSORY_ATTACHED so a plugged DJI RC is delivered to the app"
+        }
+        val metaData = (0 until document.getElementsByTagName("meta-data").length)
+            .map { document.getElementsByTagName("meta-data").item(it) }
+            .mapNotNull { it.attributes.getNamedItemNS(androidNamespace, "name")?.nodeValue }
+            .toSet()
+        check(metaData.contains("android.hardware.usb.action.USB_ACCESSORY_ATTACHED")) {
+            "AndroidManifest.xml must bind USB_ACCESSORY_ATTACHED to accessory_filter"
+        }
         val application = document.getElementsByTagName("application").item(0)
             ?: error("AndroidManifest.xml must contain an application element")
         check(

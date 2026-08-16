@@ -88,6 +88,33 @@ class PairingControllerContractTest {
     }
 
     @Test
+    fun acceptsStartAfterFailureWhileAircraftRemainsDisconnected() {
+        val fixture = Fixture()
+        fixture.makeReady()
+        fixture.store.apply(DeviceStatePatch.pairing(2, PairingState.FAILED))
+
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
+        assertEquals(PairingState.PAIRING, fixture.controller.state())
+    }
+
+    @Test
+    fun stopSuccessReturnsToIdleSoPairingCanRestartWhileAircraftIsDisconnected() {
+        val fixture = Fixture()
+        fixture.makeReady()
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
+        fixture.executor.runNext()
+        fixture.action.succeed()
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.stop(1_000) { })
+        assertEquals(PairingState.STOPPING, fixture.controller.state())
+
+        fixture.executor.runNext()
+        fixture.stopAction.succeed()
+
+        assertEquals(PairingState.IDLE, fixture.controller.state())
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
+    }
+
+    @Test
     fun rejectsStopWhenPairingIsNotRunningAndAllowsStopAfterStartRequest() {
         val fixture = Fixture()
         fixture.makeReady()
