@@ -1,6 +1,7 @@
 # camera-stream-source 二级模块契约
 
-状态：实验设计，尚未实现。
+状态：实验模块契约。
+Gradle 路径：`:live-stream:camera-stream-source`
 
 ## 唯一职责
 
@@ -8,13 +9,49 @@
 
 ## 对外接口
 
-```text
-CameraStreamSource.create(api) -> EncodedVideoSource
+```kotlin
+enum class CameraStreamCodec { H264, H265, UNKNOWN }
+
+data class CameraStreamInfo(
+    val codec: CameraStreamCodec,
+    val width: Int,
+    val height: Int,
+    val frameRate: Int,
+    val presentationTimeMs: Long,
+    val isKeyFrame: Boolean,
+)
+
+fun interface CameraStreamListener {
+    fun onReceiveStream(data: ByteArray, offset: Int, length: Int, info: CameraStreamInfo)
+}
+
+interface CameraStreamApi {
+    fun addReceiveStreamListener(listener: CameraStreamListener)
+    fun removeReceiveStreamListener(listener: CameraStreamListener)
+}
+
+fun interface CameraStreamSourceDiagnosticSink {
+    fun record(kind: CameraStreamSourceDiagnosticKind)
+}
+
+enum class CameraStreamSourceDiagnosticKind {
+    UNSUPPORTED_CODEC,
+    INVALID_FRAME,
+    LISTENER_FAILURE,
+    PLATFORM_FAILURE,
+}
+
+object CameraStreamSource {
+    fun create(
+        api: CameraStreamApi,
+        diagnosticSink: CameraStreamSourceDiagnosticSink = CameraStreamSourceDiagnosticSink { },
+    ): EncodedVideoSource
+}
 ```
 
-实现必须使用 `ICameraStreamManager.addReceiveStreamListener` 获取 `byte[]`、偏移、长度和 `StreamInfo`。`StreamInfo.mimeType` 为 H.264 时才产生帧；H.265 通过稳定的 `UNSUPPORTED_CODEC` 事实报告。必须保留关键帧标记、PTS、分辨率和帧率。
+`camera-stream-source` 只实现上述平台无关端口。Android 适配器必须使用 `ICameraStreamManager.addReceiveStreamListener` 获取 `byte[]`、偏移、长度和 `StreamInfo`，再映射为 `CameraStreamInfo`；纯模块本身不引用 DJI 类。`CameraStreamInfo.codec` 为 H.264 时才产生 `EncodedVideoFrame`；H.265/未知编码丢弃并记录 `UNSUPPORTED_CODEC`。必须保留关键帧标记、PTS、分辨率和帧率。
 
-源必须在停止、失败和新代次开始时移除监听器。旧监听器的回调必须被丢弃。源不应创建手机显示 Surface，也不能同时启动 DJI `LiveStreamManager`。
+源必须在停止、失败和新代次开始时移除精确 listener 实例。旧 listener 的回调必须被丢弃。`EncodedVideoListener` 抛出的异常、非法帧和平台移除异常不得穿透 SDK 回调线程，只能记录固定诊断事实。源不创建手机显示 Surface，也不启动 DJI `LiveStreamManager`。
 
 ## 验收
 

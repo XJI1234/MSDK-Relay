@@ -207,6 +207,8 @@ wayline.resume
 wayline.stop
 live-stream.start
 live-stream.stop
+live-stream-webrtc.start
+live-stream-webrtc.stop
 flight.takeoff
 flight.land
 flight.return-home
@@ -215,6 +217,8 @@ device.settings.camera.write
 device.settings.transmission.read
 device.settings.transmission.write
 ```
+
+实验低延迟链路另外使用 `live-stream-webrtc.start` 与 `live-stream-webrtc.stop`。这两个命令必须保持与旧 `live-stream.start` / `live-stream.stop` 的注册和状态隔离：旧链路可继续运行，新链路失败时不得改变旧链路状态。新命令的字段约束由手机端 `whip-live-stream` 处理器承担，命令成功只表示手机端 WHIP 发布器的业务终态，不表示电脑端 WHEP 首帧已经显示。
 
 下列命令不属于本阶段，必须被稳定拒绝：
 

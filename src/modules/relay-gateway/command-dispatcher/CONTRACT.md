@@ -60,6 +60,8 @@ wayline.resume
 wayline.stop
 live-stream.start
 live-stream.stop
+live-stream-webrtc.start
+live-stream-webrtc.stop
 flight.takeoff
 flight.land
 flight.return-home
@@ -68,6 +70,8 @@ device.settings.camera.write
 device.settings.transmission.read
 device.settings.transmission.write
 ```
+
+`live-stream-webrtc.start` 和 `live-stream-webrtc.stop` 与旧 `live-stream.*` 命令并列注册，不能替换、复用或改写旧处理器。它们仍只经过本分发器做命令名白名单和结果关联；`whipUrl` 字段、空停止字段和 WHIP 业务状态由独立的 `whip-live-stream` 处理器校验。
 
 未在目录中的命令永远不能注册。所有 `virtual-stick.*` 均不属于本阶段，必须保持未注册并由分发器稳定拒绝。新增、删除或重命名命令必须先修改根契约和本文。
 

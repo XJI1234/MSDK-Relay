@@ -558,7 +558,7 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 
 - 把原始 `ByteArray`、原始 JSON 或第三方解析异常交给业务模块；
 - 修改合法业务帧的字段；
-- 判断 `telemetry.read`、`wayline.*` 或 `live-stream.*` 是否应该成功；
+- 判断 `telemetry.read`、`wayline.*`、`live-stream.*` 或 `live-stream-webrtc.*` 是否应该成功；
 - 解析 KMZ 分块内容；
 - 把握手前收到的业务帧缓存到握手后执行；
 - 在重连后重放旧连接收到的任何帧。

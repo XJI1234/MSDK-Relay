@@ -6,12 +6,12 @@ Gradle 路径：`:app`
 
 ## 唯一职责
 
-本模块只负责把 `relay-settings`、`app-runtime`、`device-connection`、`telemetry`、`live-stream`、`wayline-mission`、`flight-control`、`device-settings` 和 `relay-gateway` 九个一级模块与其 Android 适配器组装成可运行应用，并提供保存电脑端中继 WebSocket 地址（默认 `ws://192.168.1.10:8080/relay`，不是 RTMP 图传口）、启动和停止中继、查看关键状态的最小界面。业务规则仍由各一级模块拥有。
+本模块只负责把 `relay-settings`、`app-runtime`、`device-connection`、`telemetry`、旧 `live-stream`、实验 `whip-live-stream`、`wayline-mission`、`flight-control`、`device-settings` 和 `relay-gateway` 一级模块与其 Android 适配器组装成可运行应用，并提供保存电脑端中继 WebSocket 地址（默认 `ws://192.168.1.10:8080/relay`，不是 RTMP 图传口）、启动和停止中继、查看关键状态的最小界面。业务规则仍由各一级模块拥有。
 
 ## 二级职责
 
 1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、遥控器、对频、飞机，不得把飞机画在对频前面。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。它必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图；`onDestroy` 才关闭适配器。图重建不得再次 `attach`。
-2. `MobileRelayGraph`：只创建九个一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。权限适配器由 Activity 持有，图关闭时不得关闭它。
+2. `MobileRelayGraph`：只创建一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。旧 RTMP `LiveStream` 与 WHIP `WhipLiveStream` 必须拥有各自的适配器、状态、命令处理器和关闭路径；任一链路的启动、停止、发布器或 DJI 失败不得调用或改变另一链路。组合根唯一负责在两个命令处理器之前装配运行时图传互斥，拒绝的命令不得调用另一链路。权限适配器由 Activity 持有，图关闭时不得关闭它。
 3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次，并在设备失效时通知直播、航线、飞行控制和设备设置模块。
 4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。
 5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成。
@@ -38,10 +38,22 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 
 ## 命令与数据
 
-组合根注册 `telemetry.read`、`pairing.start`、`pairing.stop`、`pairing.status`、`live-stream.start|stop`、全部 `wayline.*` 命令、`flight.takeoff`、`flight.land`、`flight.return-home`、`device.settings.camera.read`、`device.settings.camera.write`、`device.settings.transmission.read` 和 `device.settings.transmission.write`。遥测快照必须完整映射为协议 `TelemetryFrame`，可选值缺失时使用 JSON null，不伪造零值。任何结果不得泄露密钥、路径或原始异常。命令处理器在组合根外包一层诊断记录：成功或拒绝写入现有 `DiagnosticJournal`，`telemetry.read` 成功不记以免刷屏。会话状态变化和结束原因（含握手超时）同样写入该 journal，详情只用固定安全说明。
+组合根注册 `telemetry.read`、`pairing.start`、`pairing.stop`、`pairing.status`、旧 `live-stream.start|stop`、新 `live-stream-webrtc.start|stop`、全部 `wayline.*` 命令、`flight.takeoff`、`flight.land`、`flight.return-home`、`device.settings.camera.read`、`device.settings.camera.write`、`device.settings.transmission.read` 和 `device.settings.transmission.write`。遥测快照必须完整映射为协议 `TelemetryFrame`，可选值缺失时使用 JSON null，不伪造零值。任何结果不得泄露密钥、路径或原始异常。命令处理器在组合根外包一层诊断记录：成功或拒绝写入现有 `DiagnosticJournal`，`telemetry.read` 成功不记以免刷屏。会话状态变化和结束原因（含握手超时）同样写入该 journal，详情只用固定安全说明。
 
-`telemetry.read` 主动发布当前完整快照；配对命令使用 30 秒超时并且每条命令恰好产生一个终态。`pairing.status` 成功时必须通过 `command-result.result` 返回根契约 §7.4 的结构化快照：`pairingState`、`aircraftConnected`、`flightControllerConnected`、`aircraftModel`、`motorsOn`、`sdkRegistered`。该结果只来自当前遥测快照；遥测不可用时拒绝命令。`pairing.start` / `pairing.stop` 不得附带该结构化 `result`。直播、航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
+`telemetry.read` 主动发布当前完整快照；配对命令使用 30 秒超时并且每条命令恰好产生一个终态。`pairing.status` 成功时必须通过 `command-result.result` 返回根契约 §7.4 的结构化快照：`pairingState`、`aircraftConnected`、`flightControllerConnected`、`aircraftModel`、`motorsOn`、`sdkRegistered`。该结果只来自当前遥测快照；遥测不可用时拒绝命令。`pairing.start` / `pairing.stop` 不得附带该结构化 `result`。旧 RTMP 直播和 WHIP 直播分别复用 `LiveStream` 与 `WhipLiveStream` 门面提供的处理器；旧 `live-stream.*` 命令不得路由到 WHIP，`live-stream-webrtc.*` 命令不得路由到旧 RTMP。航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
+
+### 运行时图传互斥
+
+`live-stream.*` 与 `live-stream-webrtc.*` 必须同时注册，保留两条独立的软件链路和精确的命令名；并列注册不表示可以同时运行。组合根中的 `VideoTransportInterlock` 是手机端唯一的运行时闸门，任一时刻至多允许一个传输模式拥有相机：`LEGACY` 对应 `live-stream.*`，`WHIP` 对应 `live-stream-webrtc.*`。
+
+1. 空闲时，任一 `*.start` 必须先原子取得其模式所有权，随后才可调用对应门面的处理器。两个启动并发时至多一个底层处理器可被调用。
+2. 模式处于 `STARTING`、`STREAMING` 或 `STOPPING` 时，另一模式的 start 或 stop 都必须以精确安全文本 `"Another video transport is active"` 拒绝，且不得调用被拒绝模式的处理器、DJI、CameraStream 或 WHIP 发布器。
+3. 同一模式的重复命令仍交给其既有门面处理，使原有的参数、能力和重复操作拒绝语义保持不变；这些重复命令的终态不得释放当前所有权。
+4. 被拥有的 start 成功时状态进入 `STREAMING`；失败、超时、取消或同步处理器异常时仅在仍匹配该操作代次时回到空闲。同步异常必须以 `"Video transport operation failed"` 拒绝，不得向 Relay 泄露异常。
+5. 同一模式的 stop 先以新操作代次进入 `STOPPING`。只有 stop 成功才释放为可启动；stop 拒绝、失败、超时、取消或同步异常都必须继续占用，直到设备不可用或组合根关闭，避免硬件状态未知时切换相机链路。
+6. 设备不可用和组合根关闭必须清空所有权、使旧操作代次失效；旧成功、失败或重复回调不得重新占用、释放或污染之后的模式。设备恢复后允许任一模式重新开始。
+7. 互斥模块只持有两个 `CommandHandler` 并包裹其完成入口，不读取图传快照、不持有 DJI 或 WebRTC 对象、不停止另一条链路。设备不可用和关闭仍分别调用两个门面的现有失效和关闭路径。
 
 ## 验证
 
-必须通过组合逻辑单元测试、全仓 JVM 测试、所有 Android 适配器 Debug 编译和 `:app:assembleDebug`。生成 APK 只能证明编译和打包；DJI API Key、遥控器、飞行器、RTMP 服务和电脑端服务仍需真机联调。
+必须通过组合逻辑单元测试（含图传互斥的双向占用、并发启动、start 失败、stop 成功或失败、设备失效、迟到回调和同步异常）、全仓 JVM 测试、所有 Android 适配器 Debug 编译和 `:app:assembleDebug`。生成 APK 只能证明编译和打包；DJI API Key、遥控器、飞行器、RTMP 服务和电脑端服务仍需真机联调。

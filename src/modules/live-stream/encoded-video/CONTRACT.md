@@ -1,6 +1,6 @@
 # encoded-video 二级模块契约
 
-状态：实验设计，尚未实现。
+状态：实验模块契约。
 
 ## 唯一职责
 
@@ -9,7 +9,16 @@
 ## 对外模型
 
 ```text
-EncodedVideoFrame {
+EncodedVideoFrame(
+  data: ByteArray,
+  offset: Int,
+  length: Int,
+  width: Int,
+  height: Int,
+  frameRate: Int,
+  presentationTimeMs: Long,
+  isKeyFrame: Boolean,
+) {
   codec: H264,
   data: ByteArray,
   offset: Int,
@@ -21,10 +30,14 @@ EncodedVideoFrame {
   isKeyFrame: Boolean
 }
 
-EncodedVideoSource {
-  start(listener) -> SourceStartResult
+interface EncodedVideoSource {
+  start(listener: EncodedVideoListener) -> SourceStartResult
   stop() -> SourceStopResult
 }
+
+`EncodedVideoFrame` 构造时必须拒绝空数据、负偏移/长度、越过数组边界、非正宽高、非正帧率和负 PTS。`data`、偏移、长度和元数据在实例创建后不可变；模块不复制数组，调用方必须保证在同步消费完成前不修改数组。
+
+`SourceStartResult` 只有 `Started`、`AlreadyStarted` 和 `Failed(reason)`；`SourceStopResult` 只有 `Stopped`、`AlreadyStopped` 和 `Failed(reason)`。源回调同步执行，监听器抛出的异常必须被源吞掉并转为固定诊断事实，不能从源线程向上传播。
 ```
 
 `offset` 和 `length` 必须在数组范围内，宽高和时间戳必须有效。源只能同步使用回调帧，除非明确复制数据；调用方不得修改已交给发布器的数组。

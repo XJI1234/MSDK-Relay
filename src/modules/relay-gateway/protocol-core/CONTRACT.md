@@ -197,6 +197,8 @@ command {
 - `CommandFrame.fields` 表示除 `name` 外的业务字段；调用方构造时不得再次放入保留字段 `name`；
 - 本模块不判断命令名是否已经注册，也不校验具体业务参数。
 
+`live-stream-webrtc.start` 与 `live-stream-webrtc.stop` 使用同一通用 `command` 帧承载；本模块只负责结构校验。前者的 `whipUrl` 字段、后者的空字段约束和业务结果由 `live-stream-webrtc` 命令处理器负责，不能在协议层复制一套命令解析。
+
 ### 5.5 `command-result`
 
 ```text

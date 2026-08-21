@@ -131,6 +131,8 @@ class CommandDispatcherContractTest {
             "wayline.stop",
             "live-stream.start",
             "live-stream.stop",
+            "live-stream-webrtc.start",
+            "live-stream-webrtc.stop",
             "flight.takeoff",
             "flight.land",
             "flight.return-home",

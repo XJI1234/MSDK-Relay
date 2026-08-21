@@ -1,6 +1,7 @@
 # whip-command-handler 二级模块契约
 
-状态：实验设计，尚未实现。
+状态：实验模块契约。
+Gradle 路径：`:live-stream:whip-command-handler`
 
 ## 唯一职责
 
@@ -16,6 +17,44 @@ live-stream-webrtc.stop  {}
 ```
 
 字段必须精确匹配，不能同时携带 `rtmpUrl`、`protocol` 或未知字段。启动在配置校验完成前不得调用动作。接受只表示提交，不得立即生成成功结果；终态必须通过注入的 completion 报告。
+
+## 对外接口
+
+```kotlin
+interface WhipCommandActions {
+    fun start(config: ValidatedWhipStreamConfig, completion: WhipActionCompletion): WhipActionResult
+    fun stop(completion: WhipActionCompletion): WhipActionResult
+}
+
+fun interface WhipActionCompletion {
+    fun complete(outcome: WhipActionTerminalOutcome)
+}
+
+enum class WhipActionTerminalOutcome { SUCCEEDED, FAILED, TIMED_OUT, CANCELLED }
+
+sealed interface WhipActionResult {
+    data object Accepted : WhipActionResult
+    data object Rejected : WhipActionResult
+}
+
+sealed interface WhipCommandResult {
+    data object Accepted : WhipCommandResult
+    data class Rejected(val reason: WhipCommandRejection) : WhipCommandResult
+}
+
+enum class WhipCommandRejection {
+    UNKNOWN_COMMAND, INVALID_FIELDS, INVALID_CONFIGURATION, CAPABILITY_REJECTED
+}
+
+class WhipCommandHandler {
+    fun handle(command: CommandFrame): WhipCommandResult
+    fun handle(command: CommandFrame, completion: WhipActionCompletion): WhipCommandResult
+}
+```
+
+`WhipCommandHandler.create(actions)` 是唯一构造入口。处理器无状态、同步、线程安全；它不创建线程、不保存命令或配置。动作返回 `Rejected`、动作抛出任意异常或输入不符合命令字段契约时，只返回固定拒绝枚举。原始 URL、异常文本、凭据和 DJI/平台对象不得进入结果。
+
+传给动作的 completion 对每个命令最多生效一次；动作重复调用 completion、并发调用 completion 或在动作返回拒绝后调用 completion，都不能让外部观察到第二个终态。处理器不把动作接受提交伪装成成功。
 
 ## 验收
 
