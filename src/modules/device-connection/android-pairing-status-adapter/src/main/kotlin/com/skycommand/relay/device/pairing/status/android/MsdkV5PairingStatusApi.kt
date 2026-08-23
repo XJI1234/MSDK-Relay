@@ -13,7 +13,6 @@ internal class MsdkV5PairingStatusApi(
         val key = KeyTools.createKey(RemoteControllerKey.KeyPairingStatus)
         try {
             manager.listen(key, owner) { _, next -> listener.onChanged(DjiPairingStatusFact((next ?: PairingState.UNKNOWN).name)) }
-            listener.onChanged(DjiPairingStatusFact(manager.getValue(key, PairingState.UNKNOWN).name))
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             throw failure

@@ -46,11 +46,6 @@ private class KeyManagerObservation(
             manager.listen(typeKey, owner) { _, next ->
                 publishCurrent(nextRemoteController = null, nextProduct = null, nextType = next ?: RemoteControllerType.UNKNOWN)
             }
-            publishCurrent(
-                nextRemoteController = manager.getValue(connectionKey, false),
-                nextProduct = manager.getValue(productKey, false),
-                nextType = manager.getValue(typeKey, RemoteControllerType.UNKNOWN),
-            )
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             throw failure

@@ -42,6 +42,15 @@ class WhipStreamConfigValidatorContractTest {
     }
 
     @Test
+    fun rejectsLoopbackAndLocalhostPublishHosts() {
+        assertReason("http://127.0.0.1:18889/live/device/whip", WhipConfigRejection.LOOPBACK)
+        assertReason("http://127.1.2.3/live/device/whip", WhipConfigRejection.LOOPBACK)
+        assertReason("http://localhost/live/device/whip", WhipConfigRejection.LOOPBACK)
+        assertReason("http://LOCALHOST:18889/live/device/whip", WhipConfigRejection.LOOPBACK)
+        assertReason("http://[::1]:18889/live/device/whip", WhipConfigRejection.LOOPBACK)
+    }
+
+    @Test
     fun enforcesLengthControlCharacterAndStableConcurrentValidation() {
         val maximum = "http://computer/" + "a".repeat(2048 - "http://computer/".length - 5) + "/whip"
         assertIs<WhipConfigValidationResult.Valid>(WhipStreamConfigValidator.validate(maximum))

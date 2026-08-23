@@ -23,6 +23,7 @@ enum class StreamConfigRejection {
     USER_INFO_NOT_ALLOWED,
     FRAGMENT_NOT_ALLOWED,
     CONTROL_CHARACTER,
+    LOOPBACK,
 }
 
 object StreamConfigValidator {
@@ -66,6 +67,16 @@ object StreamConfigValidator {
         if (uri.path.orEmpty().any(Char::isISOControl)) {
             return StreamValidationResult.Invalid(StreamConfigRejection.CONTROL_CHARACTER)
         }
+        if (loopbackHost(uri.host)) {
+            return StreamValidationResult.Invalid(StreamConfigRejection.LOOPBACK)
+        }
         return StreamValidationResult.Valid(ValidatedStreamConfig(rtmpUrl))
+    }
+
+    private fun loopbackHost(host: String): Boolean {
+        val normalized = host.trim().lowercase().removePrefix("[").removeSuffix("]")
+        if (normalized == "localhost" || normalized == "::1" || normalized == "0:0:0:0:0:0:0:1") return true
+        val parts = normalized.split('.')
+        return parts.size == 4 && parts[0] == "127" && parts.all { it.toIntOrNull() in 0..255 }
     }
 }

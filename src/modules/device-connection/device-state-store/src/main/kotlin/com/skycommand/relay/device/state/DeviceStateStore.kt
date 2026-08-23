@@ -222,8 +222,8 @@ class DeviceStateStore private constructor(
         var appliedSnapshot: DeviceSnapshot? = null
         val shouldDrain = lock.withLock {
             val previousSourceRevision = sourceRevisions[patch.source] ?: 0
-            val sourceRevision = if (localPairing || localSdk) previousSourceRevision + 1 else patch.sourceRevision
-            if (sourceRevision <= previousSourceRevision) {
+            val sourceRevision = if (localSdk) previousSourceRevision + 1 else patch.sourceRevision
+            if (!localPairing && sourceRevision <= previousSourceRevision) {
                 return ApplyResult.IgnoredStale(sourceRevision)
             }
             val previous = current
@@ -251,7 +251,9 @@ class DeviceStateStore private constructor(
                     pairing = requireNotNull(patch.pairing),
                 )
             }
-            sourceRevisions[patch.source] = sourceRevision
+            if (!localPairing) {
+                sourceRevisions[patch.source] = sourceRevision
+            }
             appliedSnapshot = current
             pendingEvents.addLast(PendingEvent(DeviceStateEvent(previous, current), listeners.toList()))
             if (draining) false else {

@@ -31,6 +31,12 @@ internal class VideoTransportInterlock(
         synchronized(lock) { ownership = null }
     }
 
+    fun releaseStreamingOwnership() {
+        synchronized(lock) {
+            if (ownership?.phase == OwnershipPhase.STREAMING) ownership = null
+        }
+    }
+
     fun close() {
         synchronized(lock) {
             closed = true

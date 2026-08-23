@@ -10,7 +10,7 @@ Gradle 路径：:live-stream
 
 二级模块：`stream-config-validator` 校验 RTMP 配置；`dji-stream-adapter` 经共享操作协调器适配 DJI 操作；`android-dji-stream-adapter` 实现真实 DJI MSDK v5 RTMP 接口；`stream-state-store` 持有图传状态和指标；`stream-command-handler` 解释 `live-stream.start`/`live-stream.stop` 并将结果映射为中继安全结果。
 
-`LiveStream` 门面只组合上述二级模块，并向 gateway 暴露命令处理器、不可变图传快照和状态订阅。它不接收、转码、播放或存储视频，不建立 RTMP Socket，不直接调用 DJI，也不保存第二份图传状态。
+`LiveStream` 门面只组合上述二级模块，并向 gateway 暴露命令处理器、不可变图传快照和状态订阅。它不接收、转码、播放或存储视频，不建立 RTMP Socket，不直接调用 DJI SDK，也不保存第二份图传状态。设备不可用时，它只通过已注入的 `DjiStreamPort.stop` 停止残留 RTMP。
 
 ## 2. 对外接口
 
@@ -32,7 +32,7 @@ liveStream.markDeviceUnavailable() -> StreamSnapshot
 
 `live-stream.start` 必须在任何 DJI 调用前校验 RTMP URL。只有 DJI 确认启动成功后才报告图传活动。停止、启动失败、超时、取消和设备断开必须产生稳定的非活动状态和安全提示。重复或延迟 DJI 回调不得改变较新的状态，也不得完成同一中继命令两次。公开结果不得包含密码、令牌、文件路径、原始异常或 DJI 对象。
 
-设备不可用时，组合根必须调用 `LiveStream.markDeviceUnavailable`。门面将该通知唯一委托给 `StreamStateStore.markDeviceUnavailable`，使运行中图传进入安全非活动状态，并让旧 DJI 回调因操作代际失效而无法恢复图传。门面不得自行解释 RTMP URL、状态迁移或 DJI 错误。
+设备不可用时，组合根必须调用 `LiveStream.markDeviceUnavailable`。门面先将该通知委托给 `StreamStateStore.markDeviceUnavailable`，使运行中图传进入安全非活动状态，并让旧 DJI 回调因操作代际失效而无法恢复图传；随后必须再调用 `DjiStreamPort.stop`，停止仍在推送的 DJI RTMP。停止完成回调不得改写已失效状态。门面不得自行解释 RTMP URL、状态迁移或 DJI 错误。
 
 ## 4. 验证要求
 

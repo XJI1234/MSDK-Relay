@@ -29,11 +29,30 @@ class RelayBootstrapModuleTest {
         assertEquals(1, ports.events.count { it == "telemetry-start" })
     }
 
+    @Test fun publishesDeviceLinkWhileGatewayIsActiveBeforeSdkReady() {
+        val ports = FakePorts()
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        ports.deviceChanged()
+        assertEquals(0, ports.events.count { it == "link-publish" })
+        assertEquals(0, ports.events.count { it == "telemetry-start" })
+
+        ports.gatewayStateChanged(SessionState.ACTIVE)
+        assertEquals(1, ports.events.count { it == "link-publish" })
+        assertEquals(0, ports.events.count { it == "telemetry-start" })
+        assertEquals(0, ports.events.count { it == "telemetry-publish" })
+
+        ports.deviceChanged()
+        assertEquals(2, ports.events.count { it == "link-publish" })
+        assertEquals(0, ports.events.count { it == "telemetry-start" })
+    }
+
     @Test fun publishesWhenTelemetryStartsAfterGatewayIsAlreadyActive() {
         val ports = FakePorts()
         val module = RelayBootstrapModule(ports)
         module.start()
         ports.gatewayStateChanged(SessionState.ACTIVE)
+        assertEquals(1, ports.events.count { it == "link-publish" })
         assertEquals(0, ports.events.count { it == "telemetry-publish" })
 
         ports.sdk = SdkAvailability.READY
@@ -115,6 +134,21 @@ class RelayBootstrapModuleTest {
         assertEquals(1, ports.events.count { it == "device-stop" })
     }
 
+    @Test fun leavingActiveGatewayInvalidatesVideoTransportsWithoutStoppingTheRelay() {
+        val ports = FakePorts().apply { sdk = SdkAvailability.READY }
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        ports.gatewayStateChanged(SessionState.ACTIVE)
+        ports.gatewayStateChanged(SessionState.RECONNECT_WAIT)
+
+        assertEquals(1, ports.events.count { it == "stream-unavailable" })
+        assertEquals(0, ports.events.count { it == "gateway-stop" })
+        assertEquals(0, ports.events.count { it == "mission-unavailable" })
+
+        ports.gatewayStateChanged(SessionState.CONNECTING)
+        assertEquals(1, ports.events.count { it == "stream-unavailable" })
+    }
+
     @Test fun callbacksAfterStopCannotPublishOrRestartRelay() {
         val ports = FakePorts().apply { sdk = SdkAvailability.READY }
         val module = RelayBootstrapModule(ports)
@@ -128,6 +162,7 @@ class RelayBootstrapModuleTest {
 
         assertEquals(1, ports.events.count { it == "gateway-start" })
         assertEquals(0, ports.events.count { it == "telemetry-publish" })
+        assertEquals(0, ports.events.count { it == "link-publish" })
     }
 
     private class FakePorts : RelayLifecyclePorts {
@@ -161,6 +196,7 @@ class RelayBootstrapModuleTest {
         override fun startTelemetry() { events += "telemetry-start"; afterTelemetryStart?.invoke() }
         override fun stopTelemetry() { events += "telemetry-stop" }
         override fun publishTelemetry() { events += "telemetry-publish" }
+        override fun publishLinkSnapshot() { events += "link-publish" }
         override fun startGateway() {
             events += "gateway-start"
             if (failNextGatewayStart) {

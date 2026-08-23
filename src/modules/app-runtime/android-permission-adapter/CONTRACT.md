@@ -23,10 +23,11 @@ adapter implements PermissionPort
 adapter.snapshot() -> PermissionSnapshot
 adapter.request(required, callback) -> PermissionCancellation
 adapter.onUsbPresenceChanged(listener) -> PermissionCancellation
+adapter.rebind(activity, activityResultRegistry, lifecycleOwner) -> Unit
 adapter.close() -> Unit
 ```
 
-必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；USB 接收器从 Activity `STARTED` 起保持注册，直到 `close`，不得在 `onStop` 注销。调用方持有实例，并在所属 Android 生命周期销毁前调用 `close`。`onUsbPresenceChanged` 只通知附件接入或拔出，不完成权限请求。
+必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；USB 接收器必须注册在应用上下文上，从 Activity `STARTED` 起保持注册，直到 `close`，不得在 `onStop` 或界面重建时注销。界面重建后必须 `rebind` 到新窗口，不得再次 `attach`，也不得因此关闭适配器。调用方持有实例；中继仍在运行时不得因界面销毁调用 `close`。`onUsbPresenceChanged` 只通知附件接入或拔出，不完成权限请求。
 
 适配器不得通过 `PermissionPort` 暴露 `Activity`、`Intent`、`UsbAccessory`、权限字符串、`Exception` 或 Android 回调对象。
 

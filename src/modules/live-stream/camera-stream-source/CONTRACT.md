@@ -49,7 +49,7 @@ object CameraStreamSource {
 }
 ```
 
-`camera-stream-source` 只实现上述平台无关端口。Android 适配器必须使用 `ICameraStreamManager.addReceiveStreamListener` 获取 `byte[]`、偏移、长度和 `StreamInfo`，再映射为 `CameraStreamInfo`；纯模块本身不引用 DJI 类。`CameraStreamInfo.codec` 为 H.264 时才产生 `EncodedVideoFrame`；H.265/未知编码丢弃并记录 `UNSUPPORTED_CODEC`。必须保留关键帧标记、PTS、分辨率和帧率。
+`camera-stream-source` 只实现上述平台无关端口。Android 适配器必须使用 `ICameraStreamManager.addReceiveStreamListener` 获取 `byte[]`、偏移、长度和 `StreamInfo`，再映射为 `CameraStreamInfo`；纯模块本身不引用 DJI 类。`CameraStreamInfo.codec` 为 H.264 时才产生 `EncodedVideoFrame`；H.265/未知编码丢弃、记录 `UNSUPPORTED_CODEC`，并通过 `EncodedVideoSource.start(..., onFailure)` 上报 `SourceFailure.UNSUPPORTED_CODEC`，每个会话只报一次。必须保留关键帧标记、PTS、分辨率和帧率。
 
 源必须在停止、失败和新代次开始时移除精确 listener 实例。旧 listener 的回调必须被丢弃。`EncodedVideoListener` 抛出的异常、非法帧和平台移除异常不得穿透 SDK 回调线程，只能记录固定诊断事实。源不创建手机显示 Surface，也不启动 DJI `LiveStreamManager`。
 

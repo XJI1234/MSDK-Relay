@@ -70,9 +70,24 @@ class LiveStreamContractTest {
 
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
         assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        assertEquals(1, fixture.port.stopCalls)
         fixture.port.startCompletion!!.succeed()
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
         assertEquals(listOf("reject:Stream operation failed"), completion.events)
+    }
+
+    @Test
+    fun deviceUnavailabilityStopsAnActiveDjiStream() {
+        val fixture = Fixture()
+        val startCompletion = Completion()
+        fixture.liveStream.commandHandler().handle(start(), startCompletion)
+        fixture.port.startCompletion!!.succeed()
+        assertEquals(StreamLifecycleState.STREAMING, fixture.liveStream.snapshot().state)
+
+        fixture.liveStream.markDeviceUnavailable()
+
+        assertEquals(1, fixture.port.stopCalls)
+        assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
     }
 
     private class Fixture {
@@ -92,13 +107,17 @@ class LiveStreamContractTest {
 
     private class Port : DjiStreamPort {
         var startCalls = 0
+        var stopCalls = 0
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
         override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             startCalls += 1
             startCompletion = completion
         }
-        override fun stop(completion: StreamDjiCompletion) { stopCompletion = completion }
+        override fun stop(completion: StreamDjiCompletion) {
+            stopCalls += 1
+            stopCompletion = completion
+        }
     }
 
     private fun start() = CommandFrame("start", "live-stream.start", JsonObject(mapOf("rtmpUrl" to JsonString("rtmp://computer/live/device"))))

@@ -58,12 +58,14 @@ object CameraStreamSource {
         private var generation = 0L
         private var active: Active? = null
 
-        override fun start(listener: EncodedVideoListener): SourceStartResult {
+        override fun start(listener: EncodedVideoListener): SourceStartResult = start(listener) {}
+
+        override fun start(listener: EncodedVideoListener, onFailure: (SourceFailure) -> Unit): SourceStartResult {
             val prepared = synchronized(lock) {
                 if (active != null) {
                     null
                 } else {
-                    val next = Active(++generation, listener)
+                    val next = Active(++generation, listener, onFailure)
                     next.platformListener = platformListener(next)
                     active = next
                     next
@@ -105,6 +107,10 @@ object CameraStreamSource {
 
             if (info.codec != CameraStreamCodec.H264) {
                 record(CameraStreamSourceDiagnosticKind.UNSUPPORTED_CODEC)
+                val notify = synchronized(lock) {
+                    this.active?.takeIf { it === active && !it.failureNotified }?.also { it.failureNotified = true }?.onFailure
+                }
+                if (notify != null) runCatching { notify(SourceFailure.UNSUPPORTED_CODEC) }
                 return@CameraStreamListener
             }
 
@@ -141,7 +147,9 @@ object CameraStreamSource {
         private class Active(
             val generation: Long,
             val listener: EncodedVideoListener,
+            val onFailure: (SourceFailure) -> Unit,
             var platformListener: CameraStreamListener? = null,
+            var failureNotified: Boolean = false,
         )
     }
 }

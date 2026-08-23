@@ -23,6 +23,7 @@ enum class EndpointRejection {
     USER_INFO_NOT_ALLOWED,
     FRAGMENT_NOT_ALLOWED,
     CONTROL_CHARACTER,
+    INVALID_PATH,
 }
 
 object EndpointSettings {
@@ -60,7 +61,20 @@ object EndpointSettings {
         if (uri.fragment != null) {
             return EndpointValidationResult.Invalid(EndpointRejection.FRAGMENT_NOT_ALLOWED)
         }
+        val rawPath = uri.rawPath
+        val pathMissing = rawPath.isNullOrBlank() || rawPath == "/"
+        if (!pathMissing && rawPath != "/relay") {
+            return EndpointValidationResult.Invalid(EndpointRejection.INVALID_PATH)
+        }
+        val endpoint = if (pathMissing) {
+            val host = uri.host.orEmpty().let { if (it.contains(':')) "[$it]" else it }
+            val portPart = if (uri.port == -1) "" else ":${uri.port}"
+            val queryPart = if (uri.rawQuery == null) "" else "?${uri.rawQuery}"
+            "${uri.scheme}://$host$portPart/relay$queryPart"
+        } else {
+            value
+        }
 
-        return EndpointValidationResult.Valid(ValidatedRelayEndpoint(value))
+        return EndpointValidationResult.Valid(ValidatedRelayEndpoint(endpoint))
     }
 }

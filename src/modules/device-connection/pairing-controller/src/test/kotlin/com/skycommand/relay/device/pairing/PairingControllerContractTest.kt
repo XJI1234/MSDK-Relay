@@ -98,7 +98,7 @@ class PairingControllerContractTest {
     }
 
     @Test
-    fun stopSuccessReturnsToIdleSoPairingCanRestartWhileAircraftIsDisconnected() {
+    fun stopSuccessKeepsStoppingAndAllowsRestartWithoutFakingIdle() {
         val fixture = Fixture()
         fixture.makeReady()
         assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
@@ -110,7 +110,7 @@ class PairingControllerContractTest {
         fixture.executor.runNext()
         fixture.stopAction.succeed()
 
-        assertEquals(PairingState.IDLE, fixture.controller.state())
+        assertEquals(PairingState.STOPPING, fixture.controller.state())
         assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
     }
 

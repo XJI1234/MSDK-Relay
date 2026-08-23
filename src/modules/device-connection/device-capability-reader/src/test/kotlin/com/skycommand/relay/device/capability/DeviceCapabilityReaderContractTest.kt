@@ -92,7 +92,29 @@ class DeviceCapabilityReaderContractTest {
         )
 
         assertEquals(
-            DeviceCapabilities(false, false, false, true, false),
+            DeviceCapabilities(false, false, false, false, false),
+            DeviceCapabilityReader.read(snapshot),
+        )
+    }
+
+    @Test
+    fun waylineCapabilityFollowsFlightReadyFactsNotPairingState() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            aircraft = LinkState.CONNECTED,
+            flightController = LinkState.CONNECTED,
+            pairing = PairingState.IDLE,
+        )
+
+        assertEquals(
+            DeviceCapabilities(
+                canStartPairing = false,
+                canStopPairing = false,
+                canReadTelemetry = true,
+                canStreamVideo = true,
+                canRunWayline = true,
+            ),
             DeviceCapabilityReader.read(snapshot),
         )
     }

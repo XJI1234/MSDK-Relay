@@ -36,8 +36,8 @@ object DeviceCapabilityReader {
             canStartPairing = sdkReady && remoteConnected && !aircraftConnected && pairingCanStart,
             canStopPairing = pairingActive,
             canReadTelemetry = flightReady,
-            canStreamVideo = sdkReady && aircraftConnected,
-            canRunWayline = flightReady && remoteConnected && snapshot.pairing == PairingState.PAIRED,
+            canStreamVideo = flightReady,
+            canRunWayline = flightReady && remoteConnected,
         )
     }
 }

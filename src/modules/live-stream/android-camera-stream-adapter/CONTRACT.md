@@ -27,7 +27,7 @@ class AndroidCameraStreamApi {
 - 使用 `addReceiveStreamListener`，不使用 YUV `addFrameListener` 作为发布路径。
 - 按 `StreamInfo` 转换 mime type、偏移、长度、宽高、帧率、PTS 和关键帧，不复制数据数组。
 - H.264 之外的编码报告稳定错误，不进行隐式转码。
-- 停止时移除精确的 listener 实例；失败、停止或新代次后的迟到回调全部忽略。
+- 停止时移除精确的 listener 实例；失败、停止或新代次后的迟到回调全部忽略。MSDK 5.17 `ICameraStreamManager.removeReceiveStreamListener` 只接受 listener，没有 `ComponentIndexType` 重载；移除时必须传与 `addReceiveStreamListener(cameraIndex, listener)` 同一实例，不得伪造带相机索引的调用。
 - 精确保存 SDK listener 与平台无关 listener 的对应关系；移除时只能移除对应实例。异常向上交给 `camera-stream-source` 的生命周期处理，不泄露 SDK 异常文本。
 - 只使用 `ICameraStreamManager.addReceiveStreamListener`，不调用 `addFrameListener`、`putCameraStreamSurface` 或 `ILiveStreamManager`。
 

@@ -32,6 +32,7 @@ EncodedVideoFrame(
 
 interface EncodedVideoSource {
   start(listener: EncodedVideoListener) -> SourceStartResult
+  start(listener: EncodedVideoListener, onFailure: (SourceFailure) -> Unit) -> SourceStartResult
   stop() -> SourceStopResult
 }
 

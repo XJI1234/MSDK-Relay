@@ -1,9 +1,14 @@
 package com.skycommand.relay.device.pairing.status.android
 
 import com.skycommand.relay.device.state.PairingState
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AndroidPairingStatusPortContractTest {
     @Test
@@ -22,6 +27,16 @@ class AndroidPairingStatusPortContractTest {
             listOf("1:IDLE", "2:PAIRING", "3:PAIRED", "4:FAILED", "5:UNKNOWN"),
             received,
         )
+    }
+
+    @Test
+    fun observeDoesNotSeedUnknownFromMissingKeyDefaults() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+            Path("src/modules/device-connection/android-pairing-status-adapter/src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+        ).first { it.exists() }.readText()
+        assertTrue(source.contains("manager.listen(key"))
+        assertFalse(source.contains("manager.getValue(key, PairingState.UNKNOWN)"))
     }
 
     @Test

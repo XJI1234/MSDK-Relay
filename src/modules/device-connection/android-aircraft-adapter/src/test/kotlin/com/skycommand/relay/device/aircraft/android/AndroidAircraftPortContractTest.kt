@@ -1,9 +1,14 @@
 package com.skycommand.relay.device.aircraft.android
 
 import com.skycommand.relay.device.aircraft.AircraftListener
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AndroidAircraftPortContractTest {
     @Test
@@ -112,6 +117,17 @@ class AndroidAircraftPortContractTest {
         platform.publish(true, false)
 
         assertEquals(1, delivered)
+    }
+
+    @Test
+    fun observeDoesNotSeedDisconnectedFromMissingKeyDefaults() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+        assertTrue(source.contains("manager.listen(aircraftKey"))
+        assertFalse(source.contains("manager.getValue(aircraftKey, false)"))
+        assertFalse(source.contains("manager.getValue(flightControllerKey, false)"))
     }
 
     private data class Fact(

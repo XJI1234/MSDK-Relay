@@ -17,6 +17,7 @@ import com.skycommand.relay.stream.dji.DjiStreamAdapter
 import com.skycommand.relay.stream.dji.DjiStreamPort
 import com.skycommand.relay.stream.dji.DjiStreamStartResult
 import com.skycommand.relay.stream.dji.DjiStreamStopResult
+import com.skycommand.relay.stream.dji.StreamDjiCompletion
 import com.skycommand.relay.stream.dji.StreamDjiTerminalListener
 import com.skycommand.relay.stream.dji.StreamDjiTerminalOutcome
 import com.skycommand.relay.stream.state.Registration
@@ -55,7 +56,14 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
 
     fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
-        (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
+        val snapshot = (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
+        runCatching {
+            dependencies.djiPort.stop(object : StreamDjiCompletion {
+                override fun succeed() = Unit
+                override fun fail() = Unit
+            })
+        }
+        snapshot
     }
 
     fun close() {

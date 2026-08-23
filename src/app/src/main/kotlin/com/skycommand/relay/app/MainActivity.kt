@@ -39,15 +39,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        permissionAdapter = AndroidPermissionAdapter.attach(this, activityResultRegistry, this)
         settings = RelaySettings.create(AndroidRelaySettingsBackend.create(this))
+        val restored = RelayRuntimeHolder.restore()
+        if (restored != null) {
+            permissionAdapter = restored.permissionAdapter
+            permissionAdapter.rebind(this, activityResultRegistry, this)
+            graph = restored.graph
+            graphEndpoint = restored.graphEndpoint
+        } else {
+            permissionAdapter = AndroidPermissionAdapter.attach(this, activityResultRegistry, this)
+        }
         setContentView(buildContent())
         val loaded = settings.loadEndpoint()
         if (loaded is SettingsLoadResult.Available) {
             endpointInput.setText(loaded.snapshot.endpoint?.value.orEmpty())
         }
+        if (graph != null) {
+            statusRegistration = graph?.onStatusChanged(::paintStatus)
+            clearMessage()
+        } else {
+            showMessage(R.string.message_stopped)
+        }
         paintStatus()
-        showMessage(R.string.message_stopped)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -57,9 +70,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         statusRegistration?.unregister()
-        graph?.close()
-        graph = null
-        permissionAdapter.close()
+        statusRegistration = null
+        val runtime = runCatching { graph?.status()?.runtime }.getOrNull()
+        val keep = graph != null && runtime != null && RelaySurfaceRetention.shouldRetain(runtime)
+        if (keep) {
+            RelayRuntimeHolder.retain(graph!!, permissionAdapter, graphEndpoint)
+        } else {
+            graph?.close()
+            graph = null
+            graphEndpoint = null
+            permissionAdapter.close()
+            RelayRuntimeHolder.clear()
+        }
         super.onDestroy()
     }
 
@@ -179,6 +201,7 @@ class MainActivity : ComponentActivity() {
             graph?.close()
             graph = null
             graphEndpoint = null
+            RelayRuntimeHolder.clear()
             graph = runCatching {
                 MobileRelayGraph.create(this, endpoint, connection.settings.deviceId.value, permissionAdapter)
             }.getOrElse { error ->
@@ -227,11 +250,11 @@ class MainActivity : ComponentActivity() {
         val paint = {
             statusView.visibility = View.VISIBLE
             statusView.text = listOf(
-                getString(R.string.status_runtime, status.runtime),
-                getString(R.string.status_gateway, status.gateway),
-                getString(R.string.status_remote_controller, status.remoteController),
-                getString(R.string.status_pairing, status.pairing),
-                getString(R.string.status_aircraft, status.aircraft),
+                getString(R.string.status_runtime, StatusLabels.runtime(status.runtime)),
+                getString(R.string.status_gateway, StatusLabels.gateway(status.gateway)),
+                getString(R.string.status_remote_controller, StatusLabels.link(status.remoteController)),
+                getString(R.string.status_pairing, StatusLabels.pairing(status.pairing)),
+                getString(R.string.status_aircraft, StatusLabels.link(status.aircraft)),
                 getString(R.string.status_stream, status.stream),
                 getString(R.string.status_mission, status.mission),
             ).joinToString("\n")

@@ -89,6 +89,25 @@ class VideoTransportInterlockContractTest {
         }
     }
 
+    @Test fun asyncStreamingFailureReleasesTransportButFailedStopKeepsIt() {
+        val released = Fixture()
+        released.legacyStart()
+        released.legacy.complete(0).succeed("Stream started")
+        released.interlock.releaseStreamingOwnership()
+        released.whipStart()
+        assertEquals(1, released.whip.calls.get())
+
+        val held = Fixture()
+        held.legacyStart()
+        held.legacy.complete(0).succeed("Stream started")
+        held.legacyStop()
+        held.legacy.complete(1).reject("Stream operation failed")
+        held.interlock.releaseStreamingOwnership()
+        val whipCompletion = held.whipStart()
+        assertEquals(0, held.whip.calls.get())
+        assertEquals(listOf("reject:Another video transport is active"), whipCompletion.events)
+    }
+
     @Test fun deviceUnavailableLetsAnotherModeStartAndIgnoresOldCompletion() {
         val fixture = Fixture()
 

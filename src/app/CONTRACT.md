@@ -10,9 +10,9 @@ Gradle 路径：`:app`
 
 ## 二级职责
 
-1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、遥控器、对频、飞机，不得把飞机画在对频前面。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。它必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图；`onDestroy` 才关闭适配器。图重建不得再次 `attach`。
+1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、遥控器、对频、飞机，不得把飞机画在对频前面。展示文字必须是操作员能读的中文，不得把 `ACTIVE`、`RECONNECT_WAIT` 等机器词直接画上。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。首次创建时必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图。中继仍在启动或运行时，界面销毁必须保留图和适配器，恢复时必须 `rebind` 到新界面，不得再次 `attach`，也不得因此停止电脑会话。仅当中继已停止、失败或正在停止时，`onDestroy` 才关闭图和适配器。
 2. `MobileRelayGraph`：只创建一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。旧 RTMP `LiveStream` 与 WHIP `WhipLiveStream` 必须拥有各自的适配器、状态、命令处理器和关闭路径；任一链路的启动、停止、发布器或 DJI 失败不得调用或改变另一链路。组合根唯一负责在两个命令处理器之前装配运行时图传互斥，拒绝的命令不得调用另一链路。权限适配器由 Activity 持有，图关闭时不得关闭它。
-3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次，并在设备失效时通知直播、航线、飞行控制和设备设置模块。
+3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次。SDK 离开 `READY` 时通知直播、航线、飞行控制和设备设置失效。网关已是 `ACTIVE` 但遥测尚未启动时发布设备链路快照。网关从 `ACTIVE` 进入重连或停止时只通知直播失效，从而停止 WHIP/RTMP 发布并释放图传互斥，不得因此停止网关重连。`MobileRelayGraph` 装配网关时握手超时必须为 15 秒，与桌面端一致。
 4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。
 5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成。
 
@@ -28,9 +28,9 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 
 1. 用户保存合法 `ws://` 或 `wss://` 地址后才能启动。
 2. `AppRuntime` 先取得运行时权限，再启动前台服务，最后调用组合启动模块。电脑 WebSocket 不得等待 USB。中继进入 `RUNNING` 后，组合根单独请求 `USB_ACCESS`：没有附件时保持等待，接入后弹出系统授权；授权成功、USB 再次接入且已授权，或 SDK 首次进入 `READY` 时，都必须重启遥控器和飞机观察。USB 拒绝或失败后必须允许再次请求，不得把 USB 授权绑进 `AppRuntime.start()`。USB 广播接收器必须存活到权限适配器关闭，不能随 Activity 进入后台而注销。
-3. 组合启动模块先启动 `device-connection`，随即启动 `relay-gateway`。电脑 WebSocket 不得等待 DJI SDK。仅在 DJI 状态为 `READY` 后启动飞行遥测源和 `telemetry`。SDK 离开 `READY` 时必须停止遥测并通知直播/航线/飞行控制/设备设置失效，但不得因此断开电脑连接；SDK 再次 `READY` 后只重试遥测。
-4. 网关已是 `ACTIVE` 且遥测已启动时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。网关先于 SDK 就绪进入 `ACTIVE` 时，遥测启动后再补发首帧。
-5. 停止顺序严格反向：网关、遥测、飞行源、设备；同时关闭航线缓存、DJI 航线适配器、前台服务端口和线程资源。权限适配器随 Activity 销毁关闭，不随中继图重建关闭。
+3. 组合启动模块先启动 `device-connection`，随即启动 `relay-gateway`。电脑 WebSocket 不得等待 DJI SDK。仅在 DJI 状态为 `READY` 后启动飞行遥测源和 `telemetry`。SDK 离开 `READY` 时必须停止遥测并通知直播/航线/飞行控制/设备设置失效，但不得因此断开电脑连接；SDK 再次 `READY` 后只重试遥测。网关离开 `ACTIVE` 时必须通知直播失效（含 WHIP 发布器和图传互斥），操作者重连后必须重新启动图传。
+4. 网关已是 `ACTIVE` 且遥测已启动时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。网关已是 `ACTIVE` 但 SDK 尚未 `READY` 时，必须发布当前设备链路快照（SDK、遥控器、飞机、对频），不得等待飞行遥测模块启动；`ACTIVE` 期间设备事实变化必须再次发布该链路快照。网关先于 SDK 就绪进入 `ACTIVE` 时，遥测启动后再补发完整首帧。
+5. 停止顺序严格反向：网关、遥测、飞行源、设备；同时关闭航线缓存、DJI 航线适配器、前台服务端口和线程资源。权限适配器不随中继图重建关闭。中继仍在运行时，适配器不得随界面销毁关闭；USB 广播接收器必须注册在应用上下文，存活到适配器关闭。
 6. 设备离线时必须通知直播、航线、飞行控制和设备设置模块失效；旧 DJI、网络和状态回调不得恢复已停止代次。
 7. 任一启动步骤抛出异常时，必须注销已建立的监听、逆序停止已启动资源，并允许后续完整重试。
 8. 任何可安装 APK 都必须在打包时通过 Gradle 属性 `DJI_API_KEY` 注入已注册的 DJI API Key；未提供时打包必须失败，不能生成携带空密钥的伪可用 APK。该密钥不得进入源码、契约或版本控制。
@@ -53,6 +53,7 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 5. 同一模式的 stop 先以新操作代次进入 `STOPPING`。只有 stop 成功才释放为可启动；stop 拒绝、失败、超时、取消或同步异常都必须继续占用，直到设备不可用或组合根关闭，避免硬件状态未知时切换相机链路。
 6. 设备不可用和组合根关闭必须清空所有权、使旧操作代次失效；旧成功、失败或重复回调不得重新占用、释放或污染之后的模式。设备恢复后允许任一模式重新开始。
 7. 互斥模块只持有两个 `CommandHandler` 并包裹其完成入口，不读取图传快照、不持有 DJI 或 WebRTC 对象、不停止另一条链路。设备不可用和关闭仍分别调用两个门面的现有失效和关闭路径。
+8. 已占用模式在 `STREAMING` 期间因发布器失败或断开进入终态、且当时没有对应 stop 命令时，组合根必须调用 `releaseStreamingOwnership()` 释放占用。这与第 5 条 stop 失败继续占用不同：后者表示硬件状态未知。该方法只清除 `STREAMING`，不得清除 `STARTING` 或 `STOPPING`。
 
 ## 验证
 

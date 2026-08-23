@@ -93,6 +93,14 @@ class WhipPublisherContractTest {
         )
         assertEquals(WhipPublisherState.FAILED, sourceFailure.publisher.snapshot().state)
         assertEquals(1, sourceFailure.transport.closeCalls)
+
+        val codecFailure = Fixture()
+        assertIs<WhipPublisherStartResult.Accepted>(codecFailure.publisher.start(config(), codecFailure.source, codecFailure.events))
+        codecFailure.source.fail(SourceFailure.UNSUPPORTED_CODEC)
+        assertEquals(WhipPublisherState.FAILED, codecFailure.publisher.snapshot().state)
+        assertEquals(listOf("failed:ENCODED_H264_UNAVAILABLE"), codecFailure.events.events)
+        assertEquals(1, codecFailure.transport.closeCalls)
+        assertEquals(1, codecFailure.source.stopCalls)
     }
 
     @Test
@@ -188,11 +196,17 @@ class WhipPublisherContractTest {
         var stopResult: SourceStopResult = SourceStopResult.Stopped
         var startCalls = 0
         var stopCalls = 0
+        private var onFailure: ((SourceFailure) -> Unit)? = null
 
         override fun start(listener: EncodedVideoListener): SourceStartResult {
             startCalls += 1
             listeners += listener
             return startResult
+        }
+
+        override fun start(listener: EncodedVideoListener, onFailure: (SourceFailure) -> Unit): SourceStartResult {
+            this.onFailure = onFailure
+            return start(listener)
         }
 
         override fun stop(): SourceStopResult {
@@ -201,6 +215,10 @@ class WhipPublisherContractTest {
         }
 
         fun emit(frame: EncodedVideoFrame) = listeners.last().onFrame(frame)
+
+        fun fail(reason: SourceFailure) {
+            onFailure?.invoke(reason)
+        }
     }
 
     private class Events : WhipPublisherListener {

@@ -54,5 +54,7 @@ enum class SourceFailure {
 interface EncodedVideoSource {
     fun start(listener: EncodedVideoListener): SourceStartResult
 
+    fun start(listener: EncodedVideoListener, onFailure: (SourceFailure) -> Unit): SourceStartResult = start(listener)
+
     fun stop(): SourceStopResult
 }

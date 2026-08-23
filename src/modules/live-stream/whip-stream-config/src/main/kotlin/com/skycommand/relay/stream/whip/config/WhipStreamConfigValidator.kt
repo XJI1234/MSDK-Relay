@@ -22,6 +22,7 @@ enum class WhipConfigRejection {
     QUERY_NOT_ALLOWED,
     FRAGMENT_NOT_ALLOWED,
     CONTROL_CHARACTER,
+    LOOPBACK,
 }
 
 object WhipStreamConfigValidator {
@@ -68,6 +69,16 @@ object WhipStreamConfigValidator {
         if (uri.rawPath.isNullOrBlank() || !uri.rawPath.startsWith('/') || !uri.rawPath.endsWith("/whip")) {
             return WhipConfigValidationResult.Invalid(WhipConfigRejection.MISSING_PATH)
         }
+        if (loopbackHost(uri.host)) {
+            return WhipConfigValidationResult.Invalid(WhipConfigRejection.LOOPBACK)
+        }
         return WhipConfigValidationResult.Valid(ValidatedWhipStreamConfig(whipUrl))
+    }
+
+    private fun loopbackHost(host: String): Boolean {
+        val normalized = host.trim().lowercase().removePrefix("[").removeSuffix("]")
+        if (normalized == "localhost" || normalized == "::1" || normalized == "0:0:0:0:0:0:0:1") return true
+        val parts = normalized.split('.')
+        return parts.size == 4 && parts[0] == "127" && parts.all { it.toIntOrNull() in 0..255 }
     }
 }

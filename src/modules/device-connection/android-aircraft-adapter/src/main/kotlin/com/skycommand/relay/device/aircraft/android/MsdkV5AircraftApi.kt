@@ -37,11 +37,6 @@ private class KeyManagerObservation(
             manager.listen(productTypeKey, owner) { _, next ->
                 publish(null, null, next ?: ProductType.UNKNOWN)
             }
-            publish(
-                manager.getValue(aircraftKey, false),
-                manager.getValue(flightControllerKey, false),
-                manager.getValue(productTypeKey, ProductType.UNKNOWN),
-            )
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             throw failure

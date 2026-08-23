@@ -51,11 +51,13 @@ import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
 import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
+import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.camera.CameraStreamSource
 import com.skycommand.relay.stream.camera.android.AndroidCameraStreamApi
 import com.skycommand.relay.stream.dji.android.AndroidDjiStreamPort
 import com.skycommand.relay.stream.whip.WhipLiveStream
 import com.skycommand.relay.stream.whip.WhipLiveStreamDependencies
+import com.skycommand.relay.stream.whip.state.WhipStreamLifecycle
 import com.skycommand.relay.stream.whip.android.AndroidWhipTransport
 import com.skycommand.relay.flight.FlightControl
 import com.skycommand.relay.flight.FlightControlDependencies
@@ -69,6 +71,7 @@ import com.skycommand.relay.telemetry.flight.android.AndroidFlightTelemetrySourc
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
 import com.skycommand.relay.telemetry.publish.PublishTelemetryResult
 import com.skycommand.relay.telemetry.publish.TelemetrySink
+import com.skycommand.relay.telemetry.snapshot.SnapshotAssembler
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
 import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
@@ -205,10 +208,20 @@ class MobileRelayGraph private constructor(
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
-        registrations += stream.onChanged { notifyStatus() }.let { registration ->
+        registrations += stream.onChanged { event ->
+            if (event.current.state == StreamLifecycleState.FAILED) {
+                videoTransports.releaseStreamingOwnership()
+            }
+            notifyStatus()
+        }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
-        registrations += whipStream.onChanged { notifyStatus() }.let { registration ->
+        registrations += whipStream.onChanged { snapshot ->
+            if (snapshot.state == WhipStreamLifecycle.FAILED || snapshot.state == WhipStreamLifecycle.DISCONNECTED) {
+                videoTransports.releaseStreamingOwnership()
+            }
+            notifyStatus()
+        }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
         registrations += wayline.onChanged { notifyStatus() }.let { registration ->
@@ -459,6 +472,7 @@ class MobileRelayGraph private constructor(
                     endpoint,
                     deviceId,
                     wayline.missionSink(),
+                    handshakeTimeoutMillis = 15_000,
                     diagnosticSink = { diagnostic ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -539,6 +553,9 @@ class MobileRelayGraph private constructor(
                     override fun startTelemetry() { telemetry.start() }
                     override fun stopTelemetry() { telemetry.stop() }
                     override fun publishTelemetry() { telemetry.publishCurrent() }
+                    override fun publishLinkSnapshot() {
+                        gateway.publishTelemetry(TelemetryFrameMapper.map(SnapshotAssembler.assemble(device.snapshot())))
+                    }
                     override fun startGateway() {
                         diagnostics.start()
                         gateway.start()

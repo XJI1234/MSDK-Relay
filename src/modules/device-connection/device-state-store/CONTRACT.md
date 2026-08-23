@@ -26,7 +26,7 @@ store.onChanged(listener) -> Registration
 
 `DeviceStatePatch` 必须包含来源、该来源的正整数 `sourceRevision`，以及来源负责的局部字段。来源只有 `SDK`、`REMOTE_CONTROLLER`、`AIRCRAFT`、`PAIRING` 四类；SDK 来源只更新 `sdkAvailability`，遥控器来源只更新遥控器字段，飞行器来源只更新飞行器和飞控字段，配对来源只更新 `pairing`。状态仓库是唯一合并者：每个来源独立比较版本，成功的局部更新产生一个新的全局快照版本。调用方不能读取再拼装其他来源状态。
 
-`applyPairing` 用于需要由本程序产生的配对意图和失败状态。它在仓库锁内为配对来源分配下一个版本，因此不会与真实 DJI 配对观察争用版本号。
+`applyPairing` 用于需要由本程序产生的配对命令阶段和失败状态。它更新配对字段并增加全局快照版本，但不得推进配对观察来源版本，因此之后到达的真实配对观察只要大于上一次观察版本即可覆盖命令阶段。
 
 `applySdk` 用于 SDK 生命周期转换。它在仓库锁内为 SDK 来源分配下一个版本；只有生命周期组合层可以调用此接口。
 

@@ -20,6 +20,8 @@ internal interface PermissionAdapterPlatform {
 
     fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation = PermissionCancellation { }
 
+    fun rebind(activity: Any, activityResultRegistry: Any, lifecycleOwner: Any) = Unit
+
     fun close() = Unit
 }
 
@@ -86,6 +88,17 @@ class AndroidPermissionAdapter internal constructor(
 
     fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation =
         platform.onUsbPresenceChanged(listener)
+
+    fun rebind(
+        activity: Any,
+        activityResultRegistry: Any,
+        lifecycleOwner: Any,
+    ) {
+        synchronized(lock) {
+            check(!closed) { "Permission adapter is closed" }
+        }
+        platform.rebind(activity, activityResultRegistry, lifecycleOwner)
+    }
 
     override fun close() {
         val operation = synchronized(lock) {

@@ -40,12 +40,14 @@ class CameraStreamSourceContractTest {
     fun reportsUnsupportedCodecAndInvalidFramesWithoutCallingTheConsumer() {
         val fixture = Fixture()
         val frames = mutableListOf<EncodedVideoFrame>()
-        fixture.source.start(EncodedVideoListener { frames += it })
+        val failures = mutableListOf<SourceFailure>()
+        fixture.source.start(EncodedVideoListener { frames += it }, { failures += it })
         fixture.api.emit(byteArrayOf(1), 0, 1, CameraStreamInfo(CameraStreamCodec.H265, 1, 1, 1, 0, false))
         fixture.api.emit(byteArrayOf(1), 2, 1, CameraStreamInfo(CameraStreamCodec.H264, 1, 1, 1, 0, false))
         fixture.api.emit(byteArrayOf(1), 0, 1, CameraStreamInfo(CameraStreamCodec.H264, 0, 1, 1, 0, false))
 
         assertEquals(emptyList(), frames)
+        assertEquals(listOf(SourceFailure.UNSUPPORTED_CODEC), failures)
         assertEquals(
             listOf(
                 CameraStreamSourceDiagnosticKind.UNSUPPORTED_CODEC,

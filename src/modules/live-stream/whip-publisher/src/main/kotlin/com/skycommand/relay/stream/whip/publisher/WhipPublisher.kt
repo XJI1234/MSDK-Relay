@@ -209,7 +209,14 @@ class WhipPublisher private constructor(
             return WhipPublisherStartResult.Rejected(WhipPublisherStartRejection.TRANSPORT_REJECTED)
         }
         val sourceResult = try {
-            source.start(session.sourceListener)
+            source.start(session.sourceListener) { reason ->
+                if (!isActive(session.generation)) return@start
+                terminate(
+                    session.generation,
+                    WhipPublisherState.FAILED,
+                    if (reason == SourceFailure.UNSUPPORTED_CODEC) WhipPublisherFailure.ENCODED_H264_UNAVAILABLE else WhipPublisherFailure.SOURCE_REJECTED,
+                )
+            }
         } catch (_: Throwable) {
             SourceStartResult.Failed(SourceFailure.PLATFORM_FAILURE)
         }

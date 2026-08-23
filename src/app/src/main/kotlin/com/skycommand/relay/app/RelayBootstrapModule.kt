@@ -27,6 +27,7 @@ interface RelayLifecyclePorts {
     fun startTelemetry()
     fun stopTelemetry()
     fun publishTelemetry()
+    fun publishLinkSnapshot()
     fun startGateway()
     fun stopGateway()
     fun closeFlightTelemetry()
@@ -115,16 +116,29 @@ class RelayBootstrapModule(
             ports.markDeviceSettingsUnavailable()
             telemetryStarted = false
             stopTelemetry()
+            publishAvailableSnapshot()
+        } else {
+            publishAvailableSnapshot()
         }
     }
 
     private fun onGatewayStateChanged(state: SessionState) {
         synchronized(lock) {
+            if (!active) return
+            val wasActive = gatewayActive
             gatewayActive = state == SessionState.ACTIVE
-            if (gatewayActive && active && telemetryStarted) {
-                ports.publishTelemetry()
+            if (gatewayActive) {
+                publishAvailableSnapshot()
+            } else if (wasActive) {
+                ports.markStreamUnavailable()
             }
         }
+    }
+
+    private fun publishAvailableSnapshot() {
+        if (!gatewayActive) return
+        if (telemetryStarted) ports.publishTelemetry()
+        else ports.publishLinkSnapshot()
     }
 
     private fun stopInternal() {

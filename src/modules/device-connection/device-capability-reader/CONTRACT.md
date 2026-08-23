@@ -30,8 +30,8 @@ canRunWayline
 - `canStartPairing`：SDK `READY`、遥控器连接、飞行器断开，且配对为 `UNKNOWN`、`IDLE`、`FAILED` 或 `STOPPING`。飞行器已连接时必须为假。停止对频后必须仍可再次开始。
 - `canStopPairing`：配对为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - `canReadTelemetry`：SDK `READY`、飞行器连接、飞控连接。
-- `canStreamVideo`：SDK `READY`、飞行器连接。
-- `canRunWayline`：SDK `READY`、遥控器连接、飞行器和飞控连接、配对为 `PAIRED`。
+- `canStreamVideo`：SDK `READY`、飞行器连接、飞控连接。
+- `canRunWayline`：SDK `READY`、遥控器连接、飞行器和飞控连接。对频是否完成不进入这条能力；电脑按对频状态单独拦截启动。
 - 所有字段独立按同一个输入快照推导；输入快照不会被修改。异常或未知状态只能收紧能力，不能放宽能力。
 
 ## 4. 测试要求

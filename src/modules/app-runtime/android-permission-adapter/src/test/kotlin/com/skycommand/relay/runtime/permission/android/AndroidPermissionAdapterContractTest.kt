@@ -113,6 +113,24 @@ class AndroidPermissionAdapterContractTest {
     }
 
     @Test
+    fun rebindDelegatesToThePlatformAndRejectsAfterClose() {
+        val platform = FakePlatform(
+            PermissionSnapshot.of(mapOf(PermissionKind.RUNTIME to PermissionState.GRANTED)),
+        )
+        val adapter = AndroidPermissionAdapter(platform)
+        val activity = Any()
+        val registry = Any()
+        val owner = Any()
+
+        adapter.rebind(activity, registry, owner)
+        assertEquals(1, platform.rebinds)
+        assertEquals(listOf(activity, registry, owner), platform.lastRebind)
+
+        adapter.close()
+        assertFailsWith<IllegalStateException> { adapter.rebind(activity, registry, owner) }
+    }
+
+    @Test
     fun closeCancelsActiveRequestAndRejectsFutureRequests() {
         val platform = FakePlatform(
             PermissionSnapshot.of(mapOf(PermissionKind.RUNTIME to PermissionState.DENIED)),
@@ -204,6 +222,8 @@ class AndroidPermissionAdapterContractTest {
         var runtimeRequests = 0
         var usbRequests = 0
         var cancellations = 0
+        var rebinds = 0
+        var lastRebind: List<Any>? = null
         private val presence = mutableListOf<() -> Unit>()
 
         fun current(): PermissionSnapshot = snapshot
@@ -252,6 +272,11 @@ class AndroidPermissionAdapterContractTest {
         override fun onUsbPresenceChanged(listener: () -> Unit): PermissionCancellation {
             presence += listener
             return PermissionCancellation { presence -= listener }
+        }
+
+        override fun rebind(activity: Any, activityResultRegistry: Any, lifecycleOwner: Any) {
+            rebinds += 1
+            lastRebind = listOf(activity, activityResultRegistry, lifecycleOwner)
         }
     }
 }

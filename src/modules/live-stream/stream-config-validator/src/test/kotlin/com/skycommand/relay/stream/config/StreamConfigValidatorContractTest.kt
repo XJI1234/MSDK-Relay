@@ -39,6 +39,9 @@ class StreamConfigValidatorContractTest {
         assertReason("rtmp://computer:abc/live/device", StreamConfigRejection.MALFORMED)
         assertReason("rtmp://computer/live/device#fragment", StreamConfigRejection.FRAGMENT_NOT_ALLOWED)
         assertReason("rtmp://computer/live/%zz", StreamConfigRejection.MALFORMED)
+        assertReason("rtmp://127.0.0.1/live/device", StreamConfigRejection.LOOPBACK)
+        assertReason("rtmp://localhost/live/device", StreamConfigRejection.LOOPBACK)
+        assertReason("rtmp://[::1]/live/device", StreamConfigRejection.LOOPBACK)
     }
 
     @Test

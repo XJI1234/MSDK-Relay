@@ -157,6 +157,18 @@ class DeviceStateStoreContractTest {
     }
 
     @Test
+    fun localPairingCommandsDoNotStarveLaterObservedPairingFacts() {
+        val store = DeviceStateStore.create()
+        store.applyPairing(PairingState.PAIRING)
+        store.applyPairing(PairingState.STOPPING)
+
+        val observed = assertIs<ApplyResult.Applied>(store.apply(DeviceStatePatch.pairing(1, PairingState.PAIRED)))
+
+        assertEquals(PairingState.PAIRED, observed.snapshot.pairing)
+        assertEquals(PairingState.PAIRED, store.snapshot().pairing)
+    }
+
+    @Test
     fun assignsMonotonicSourceVersionsToLocalSdkTransitions() {
         val store = DeviceStateStore.create()
 
