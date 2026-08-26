@@ -23,8 +23,10 @@ internal class MsdkV5LiveStreamApi(
             LiveStreamSettings.Builder().setLiveStreamType(LiveStreamType.RTMP)
                 .setRtmpSettings(RtmpSettings.Builder().setUrl(url).build()).build(),
         )
+        // FULL_HD 在热点上易卡；固定 HD(720p)+手动码率，优先流畅，清晰度仍明显高于 SD/AUTO。
         manager.setLiveStreamQuality(StreamQuality.HD)
-        manager.setLiveVideoBitrateMode(LiveVideoBitrateMode.AUTO)
+        manager.setLiveVideoBitrateMode(LiveVideoBitrateMode.MANUAL)
+        manager.setLiveVideoBitrate(HD_BITRATE_BPS)
         ListenerRegistry.put(listener, sdkListener)
         manager.addLiveStreamStatusListener(sdkListener)
         manager.startStream(completion.toSdkCompletion())
@@ -53,5 +55,10 @@ internal class MsdkV5LiveStreamApi(
         private val values = java.util.IdentityHashMap<DjiLiveStreamListener, LiveStreamStatusListener>()
         @Synchronized fun put(key:DjiLiveStreamListener,value:LiveStreamStatusListener){values[key]=value}
         @Synchronized fun remove(key:DjiLiveStreamListener):LiveStreamStatusListener?=values.remove(key)
+    }
+
+    private companion object {
+        /** DJI StreamQuality.HD 文档约 168 KByte/s；略抬到 220 保证细节，仍远低于 FULL_HD 峰值。 */
+        const val HD_BITRATE_BPS: Int = 220 * 1024 * 8
     }
 }

@@ -29,6 +29,9 @@ interface DjiStreamPort {
 
     fun stop(completion: StreamDjiCompletion)
 
+    /** Clear stuck in-flight start/stop and best-effort stop DJI so the next start can run. */
+    fun abort() = Unit
+
     fun close() = Unit
 }
 
@@ -128,6 +131,7 @@ class DjiStreamAdapter private constructor(
             stateStore.markStarted(operationId)
         } else {
             stateStore.markFailed(operationId, "Stream start failed")
+            runCatching { djiPort.abort() }
         }
     }
 
@@ -136,6 +140,7 @@ class DjiStreamAdapter private constructor(
             stateStore.markStopped(operationId)
         } else {
             stateStore.markFailed(operationId, "Stream stop failed")
+            runCatching { djiPort.abort() }
         }
     }
 

@@ -56,7 +56,7 @@ class RelaySettingsStoreContractTest {
             SettingsStoreFailure.BACKEND_FAILURE,
             assertIs<EndpointSaveResult.Unavailable>(store.setEndpoint("ws://desktop")).reason,
         )
-        assertEquals("ws://desktop", saved(store.setEndpoint("ws://desktop")).endpoint?.value)
+        assertEquals("ws://desktop/relay", saved(store.setEndpoint("ws://desktop")).endpoint?.value)
     }
 
     @Test fun readOrCreatePreservesAValidIdAndRecoversAInvalidOneWithoutChangingEndpoint() {
@@ -67,14 +67,14 @@ class RelaySettingsStoreContractTest {
         val recovered = RelaySettingsStore.create(corrupt)
         assertEquals("phone-1", recovered.readOrCreate("phone-1"))
         assertEquals("phone-1", corrupt.record?.deviceId)
-        assertEquals("ws://desktop", corrupt.record?.endpoint)
+        assertEquals("ws://desktop/relay", corrupt.record?.endpoint)
         assertFailsWith<IllegalArgumentException> { recovered.readOrCreate(" ") }
     }
 
     @Test fun concurrentUpdatesRemainAtomic() {
         val backend = FakeBackend()
         val store = RelaySettingsStore.create(backend)
-        val endpoints = (1..40).map { "ws://desktop/$it" }
+        val endpoints = (1..40).map { "ws://desktop/relay?n=$it" }
         val results = ConcurrentLinkedQueue<EndpointSaveResult>()
         val pool = Executors.newFixedThreadPool(8)
         try {

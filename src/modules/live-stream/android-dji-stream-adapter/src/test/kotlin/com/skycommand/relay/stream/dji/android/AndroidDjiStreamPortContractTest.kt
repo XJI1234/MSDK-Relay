@@ -23,12 +23,35 @@ class AndroidDjiStreamPortContractTest {
         requireNotNull(platform.startCompletion).succeed()
         stale.onStatus(DjiLiveStreamFact(true, 1920, 1080, 30, 4000, 40)); stale.onError()
         assertEquals(emptyList(), firstMetrics); assertEquals(0, firstFailures)
+        assertEquals(0, platform.stopCalls)
 
         val currentMetrics = mutableListOf<StreamMetrics>(); var failures = 0
         port.start(ValidatedStreamConfig("rtmp://host/live/three"), { currentMetrics += it }, { failures++ }, Completion())
         requireNotNull(platform.startCompletion).succeed()
         requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(true, 1280, 720, 25, 2200, 35)); requireNotNull(platform.listener).onError()
         assertEquals(listOf(StreamMetrics("1280x720", 25.0, 2200.0, 35)), currentMetrics); assertEquals(1, failures)
+        assertEquals(1, platform.stopCalls)
+    }
+
+    @Test fun abortClearsStuckInFlightSoStartCanRetry() {
+        val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
+        port.start(ValidatedStreamConfig("rtmp://host/live/stuck"), {}, {}, Completion())
+        // Simulate coordinator timeout: start never completes, in-flight stays true.
+        val rejected = Completion()
+        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, rejected)
+        assertEquals(listOf("failure"), rejected.events)
+
+        port.abort()
+        val pendingStop = requireNotNull(platform.stopCompletion)
+        val retry = Completion()
+        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, retry)
+        assertEquals(listOf("failure"), retry.events)
+
+        pendingStop.succeed()
+        val recovered = Completion()
+        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, recovered)
+        requireNotNull(platform.startCompletion).succeed()
+        assertEquals(listOf("success"), recovered.events)
     }
 
     @Test fun detachesAfterSuccessfulStopAndMapsStopException() {
