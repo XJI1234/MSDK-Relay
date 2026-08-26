@@ -4,6 +4,7 @@
 local.properties
 *.iml
 .idea/
+.worktrees/
 captures/
 externalNativeBuild/
 cmake-build-*/
