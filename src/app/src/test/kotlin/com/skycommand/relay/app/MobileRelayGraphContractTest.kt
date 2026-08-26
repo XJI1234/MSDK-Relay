@@ -17,6 +17,19 @@ class MobileRelayGraphContractTest {
         assertTrue(source.contains("publishLinkSnapshot"))
         assertTrue(source.contains("SnapshotAssembler.assemble(device.snapshot())"))
     }
+
+    @Test
+    fun productionCommandWiringStaysInTheCompositionRoot() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("private fun registerProductionCommandHandlers("))
+        assertTrue(source.contains("\"flight.takeoff\", \"flight.land\", \"flight.return-home\""))
+        assertTrue(source.contains("\"wayline.upload\", \"wayline.start\", \"wayline.pause\""))
+        assertTrue(source.contains("\"device.settings.camera.read\", \"device.settings.camera.write\""))
+    }
 }
 
 class MainActivityRetentionContractTest {

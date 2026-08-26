@@ -29,6 +29,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
+interface ProductionRtmpStream {
+    fun commandHandler(): CommandHandler
+    fun snapshot(): StreamSnapshot
+    fun onChanged(listener: StreamStateListener): Registration
+    fun markDeviceUnavailable(): StreamSnapshot
+    fun close()
+}
+
 data class LiveStreamDependencies(
     val djiPort: DjiStreamPort,
     val operationCoordinator: DjiOperationCoordinator,
@@ -36,7 +44,7 @@ data class LiveStreamDependencies(
     val diagnosticSink: StreamStateDiagnosticSink = StreamStateDiagnosticSink { },
 )
 
-class LiveStream private constructor(private val dependencies: LiveStreamDependencies) {
+class LiveStream private constructor(private val dependencies: LiveStreamDependencies) : ProductionRtmpStream {
     private val lifecycleLock = ReentrantLock()
     private val activeOperations = mutableSetOf<TrackedOperation>()
     private val state = StreamStateStore.create(dependencies.diagnosticSink)
@@ -48,13 +56,13 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
     )
     private val commands = StreamCommandHandler.create(Actions())
 
-    fun commandHandler(): CommandHandler = CommandHandler(::handleCommand)
+    override fun commandHandler(): CommandHandler = CommandHandler(::handleCommand)
 
-    fun snapshot(): StreamSnapshot = state.snapshot()
+    override fun snapshot(): StreamSnapshot = state.snapshot()
 
-    fun onChanged(listener: StreamStateListener): Registration = state.onChanged(listener)
+    override fun onChanged(listener: StreamStateListener): Registration = state.onChanged(listener)
 
-    fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
+    override fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
         val snapshot = (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
         runCatching {
@@ -66,7 +74,7 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
         snapshot
     }
 
-    fun close() {
+    override fun close() {
         lifecycleLock.withLock {
             activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
             state.markDeviceUnavailable()

@@ -38,6 +38,7 @@ telemetry.publishCurrent() -> Published | SkippedUnchanged | Rejected
 - 即时读取和持续发布都使用同一个 `SnapshotAssembler`，不存在两套字段规则。
 - `TelemetrySnapshot.capabilities` 只能是 `TelemetryCapabilities`，不得暴露 `DeviceCapabilities` 或其他设备连接层内部类型。
 - sink 失败不影响状态仓库或后续状态变化。
+- `MobileRelayGraph` 是唯一把 `TelemetryStateSource` 与中继发送端口组合在一起的位置。telemetry 不得取得 `DeviceConnection`、`RelayGateway`、DJI 适配器或业务模块的可变对象；它只消费四类只读快照并向注入 sink 发布结果。
 
 ## 5. 测试要求
 

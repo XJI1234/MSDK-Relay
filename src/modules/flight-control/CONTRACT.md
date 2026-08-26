@@ -34,6 +34,8 @@ flightControl.close() -> Unit
 
 只有 `android-dji-flight-adapter` 接触 `FlightControllerKey` 和 `KeyManager`；所有飞行操作必须通过 `device-connection:dji-operation-coordinator`，因此不会与航线和图传 SDK 操作并发重叠。设备不可用或应用关闭时门面必须取消尚未完成的操作；迟到回调不得恢复或完成已失效的命令。
 
+生产环境只有 `MobileRelayGraph` 可以把 `commandHandler()` 注册到 `RelayGateway`。本模块只接收 `DjiFlightPort` 和共享操作协调器，绝不接收完整 gateway、桌面命令对象或 `DeviceConnection`；飞控遥测仍只由 telemetry 发布。
+
 ## 验证要求
 
 各二级模块必须有中文契约和独立测试。测试至少覆盖严格字段校验、确认要求、三个动作映射、串行性、DJI 成功/失败、超时、取消、设备断开、重复和迟到回调、以及每个网关命令最多一个结果。

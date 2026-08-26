@@ -54,3 +54,5 @@ device.settings.transmission.write       fields: TransmissionSettingsPatch
 ## 失败与生命周期
 
 任何字段错误都在调用 DJI 前拒绝。写入必须等待所有目标键成功且重新读取完整快照后才成功；任一键失败、超时、取消、设备失效、同步异常、重复或迟到回调只产生一次安全失败结果。设备失效取消在途操作，且不会写入缓存或凭空恢复旧设置。
+
+生产环境只有 `MobileRelayGraph` 可以把 `commandHandler()` 注册到 `RelayGateway`。本模块只接收 `DjiSettingsPort` 和共享操作协调器，绝不接收完整 gateway、桌面设置面板或 `DeviceConnection`；成功快照只能通过命令结果返回。

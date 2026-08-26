@@ -12,6 +12,10 @@ Gradle 路径：:live-stream
 
 `LiveStream` 门面只组合上述二级模块，并向 gateway 暴露命令处理器、不可变图传快照和状态订阅。它不接收、转码、播放或存储视频，不建立 RTMP Socket，不直接调用 DJI SDK，也不保存第二份图传状态。设备不可用时，它只通过已注入的 `DjiStreamPort.stop` 停止残留 RTMP。
 
+生产应用只通过 `ProductionRtmpStream` 使用该门面。该接口固定为 `commandHandler`、`snapshot`、`onChanged`、`markDeviceUnavailable` 与 `close`：它足以注册 `live-stream.start|stop`、发布遥测和完成生命周期，但不泄露 `LiveStreamDependencies`、状态存储、DJI 适配器、操作协调器或 RTMP URL。`LiveStream` 是其唯一实现；Android 应用仅在组合根调用 `LiveStream.create`。
+
+`WHIP/WHEP` 处于封存旁路：生产 RTMP `live-stream` 模块及其二级模块不得导入或调用任何 `whip` 类、命令、状态或传输。两条链路的互斥仅允许存在于应用层的 `VideoTransportInterlock` 隔离适配器，不能倒灌进 RTMP 模块。
+
 ## 2. 对外接口
 
 ```text

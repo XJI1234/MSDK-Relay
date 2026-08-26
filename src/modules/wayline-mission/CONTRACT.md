@@ -52,6 +52,8 @@ mission.markDeviceUnavailable() -> MissionSnapshot
 
 `WaylineMission` 只组合 `MissionStaging`、`MissionStateStore`、`MissionUploader`、`MissionExecutor`、`MissionFlightPhase` 和 `WaylineCommandHandler`。它独占“暂存成功后写入任务状态”的原子交接和 gateway 文件传输暂存锁；它将阶段事实按既定顺序交给应用组合层，但不解析 WebSocket、不连接 DJI、不规划航点、不生成航线、不暴露路径或 DJI 对象。
 
+生产环境只有 `MobileRelayGraph` 可以把 `commandHandler()`、`missionSink()` 和阶段事件桥接到 `RelayGateway`。本模块不得接收完整 gateway、WebSocket 会话或桌面任务对象；它只依赖已注入的任务传输入口、DJI 端口和共享操作协调器。
+
 阶段交接顺序固定如下：先由 `mission-flight-phase` 产生 `START_POINT_REACHED`，门面在该事实已进入阶段事件流后，才处理 `ROUTE_EXECUTION_STARTED`；处理后者时，门面先把当前任务状态原子更新为 `EXECUTING`，再将 `ROUTE_EXECUTION_STARTED` 放入阶段事件流。应用层必须按阶段序号将两条事件映射为两条独立的电脑端上报；上报失败不能回滚任务状态或重新产生阶段事实，只能记录受限诊断。
 
 原始 DJI 执行信号也可能给出任务终态。门面必须先让 `mission-flight-phase` 验证该信号仍属于当前已武装任务，再根据上面的终态规则更新 `MissionStateStore`；任务替换、停止、设备失效或此前终态后的迟到信号不得修改新任务，也不得产生新的阶段帧。

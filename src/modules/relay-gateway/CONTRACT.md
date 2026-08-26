@@ -56,6 +56,8 @@ RelayGateway.onStateChanged(listener) -> Registration
 
 `transport` 和 `clock` 是内部 seam 的依赖注入点。生产环境使用 WebSocket adapter，测试使用内存 adapter。它们不得出现在业务模块的公开契约中。
 
+生产组合仅允许 `MobileRelayGraph` 持有 `RelayGateway` 并注册命令处理器。飞控、设备设置、航线、图传和遥测模块只暴露各自的处理器、任务暂存入口或发布端口，绝不接收 `RelayGateway`、会话代次或 transport；因此新增业务功能不得绕过组合根自行注册命令或发送帧。
+
 外部接口的共同规则：
 
 - `start()` 只启动连接流程，不代表 WebSocket 已连接，也不代表 DJI 设备已连接；

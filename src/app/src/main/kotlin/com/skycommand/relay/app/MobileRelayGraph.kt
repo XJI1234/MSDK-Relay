@@ -51,6 +51,7 @@ import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
 import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
+import com.skycommand.relay.stream.ProductionRtmpStream
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.camera.CameraStreamSource
 import com.skycommand.relay.stream.camera.android.AndroidCameraStreamApi
@@ -104,7 +105,7 @@ class MobileRelayGraph private constructor(
     private val flight: FlightTelemetrySource,
     private val flightControl: FlightControl,
     private val deviceSettings: DeviceSettings,
-    private val stream: LiveStream,
+    private val stream: ProductionRtmpStream,
     private val whipStream: WhipLiveStream,
     private val videoTransports: VideoTransportInterlock,
     private val wayline: WaylineMission,
@@ -537,7 +538,7 @@ class MobileRelayGraph private constructor(
                 },
             )
             val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
-            registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, videoTransports, wayline)
+            registerProductionCommandHandlers(gateway, journal, telemetry, device, flightControl, deviceSettings, videoTransports, wayline)
             val lifecycle = RelayBootstrapModule(
                 object : RelayLifecyclePorts {
                     override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -611,7 +612,7 @@ class MobileRelayGraph private constructor(
             override fun onChanged(listener: () -> Unit) = subscribe(listener)
         }
 
-        private fun registerCommands(
+        private fun registerProductionCommandHandlers(
             gateway: RelayGateway,
             journal: DiagnosticJournal,
             telemetry: Telemetry,
