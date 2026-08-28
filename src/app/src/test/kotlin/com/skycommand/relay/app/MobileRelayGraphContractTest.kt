@@ -4,6 +4,7 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MobileRelayGraphContractTest {
@@ -29,6 +30,26 @@ class MobileRelayGraphContractTest {
         assertTrue(source.contains("\"flight.takeoff\", \"flight.land\", \"flight.return-home\""))
         assertTrue(source.contains("\"wayline.upload\", \"wayline.start\", \"wayline.pause\""))
         assertTrue(source.contains("\"device.settings.camera.read\", \"device.settings.camera.write\""))
+    }
+
+    @Test
+    fun productionAppDoesNotInstantiateRegisterOrPackageTheArchivedWhipTransport() {
+        val graph = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val build = listOf(
+            Path("build.gradle.kts"),
+            Path("src/app/build.gradle.kts"),
+        ).first { it.exists() }.readText()
+
+        assertFalse(graph.contains("WhipLiveStream"))
+        assertFalse(graph.contains("AndroidWhipTransport"))
+        assertFalse(graph.contains("VideoTransportInterlock"))
+        assertFalse(graph.contains("live-stream-webrtc."))
+        assertTrue(graph.contains("\"live-stream.start\", \"live-stream.stop\""))
+        assertFalse(build.contains(":live-stream:android-whip-publisher-adapter"))
+        assertFalse(build.contains(":live-stream:whip-live-stream"))
     }
 }
 

@@ -52,14 +52,7 @@ import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
 import com.skycommand.relay.stream.ProductionRtmpStream
-import com.skycommand.relay.stream.state.StreamLifecycleState
-import com.skycommand.relay.stream.camera.CameraStreamSource
-import com.skycommand.relay.stream.camera.android.AndroidCameraStreamApi
 import com.skycommand.relay.stream.dji.android.AndroidDjiStreamPort
-import com.skycommand.relay.stream.whip.WhipLiveStream
-import com.skycommand.relay.stream.whip.WhipLiveStreamDependencies
-import com.skycommand.relay.stream.whip.state.WhipStreamLifecycle
-import com.skycommand.relay.stream.whip.android.AndroidWhipTransport
 import com.skycommand.relay.flight.FlightControl
 import com.skycommand.relay.flight.FlightControlDependencies
 import com.skycommand.relay.flight.dji.android.AndroidDjiFlightPort
@@ -106,8 +99,6 @@ class MobileRelayGraph private constructor(
     private val flightControl: FlightControl,
     private val deviceSettings: DeviceSettings,
     private val stream: ProductionRtmpStream,
-    private val whipStream: WhipLiveStream,
-    private val videoTransports: VideoTransportInterlock,
     private val wayline: WaylineMission,
     private val waylineAdapter: AndroidDjiWaylineAdapter,
     private val staging: AndroidMissionStagingStorage,
@@ -209,18 +200,7 @@ class MobileRelayGraph private constructor(
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
-        registrations += stream.onChanged { event ->
-            if (event.current.state == StreamLifecycleState.FAILED) {
-                videoTransports.releaseStreamingOwnership()
-            }
-            notifyStatus()
-        }.let { registration ->
-            CloseableRegistration { registration.unregister() }
-        }
-        registrations += whipStream.onChanged { snapshot ->
-            if (snapshot.state == WhipStreamLifecycle.FAILED || snapshot.state == WhipStreamLifecycle.DISCONNECTED) {
-                videoTransports.releaseStreamingOwnership()
-            }
+        registrations += stream.onChanged {
             notifyStatus()
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
@@ -299,8 +279,6 @@ class MobileRelayGraph private constructor(
         registrations.asReversed().forEach { runCatching { it.unregister() } }
         registrations.clear()
         runCatching { wayline.markDeviceUnavailable() }
-        runCatching { videoTransports.close() }
-        runCatching { whipStream.close() }
         runCatching { flightControl.close() }
         runCatching { deviceSettings.close() }
         runCatching { stream.close() }
@@ -432,33 +410,6 @@ class MobileRelayGraph private constructor(
                     },
                 ),
             )
-            val whipStream = WhipLiveStream.create(
-                WhipLiveStreamDependencies(
-                    deviceId = deviceId,
-                    source = CameraStreamSource.create(
-                        AndroidCameraStreamApi.create(),
-                        diagnosticSink = { kind ->
-                            journal.record(
-                                DiagnosticLevel.WARN,
-                                "live-stream-webrtc",
-                                kind.name,
-                                null,
-                                "DJI CameraStream source reported a WHIP input issue",
-                            )
-                        },
-                    ),
-                    transport = AndroidWhipTransport.create(activity),
-                    diagnosticSink = { kind ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "live-stream-webrtc",
-                            kind.name,
-                            null,
-                            "WHIP stream state listener failed",
-                        )
-                    },
-                ),
-            )
             val flightControl = FlightControl.create(
                 FlightControlDependencies(
                     AndroidDjiFlightPort.create(),
@@ -537,8 +488,7 @@ class MobileRelayGraph private constructor(
                     }
                 },
             )
-            val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
-            registerProductionCommandHandlers(gateway, journal, telemetry, device, flightControl, deviceSettings, videoTransports, wayline)
+            registerProductionCommandHandlers(gateway, journal, telemetry, device, flightControl, deviceSettings, stream, wayline)
             val lifecycle = RelayBootstrapModule(
                 object : RelayLifecyclePorts {
                     override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -567,9 +517,7 @@ class MobileRelayGraph private constructor(
                     }
                     override fun closeFlightTelemetry() { flight.close() }
                     override fun markStreamUnavailable() {
-                        videoTransports.markDeviceUnavailable()
                         stream.markDeviceUnavailable()
-                        whipStream.markDeviceUnavailable()
                     }
                     override fun markMissionUnavailable() { wayline.markDeviceUnavailable() }
                     override fun markFlightControlUnavailable() { flightControl.markDeviceUnavailable() }
@@ -599,7 +547,7 @@ class MobileRelayGraph private constructor(
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, whipStream, videoTransports, wayline, waylineAdapter,
+                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, wayline, waylineAdapter,
                 staging, foregroundPort, executor, journal, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
@@ -619,7 +567,7 @@ class MobileRelayGraph private constructor(
             device: DeviceConnection,
             flightControl: FlightControl,
             deviceSettings: DeviceSettings,
-            videoTransports: VideoTransportInterlock,
+            stream: ProductionRtmpStream,
             wayline: WaylineMission,
         ) {
             val telemetryHandler = CommandHandler { command, completion ->
@@ -639,10 +587,7 @@ class MobileRelayGraph private constructor(
                 register(gateway, journal, it, pairingHandler)
             }
             listOf("live-stream.start", "live-stream.stop").forEach {
-                register(gateway, journal, it, videoTransports.handlerFor(it))
-            }
-            listOf("live-stream-webrtc.start", "live-stream-webrtc.stop").forEach {
-                register(gateway, journal, it, videoTransports.handlerFor(it))
+                register(gateway, journal, it, stream.commandHandler())
             }
             listOf("flight.takeoff", "flight.land", "flight.return-home").forEach {
                 register(gateway, journal, it, flightControl.commandHandler())
@@ -701,7 +646,6 @@ private class OnceCommandCompletion(private val completion: CommandCompletion) {
 
 private fun commandModule(name: String): String = when {
     name.startsWith("wayline.") -> "wayline-mission"
-    name.startsWith("live-stream-webrtc.") -> "live-stream-webrtc"
     name.startsWith("live-stream.") -> "live-stream"
     name.startsWith("flight.") -> "flight-control"
     name.startsWith("device.settings.") -> "device-settings"

@@ -153,7 +153,7 @@ dependencies {
     implementation(project(":relay-gateway")); implementation(project(":relay-gateway:transport-adapter")); implementation(project(":relay-gateway:protocol-core"))
     implementation(project(":device-connection")); implementation(project(":device-connection:android-dji-sdk-adapter")); implementation(project(":device-connection:android-remote-controller-adapter")); implementation(project(":device-connection:android-aircraft-adapter")); implementation(project(":device-connection:android-pairing-command-adapter")); implementation(project(":device-connection:android-pairing-status-adapter"))
     implementation(project(":telemetry")); implementation(project(":telemetry:android-flight-telemetry-adapter"))
-    implementation(project(":live-stream")); implementation(project(":live-stream:android-dji-stream-adapter")); implementation(project(":live-stream:camera-stream-source")); implementation(project(":live-stream:android-camera-stream-adapter")); implementation(project(":live-stream:android-whip-publisher-adapter")); implementation(project(":live-stream:whip-live-stream"))
+    implementation(project(":live-stream")); implementation(project(":live-stream:android-dji-stream-adapter"))
     implementation(project(":flight-control")); implementation(project(":flight-control:android-dji-flight-adapter"))
     implementation(project(":device-settings")); implementation(project(":device-settings:android-dji-settings-adapter"))
     implementation(project(":wayline-mission")); implementation(project(":wayline-mission:android-dji-wayline-adapter")); implementation(project(":wayline-mission:android-mission-staging-adapter"))

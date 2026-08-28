@@ -768,17 +768,11 @@ mission-begin
 
 ## 10. 直播链路契约
 
-直播包含两条相互独立的媒体通道，共享的只有 WebSocket 控制面和手机设备连接：
+生产直播只包含一条 RTMP 媒体通道，共享的只有 WebSocket 控制面和手机设备连接：
 
 ```text
 电脑端 --WebSocket命令--> 手机端 --DJI视频/RTMP--> 电脑端媒体服务
 电脑端 <--遥测和结果---- 手机端
-```
-
-低延迟旁路使用独立链路：
-
-```text
-电脑端 --WebSocket命令--> 手机端 --DJI CameraStream/H.264--> 手机端 WHIP 发布器 --局域网 WebRTC--> 电脑端 MediaMTX/WHEP 播放器
 ```
 
 因此：
@@ -789,8 +783,7 @@ mission-begin
 - 手机端收到停止命令、直播失败或设备断开时，应把 `liveStreaming` 更新为 `false` 并填写说明。
 - 电脑端媒体服务停止、地址不可达或 FFmpeg 不可用时，电脑端应在发送开始命令前提示问题。
 - 直播停止后，电脑端如需再次直播，必须重新发送完整的开始命令；手机端不应依赖旧 URL 的隐式状态。
-- `live-stream.start|stop` 只进入旧 RTMP `LiveStream`；`live-stream-webrtc.start|stop` 只进入 WHIP `WhipLiveStream`。两组命令、状态、适配器和关闭路径不得互相调用。
-- 旧 RTMP/HLS/FFmpeg 故障不得阻止 WHIP/WebRTC 启动；WHIP/MediaMTX/浏览器播放故障不得停止或改变旧 RTMP/HLS 链路。任一链路失败时，共享 WebSocket 仍可报告该链路自己的结果。
+- `live-stream.start|stop` 只进入生产 RTMP `LiveStream`。WebRTC/WHIP 相关源码和独立测试已归档，生产桌面和 Android 组合根不得创建它、注册其命令、暴露其界面或将其专用依赖打入 APK。
 
 ---
 
