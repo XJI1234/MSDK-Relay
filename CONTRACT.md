@@ -320,7 +320,7 @@ runtime-diagnostics
 - 虚拟摇杆或任何连续飞行姿态控制。
 - 航线规划、地图编辑和航点绘制。
 - 电脑端 UI、地图显示和媒体播放界面。
-- 电脑端的 RTMP 接收、转码、HLS 播放和录像管理。
+- 电脑端的 RTMP 接收、HTTP-FLV 分发、媒体播放和录像管理。
 - 长期保留的 localhost HTTP 控制接口。
 - 替电脑端决定业务流程，例如自动决定是否开始任务或是否覆盖已有航线。
 
@@ -771,7 +771,8 @@ mission-begin
 生产直播只包含一条 RTMP 媒体通道，共享的只有 WebSocket 控制面和手机设备连接：
 
 ```text
-电脑端 --WebSocket命令--> 手机端 --DJI视频/RTMP--> 电脑端媒体服务
+手机 DJI -> RTMP -> 电脑 Node Media Server -> 本机 HTTP-FLV -> flv.js
+电脑端 --WebSocket命令--> 手机端
 电脑端 <--遥测和结果---- 手机端
 ```
 

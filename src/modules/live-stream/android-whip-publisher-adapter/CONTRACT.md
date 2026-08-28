@@ -1,6 +1,8 @@
 # android-whip-publisher-adapter 二级模块契约
 
-状态：实验模块契约，是本模块唯一权威。
+状态：已封存的 WebRTC/WHIP 旁路源码与独立测试；不纳入生产组合根。
+
+> 封存规则：本模块只保留给历史旁路的源码和测试，生产 RTMP `LiveStream`、`MobileRelayGraph`、命令注册和 APK 依赖均不得调用或装配它。重新启用必须先取得业务批准，并同步更新两端根契约、生产装配和跨端验证。
 Gradle 路径：`:live-stream:android-whip-publisher-adapter`
 
 ## 唯一职责

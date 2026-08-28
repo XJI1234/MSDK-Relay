@@ -1,5 +1,6 @@
 package com.skycommand.relay.app
 
+import java.io.File
 import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -50,6 +51,16 @@ class MobileRelayGraphContractTest {
         assertTrue(graph.contains("\"live-stream.start\", \"live-stream.stop\""))
         assertFalse(build.contains(":live-stream:android-whip-publisher-adapter"))
         assertFalse(build.contains(":live-stream:whip-live-stream"))
+    }
+
+    @Test
+    fun productionContractNamesRtmpInputAndHttpFlvDesktopPlaybackOnly() {
+        val repositoryRoot = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
+            .first { File(it, "settings.gradle.kts").isFile }
+        val contract = File(repositoryRoot, "CONTRACT.md").readText()
+
+        assertTrue(contract.contains("手机 DJI -> RTMP -> 电脑 Node Media Server -> 本机 HTTP-FLV -> flv.js"))
+        assertFalse(contract.contains("HLS 播放"))
     }
 }
 
