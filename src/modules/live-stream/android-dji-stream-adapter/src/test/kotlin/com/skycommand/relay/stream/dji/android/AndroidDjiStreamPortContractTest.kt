@@ -3,10 +3,26 @@ package com.skycommand.relay.stream.dji.android
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
 import com.skycommand.relay.stream.state.StreamMetrics
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AndroidDjiStreamPortContractTest {
+    @Test fun productionAdapterRequestsFullHdAtFourMegabitsPerSecond() {
+        val repositoryRoot = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
+            .first { File(it, "settings.gradle.kts").isFile }
+        val source = File(
+            repositoryRoot,
+            "src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt",
+        ).readText()
+
+        assertTrue(source.contains("manager.setLiveStreamQuality(StreamQuality.FULL_HD)"))
+        assertTrue(source.contains("const val FULL_HD_BITRATE_BPS: Int = 500 * 1024 * 8"))
+        assertFalse(source.contains("manager.setLiveStreamQuality(StreamQuality.HD)"))
+    }
+
     @Test fun configuresRtmpAndCompletesStartOnce() {
         val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform); val completion = Completion()
         port.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, {}, completion)
