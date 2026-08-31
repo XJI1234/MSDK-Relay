@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -84,6 +85,18 @@ class MissionUploaderContractTest {
     }
 
     @Test
+    fun rejectsChangedStagedContentBeforeGivingItToDji() {
+        val fixture = Fixture().apply { reader.bytes = byteArrayOf(1, 2, 9) }
+
+        assertEquals(
+            UploadRejection.CONTENT_UNAVAILABLE,
+            assertIs<UploadStartResult.Rejected>(fixture.uploader.start()).reason,
+        )
+        assertEquals(UploadState.FAILED, fixture.store.snapshot().upload)
+        assertEquals(0, fixture.port.calls)
+    }
+
+    @Test
     fun mapsAnAdapterExceptionToFailure() {
         val fixture = Fixture().apply { port.failure = true }
 
@@ -118,7 +131,7 @@ class MissionUploaderContractTest {
         val oldProgress = fixture.port.progress!!
         val oldCompletion = fixture.port.completion!!
 
-        fixture.store.apply(MissionStateEvent.FileStaged(2, metadata("new.kmz")))
+        fixture.store.apply(MissionStateEvent.FileStaged(2, stagedMetadata("new.kmz")))
         oldProgress(100)
         oldCompletion.succeed()
 
@@ -174,7 +187,7 @@ class MissionUploaderContractTest {
             if (stage) store.apply(
                 MissionStateEvent.FileStaged(
                     1,
-                    MissionMetadata("mission.kmz", 3, "a".repeat(64)),
+                    stagedMetadata(),
                 ),
             )
         }
@@ -183,10 +196,11 @@ class MissionUploaderContractTest {
     private class Reader : StagedMissionContentReader {
         var reads = 0
         var failure = false
+        var bytes = byteArrayOf(1, 2, 3)
         override fun read(metadata: MissionMetadata): ByteArray {
             reads += 1
             if (failure) error("reader failure")
-            return byteArrayOf(1, 2, 3)
+            return bytes.copyOf()
         }
     }
 
@@ -194,12 +208,14 @@ class MissionUploaderContractTest {
         var progress: ((Int) -> Unit)? = null
         var completion: UploadCompletion? = null
         var failure = false
+        var calls = 0
         override fun upload(
             metadata: MissionMetadata,
             bytes: ByteArray,
             progress: (Int) -> Unit,
             completion: UploadCompletion,
         ) {
+            calls += 1
             if (failure) error("adapter failure")
             this.progress = progress
             this.completion = completion
@@ -215,5 +231,10 @@ class MissionUploaderContractTest {
         fun fire() = callback?.invoke()
     }
 
-    private fun metadata(name: String = "mission.kmz") = MissionMetadata(name, 3, "a".repeat(64))
 }
+
+private fun stagedMetadata(name: String = "mission.kmz") = MissionMetadata(
+    name,
+    3,
+    MessageDigest.getInstance("SHA-256").digest(byteArrayOf(1, 2, 3)).joinToString("") { "%02x".format(it) },
+)

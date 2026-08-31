@@ -19,6 +19,7 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.onSignal { signals += it }
         assertEquals(0, dji.executionListenerRegistrations)
 
+        adapter.beginStartAttempt()
         adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
         requireNotNull(dji.uploadCompletion).succeed()
         adapter.start(ControlDone())
@@ -27,6 +28,9 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals("start", dji.command)
         dji.emit(DjiMissionExecutionState.ENTER_WAYLINE)
         requireNotNull(dji.controlCompletion).succeed()
+        assertEquals(emptyList(), signals)
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.ENTER_WAYLINE)
 
         assertEquals(listOf(MissionExecutionSignal.ENTER_WAYLINE), signals)
         adapter.close()
@@ -40,6 +44,28 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(files.paths.single(),dji.uploadPath); requireNotNull(dji.uploadCompletion).progress(45.4); requireNotNull(dji.uploadCompletion).succeed(); requireNotNull(dji.uploadCompletion).succeed()
         assertEquals(listOf(45),progress); assertEquals(listOf("success"),done.events); assertEquals(1,files.deletes)
         val start=ControlDone(); adapter.start(start); assertEquals("one.kmz",dji.controlName); requireNotNull(dji.controlCompletion).succeed(); assertEquals(listOf("success"),start.events)
+    }
+
+    @Test fun doesNotDeliverExecutionStateUntilTheCurrentStartReceiptIsConfirmed() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+        val signals = mutableListOf<MissionExecutionSignal>()
+        adapter.onSignal { signals += it }
+        adapter.beginStartAttempt()
+
+        adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.start(ControlDone())
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+
+        assertEquals(emptyList(), signals)
+
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+
+        assertEquals(listOf(MissionExecutionSignal.EXECUTING), signals)
     }
 
     @Test fun failedUploadDoesNotReplacePriorSuccessfulMission() {

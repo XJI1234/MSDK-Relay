@@ -27,6 +27,11 @@ interface MissionControlPort {
     fun stop(completion: ControlCompletion)
 }
 
+/** The composition root supplies the current physical safety facts before startMission. */
+fun interface MissionStartSafetyGate {
+    fun allowsStart(): Boolean
+}
+
 fun interface ExecutionTerminalListener {
     fun onCompleted(outcome: ExecutionTerminalOutcome)
 }
@@ -48,6 +53,8 @@ enum class ExecutionRejection {
     NOT_UPLOADED,
     INVALID_STATE,
     ALREADY_ACTIVE,
+    OPERATION_UNCONFIRMED,
+    SAFETY_CHECK_FAILED,
     OPERATION_REJECTED,
 }
 
@@ -57,14 +64,34 @@ class MissionExecutor private constructor(
     private val coordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
     private val sourceRevision: AtomicLong,
+    private val startSafetyGate: MissionStartSafetyGate,
 ) {
     private val lock = ReentrantLock()
     private var active: ActiveCommand? = null
+    private var unconfirmedControl: ActiveCommand? = null
 
     fun start(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.START, listener)
     fun pause(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.PAUSE, listener)
     fun resume(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.RESUME, listener)
     fun stop(listener: ExecutionTerminalListener = ExecutionTerminalListener { }): ExecutionRequestResult = request(Command.STOP, listener)
+
+    /** A matching DJI state observation resolves a pause or resume whose command receipt was lost. */
+    fun observeExecutionState(
+        state: ExecutionState,
+        missionRevision: Long,
+        deviceGeneration: Long,
+    ) {
+        lock.withLock {
+            val unresolved = unconfirmedControl ?: return
+            if (
+                unresolved.missionRevision == missionRevision &&
+                unresolved.deviceGeneration == deviceGeneration &&
+                unresolved.command.observedState == state
+            ) {
+                unconfirmedControl = null
+            }
+        }
+    }
 
     private fun request(command: Command, listener: ExecutionTerminalListener): ExecutionRequestResult {
         val snapshot = stateStore.snapshot()
@@ -73,15 +100,31 @@ class MissionExecutor private constructor(
         if (snapshot.upload != UploadState.UPLOADED) {
             return ExecutionRequestResult.Rejected(ExecutionRejection.NOT_UPLOADED)
         }
-        val activeCommand = lock.withLock { active }
-        if (activeCommand != null) {
-            return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
+        val rejection = lock.withLock {
+            val unresolved = unconfirmedControl
+            if (
+                unresolved != null &&
+                (unresolved.missionRevision != missionRevision || unresolved.deviceGeneration != snapshot.deviceGeneration)
+            ) {
+                unconfirmedControl = null
+            }
+            when {
+                active != null -> ExecutionRejection.ALREADY_ACTIVE
+                command != Command.STOP && unconfirmedControl != null -> ExecutionRejection.OPERATION_UNCONFIRMED
+                else -> null
+            }
+        }
+        if (rejection != null) {
+            return ExecutionRequestResult.Rejected(rejection)
         }
         if (!command.allowedFrom(snapshot.execution)) {
             return ExecutionRequestResult.Rejected(ExecutionRejection.INVALID_STATE)
         }
+        if (command == Command.START && !allowsStartSafely()) {
+            return ExecutionRequestResult.Rejected(ExecutionRejection.SAFETY_CHECK_FAILED)
+        }
 
-        val operation = ActiveCommand(Any(), missionRevision, snapshot.deviceGeneration, command, listener)
+        val operation = ActiveCommand(Any(), missionRevision, snapshot.deviceGeneration, snapshot.execution, command, listener)
         lock.withLock {
             if (active != null) return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
             active = operation
@@ -117,16 +160,45 @@ class MissionExecutor private constructor(
     }
 
     private fun finish(operation: ActiveCommand, outcome: OperationOutcome) {
-        if (!clearIfActive(operation)) return
-        val next = if (outcome == OperationOutcome.SUCCEEDED) operation.command.successState else ExecutionState.FAILED
-        applyState(operation, next)
+        val completed = lock.withLock {
+            if (active !== operation) false else {
+                active = null
+                if (
+                    outcome != OperationOutcome.SUCCEEDED &&
+                    operation.command.requiresReceiptConfirmation &&
+                    !matchingExecutionStateAlreadyObserved(operation)
+                ) {
+                    unconfirmedControl = operation
+                }
+                true
+            }
+        }
+        if (!completed) return
+        nextState(operation, outcome)?.let { applyState(operation, it) }
         runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome()) }
+    }
+
+    private fun matchingExecutionStateAlreadyObserved(operation: ActiveCommand): Boolean {
+        val observedState = operation.command.observedState ?: return false
+        val snapshot = stateStore.snapshot()
+        return snapshot.missionRevision == operation.missionRevision &&
+            snapshot.deviceGeneration == operation.deviceGeneration &&
+            snapshot.execution == observedState
     }
 
     private fun finishBeforeSubmission(operation: ActiveCommand) {
         if (!clearIfActive(operation)) return
-        applyState(operation, ExecutionState.FAILED)
+        applyState(operation, if (operation.command == Command.START) ExecutionState.FAILED else operation.previousState)
     }
+
+    private fun nextState(operation: ActiveCommand, outcome: OperationOutcome): ExecutionState? = when {
+        outcome == OperationOutcome.SUCCEEDED -> operation.command.successState
+        operation.command == Command.START -> null
+        outcome == OperationOutcome.TIMED_OUT || outcome == OperationOutcome.CANCELLED -> null
+        else -> operation.previousState
+    }
+
+    private fun allowsStartSafely(): Boolean = runCatching { startSafetyGate.allowsStart() }.getOrDefault(false)
 
     private fun applyState(operation: ActiveCommand, state: ExecutionState) {
         runCatching {
@@ -152,11 +224,14 @@ class MissionExecutor private constructor(
         val pendingState: ExecutionState,
         val successState: ExecutionState,
         val allowed: Set<ExecutionState>,
+        val observedState: ExecutionState? = null,
     ) {
         START(ExecutionState.STARTING, ExecutionState.STARTING, setOf(ExecutionState.NOT_STARTED, ExecutionState.FAILED)),
-        PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING)),
-        RESUME(ExecutionState.EXECUTING, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED)),
+        PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING), ExecutionState.PAUSED),
+        RESUME(ExecutionState.PAUSED, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED), ExecutionState.EXECUTING),
         STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED));
+
+        val requiresReceiptConfirmation: Boolean get() = observedState != null
 
         fun allowedFrom(state: ExecutionState): Boolean = state in allowed
     }
@@ -165,6 +240,7 @@ class MissionExecutor private constructor(
         val token: Any,
         val missionRevision: Long,
         val deviceGeneration: Long,
+        val previousState: ExecutionState,
         val command: Command,
         val listener: ExecutionTerminalListener,
     )
@@ -176,7 +252,8 @@ class MissionExecutor private constructor(
             coordinator: DjiOperationCoordinator,
             timeoutMillis: Long = 30_000,
             executionSourceRevision: AtomicLong = AtomicLong(0),
-        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis, executionSourceRevision)
+            startSafetyGate: MissionStartSafetyGate,
+        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis, executionSourceRevision, startSafetyGate)
     }
 
     private fun OperationOutcome.toTerminalOutcome(): ExecutionTerminalOutcome = when (this) {

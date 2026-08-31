@@ -9,6 +9,8 @@ Gradle 路径：`:device-connection:remote-controller-link`
 
 本模块只负责遥控器连接观察的生命周期和规范化：把适配端提供的遥控器连接信号转换成 `LinkState` 与显示型号，并提交给 `device-state-store`。它不观察飞行器、不推断配对、不执行 DJI 操作、不管理 WebSocket。
 
+适配端的 `connected: Boolean?` 是观察事实而非默认值：`true`、`false`、`null` 分别映射为 `CONNECTED`、`DISCONNECTED`、`UNKNOWN`。未观察或 null 绝不能伪报为断开。
+
 ## 2. 对外接口
 
 ```text

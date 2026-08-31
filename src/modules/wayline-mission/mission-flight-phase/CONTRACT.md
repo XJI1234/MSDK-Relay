@@ -12,12 +12,15 @@
 
 ```text
 MissionFlightPhase.create(sink, diagnosticSink?) -> MissionFlightPhase
-phaseTracker.arm(missionRevision, deviceGeneration, fileName) -> Unit
+phaseTracker.prepareStart(missionRevision, deviceGeneration, fileName) -> Unit
+phaseTracker.confirmStart(missionRevision, deviceGeneration) -> List<MissionExecutionSignal>
 phaseTracker.accept(signal, missionRevision, deviceGeneration) -> Accepted | IgnoredStale
 phaseTracker.invalidate(missionRevision?, deviceGeneration) -> Unit
 ```
 
-`sink` 只能是一级模块门面提供的阶段事件入口，不能是 WebSocket、协议帧写入器或电脑端回调。`arm` 只能由已提交 `wayline.start` 的当前任务调用一次，并接收当前任务的 1..128 个 Unicode 码点安全 `.kmz` 基名；该上限与中继协议一致。`accept` 的输入是经过 Android DJI 适配器归一化后的封闭信号集：`PREPARING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED` 与 `UNKNOWN`。输入必须携带任务代际和设备运行代际；不匹配当前已武装任务的输入返回 `IgnoredStale`，不通知、不诊断。
+`sink` 只能是一级模块门面提供的阶段事件入口，不能是 WebSocket、协议帧写入器或电脑端回调。`prepareStart` 只能由已提交 `wayline.start` 的当前任务调用一次，并接收当前任务的 1..128 个 Unicode 码点安全 `.kmz` 基名；该上限与中继协议一致。开始命令尚未收到成功回执时，`ENTER_WAYLINE` 与 `EXECUTING` 只被暂存，不能发布阶段事实；只有同一任务身份的 `confirmStart` 才按接收顺序释放它们。失败、超时、取消、停止、设备失效或任务替换必须先 `invalidate`，从而丢弃暂存信号。`accept` 的输入是经过 Android DJI 适配器归一化后的封闭信号集：`PREPARING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED` 与 `UNKNOWN`。输入必须携带任务代际和设备运行代际；不匹配当前已武装任务的输入返回 `IgnoredStale`，不通知、不诊断。
+
+`MissionExecutionSignalSource` 的每一个实现都必须显式实现 `beginStartAttempt()`、`confirmStartAttempt()` 和 `invalidateStartAttempt()` 三个时点的行为；可携带任务身份的模拟源可以明确实现为空操作，真实 DJI 适配器必须在门面准备新任务前关闭状态投递，只在相同启动请求收到成功回执后恢复投递，并在失败、停止、任务替换或设备失效时再次关闭。这样，前一任务的迟到原始状态不能被新任务暂存或归属；被隔离的状态不得补发，宁可等待新的 DJI 状态。
 
 输出的阶段事实是：
 
@@ -35,7 +38,7 @@ ROUTE_EXECUTION_STARTED
 3. 已收到 `ENTER_WAYLINE` 后的首次 `EXECUTING` 提交 `ROUTE_EXECUTION_STARTED`，且不得附带 `ENTRY_STATE_MISSING`。之后的 `EXECUTING` 只确认持续执行，不产生额外事实。两条事实可以紧挨着到达（DJI 先后发出两个信号），但不得由一次 `ENTER_WAYLINE` 同时合成。阶段序号必须连续且顺序不可逆。
 4. 未收到 `ENTER_WAYLINE` 而先收到 `EXECUTING` 时，模块只提交 `ROUTE_EXECUTION_STARTED`，并向可选诊断接收器提交 `ENTRY_STATE_MISSING`。它永远不得凭时间、遥测位置或航点距离补造 `START_POINT_REACHED`。
 5. `PREPARING` 不是首点到达；`startMission` 成功回调也不是首点到达或航线开始。二者均不产生阶段事实。
-6. `PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED`、`UNKNOWN` 不产生本模块的两条正向事实。门面可仅在 `accept` 返回 `Accepted` 后依据这些已验证属于当前任务的信号更新自己的任务状态；本模块绝不自行写状态。停止、失败、设备断开、任务替换和 `invalidate` 后，旧回调必须无害。
+6. `PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED`、`UNKNOWN` 不产生本模块的两条正向事实。为避免旧 DJI 终态被归属给刚启动的新任务，在当前任务尚未产生 `ROUTE_EXECUTION_STARTED` 前，`PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED` 只被忽略，不能改变任务状态；此后门面可仅在 `accept` 返回 `Accepted` 后依据这些已验证属于当前任务的信号更新自己的任务状态。本模块绝不自行写状态。停止、失败、设备断开、任务替换和 `invalidate` 后，旧回调必须无害。
 
 ## 生命周期、失败和测试
 

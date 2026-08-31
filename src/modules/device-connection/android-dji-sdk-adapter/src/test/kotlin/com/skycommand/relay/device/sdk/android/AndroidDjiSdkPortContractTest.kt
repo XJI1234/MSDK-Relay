@@ -4,12 +4,30 @@ import android.content.Context
 import com.skycommand.relay.device.sdk.DjiSdkCallbacks
 import com.skycommand.relay.device.sdk.DjiSdkPort
 import com.skycommand.relay.device.sdk.PortStartResult
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class AndroidDjiSdkPortContractTest {
+
+    @Test
+    fun recordsMsdkInitializationAndRegistrationTransitionsForLinkDiagnosis() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/sdk/android/MsdkV5ManagerBridge.kt"),
+            Path("src/modules/device-connection/android-dji-sdk-adapter/src/main/kotlin/com/skycommand/relay/device/sdk/android/MsdkV5ManagerBridge.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("[DEBUG-link-order]"))
+        assertTrue(source.contains("onInitializationComplete"))
+        assertTrue(source.contains("onRegistrationSuccess"))
+        assertTrue(source.contains("onRegistrationFailure"))
+        assertTrue(source.contains("Log.i("))
+    }
     @Test
     fun factoryExposesOnlyTheDomainPortType() {
         val factory: (Context) -> DjiSdkPort = AndroidDjiSdkPort::create

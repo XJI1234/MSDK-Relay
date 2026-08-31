@@ -34,10 +34,10 @@ AircraftSignal(sourceRevision, aircraftConnected, flightControllerConnected, dis
 ```
 
 1. `sourceRevision` 必须严格为正，对每个已发布信号递增，且在进程存活期间不重置。
-2. `aircraftConnected` 表示飞行器是否连接。它必须同时满足 MSDK 产品已连接且飞控已连接；仅遥控器接入、产品键为 true 但飞控未连接时必须为 `false`。不得把 MSDK 产品连接键单独等同于飞行器已连接。
-3. `flightControllerConnected` 只在飞行器已连接时反映 MSDK 飞控连接事实。飞行器未连接时必须强制为 `false`，禁止发布相互矛盾的信号。
-4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`，飞行器未连接时始终为 `null`。
-5. 初始快照可以在 `start` 内同步到达；调用方必须将其视为普通信号。
+2. `aircraftConnected` 与 `flightControllerConnected` 都是三态观察事实：MSDK 的明确 true、明确 false、null 分别表示已连接、已断开、尚未观察。`aircraftConnected` 只映射 `ProductKey.KeyConnection`，不得由飞控键推断或覆盖。`flightControllerConnected` 在产品明确连接时只映射 `FlightControllerKey.KeyConnection`；产品明确断开时强制为 false，产品未知时强制为 null。不得把 null 压成 false，也不得保留前一次连接值。
+3. 飞行器明确已连接可以合法地与飞控明确断开或未知同时出现；它表示 DJI 仍确认硬件产品在线，但飞控能力尚不可用于需要飞控的操作。飞控明确断开不得使飞行器连接变为断开。
+4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`；产品不是明确已连接时必须为 `null`，不得由飞控状态清空。
+5. `start` 成功后必须先注册 `ProductKey.KeyConnection`、`FlightControllerKey.KeyConnection` 和 `ProductKey.KeyProductType` 的持续监听，再读取这三个 Key 的当前值并发布一个普通初始信号。读取失败或 MSDK 返回 null 必须如实发布为未知，不能沿用旧值或压成断开。注册期间同步到达的事件必须在初始读取之后按到达顺序重放，不能被初始读取反向覆盖。
 6. 相同的平台值可以带着更新的版本号再次发布。跨来源排序和去重由状态存储负责，而非本模块。
 
 ## 生命周期与失败规则

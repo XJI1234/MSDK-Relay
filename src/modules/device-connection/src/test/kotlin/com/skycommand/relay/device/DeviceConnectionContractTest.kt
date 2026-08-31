@@ -228,9 +228,9 @@ class DeviceConnectionContractTest {
         )
         pairingStatus.emitLate(PairingStatusSignal(2, PairingState.PAIRED))
         assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
-        assertEquals(LinkState.DISCONNECTED, connection.snapshot().remoteController)
-        assertEquals(LinkState.DISCONNECTED, connection.snapshot().aircraft)
-        assertEquals(LinkState.DISCONNECTED, connection.snapshot().flightController)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().flightController)
         assertEquals(PairingState.UNKNOWN, connection.snapshot().pairing)
         assertIs<DeviceConnectionStopResult.AlreadyStopped>(connection.stop())
         assertEquals(
@@ -384,8 +384,8 @@ class DeviceConnectionContractTest {
             events,
         )
         assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
-        assertEquals(LinkState.DISCONNECTED, connection.snapshot().remoteController)
-        assertEquals(LinkState.DISCONNECTED, connection.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().aircraft)
         assertEquals(PairingState.UNKNOWN, connection.snapshot().pairing)
     }
 

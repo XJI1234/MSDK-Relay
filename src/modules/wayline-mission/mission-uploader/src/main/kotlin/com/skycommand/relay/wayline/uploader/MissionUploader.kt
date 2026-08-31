@@ -11,6 +11,7 @@ import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.state.MissionStateEvent
 import com.skycommand.relay.wayline.state.MissionStateStore
 import com.skycommand.relay.wayline.state.UploadState
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -90,19 +91,24 @@ class MissionUploader private constructor(
             active = activeUpload
         }
 
-        applyUploadState(activeUpload, UploadState.Uploading(0))
         val bytes = try {
             contentReader.read(metadata)
         } catch (_: Throwable) {
             finishBeforeSubmission(activeUpload, UploadState.FAILED)
             return UploadStartResult.Rejected(UploadRejection.CONTENT_UNAVAILABLE)
         }
+        if (!matchesStagedMetadata(metadata, bytes)) {
+            finishBeforeSubmission(activeUpload, UploadState.FAILED)
+            return UploadStartResult.Rejected(UploadRejection.CONTENT_UNAVAILABLE)
+        }
+
+        applyUploadState(activeUpload, UploadState.Uploading(0))
 
         val submission = operationCoordinator.submit(
             action = DjiOperation { operationCompletion ->
                 uploadPort.upload(
                     metadata = metadata,
-                    bytes = bytes,
+                    bytes = bytes.copyOf(),
                     progress = { value -> recordProgress(activeUpload, value) },
                     completion = object : UploadCompletion {
                         override fun succeed() = operationCompletion.succeed()
@@ -150,6 +156,13 @@ class MissionUploader private constructor(
     }
 
     private fun isActive(upload: ActiveUpload): Boolean = lock.withLock { active === upload }
+
+    private fun matchesStagedMetadata(metadata: MissionMetadata, bytes: ByteArray): Boolean =
+        bytes.size.toLong() == metadata.expectedSize &&
+            MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+                .equals(metadata.sha256, ignoreCase = true)
 
     private fun clearIfActive(upload: ActiveUpload): Boolean = lock.withLock {
         if (active !== upload) false else {

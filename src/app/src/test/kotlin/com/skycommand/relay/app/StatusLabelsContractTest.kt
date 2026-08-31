@@ -13,6 +13,7 @@ class StatusLabelsContractTest {
         assertEquals("已连接", StatusLabels.gateway(SessionState.ACTIVE))
         assertEquals("已连接", StatusLabels.link("CONNECTED"))
         assertEquals("未连接", StatusLabels.link("DISCONNECTED"))
+        assertEquals("状态未知", StatusLabels.link("UNKNOWN"))
         assertEquals("未对频", StatusLabels.pairing("IDLE"))
         assertEquals("正在结束对频", StatusLabels.pairing("STOPPING"))
     }

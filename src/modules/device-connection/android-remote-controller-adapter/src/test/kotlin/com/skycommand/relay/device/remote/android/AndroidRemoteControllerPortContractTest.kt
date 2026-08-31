@@ -4,6 +4,11 @@ import com.skycommand.relay.device.remote.RemoteControllerListener
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 
 class AndroidRemoteControllerPortContractTest {
     @Test
@@ -142,6 +147,17 @@ class AndroidRemoteControllerPortContractTest {
         platform.publish(connected = true)
 
         assertEquals(1, delivered)
+    }
+
+    @Test
+    fun publishesTheCurrentMsdkKeyAsTheInitialRemoteControllerFact() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+            Path("src/modules/device-connection/android-remote-controller-adapter/src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("publishInitialFact()"))
+        assertFalse(source.contains("recordInitialConnection()"))
     }
 
     private data class Fact(

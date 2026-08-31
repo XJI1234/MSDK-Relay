@@ -252,8 +252,10 @@ class MainActivity : ComponentActivity() {
             statusView.text = listOf(
                 getString(R.string.status_runtime, StatusLabels.runtime(status.runtime)),
                 getString(R.string.status_gateway, StatusLabels.gateway(status.gateway)),
+                getString(R.string.status_msdk, StatusLabels.sdk(status.sdk)),
                 getString(R.string.status_remote_controller, StatusLabels.link(status.remoteController)),
                 getString(R.string.status_pairing, StatusLabels.pairing(status.pairing)),
+                getString(R.string.status_flight_controller, StatusLabels.link(status.flightController)),
                 getString(R.string.status_aircraft, StatusLabels.link(status.aircraft)),
                 getString(R.string.status_stream, status.stream),
                 getString(R.string.status_mission, status.mission),
@@ -274,13 +276,15 @@ class MainActivity : ComponentActivity() {
         graph?.let { runCatching(it::status).getOrNull() } ?: idleStatus()
 
     private fun idleStatus(): MobileRelayStatus = MobileRelayStatus(
-        RuntimeState.STOPPED,
-        SessionState.STOPPED,
-        "DISCONNECTED",
-        "DISCONNECTED",
-        "UNKNOWN",
-        "IDLE",
-        "-",
+        runtime = RuntimeState.STOPPED,
+        gateway = SessionState.STOPPED,
+        sdk = "STOPPED",
+        remoteController = "UNKNOWN",
+        pairing = "UNKNOWN",
+        flightController = "UNKNOWN",
+        aircraft = "UNKNOWN",
+        stream = "IDLE",
+        mission = "-",
         canStartPairing = false,
         canStopPairing = false,
     )

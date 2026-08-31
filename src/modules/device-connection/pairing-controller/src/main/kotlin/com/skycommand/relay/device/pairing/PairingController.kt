@@ -120,6 +120,7 @@ class PairingController private constructor(
             pairing in setOf(
                 PairingState.UNKNOWN,
                 PairingState.IDLE,
+                PairingState.PAIRED,
                 PairingState.FAILED,
                 PairingState.STOPPING,
             )

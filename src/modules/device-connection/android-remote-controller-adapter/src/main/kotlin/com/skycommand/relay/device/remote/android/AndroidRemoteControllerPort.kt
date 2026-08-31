@@ -6,7 +6,7 @@ import com.skycommand.relay.device.remote.RemoteControllerPort
 import com.skycommand.relay.device.remote.RemoteControllerSignal
 
 internal data class DjiRemoteControllerFact(
-    val connected: Boolean,
+    val connected: Boolean?,
     val displayModel: String?,
 )
 
@@ -71,7 +71,7 @@ class AndroidRemoteControllerPort internal constructor(
                     connected = fact.connected,
                     displayModel = fact.displayModel
                         ?.trim()
-                        ?.takeIf { fact.connected && it.isNotEmpty() },
+                        ?.takeIf { fact.connected == true && it.isNotEmpty() },
                 ) to operation.listener
             }
         }

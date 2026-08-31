@@ -71,26 +71,120 @@ class MissionExecutorContractTest {
     }
 
     @Test
-    fun mapsFailureTimeoutCancellationAndAdapterExceptionToFailed() {
+    fun leavesAStartedMissionUnconfirmedWhenTheDjiControlCallHasNoSuccessReceipt() {
         val failure = Fixture()
         failure.executor.start()
         failure.port.completeFailure()
-        assertEquals(ExecutionState.FAILED, failure.store.snapshot().execution)
+        assertEquals(ExecutionState.STARTING, failure.store.snapshot().execution)
 
         val timeout = Fixture()
         timeout.executor.start()
         timeout.scheduler.fire()
-        assertEquals(ExecutionState.FAILED, timeout.store.snapshot().execution)
+        assertEquals(ExecutionState.STARTING, timeout.store.snapshot().execution)
 
         val cancelled = Fixture()
         val accepted = assertIs<ExecutionRequestResult.Accepted>(cancelled.executor.start())
         accepted.cancellation.cancel()
-        assertEquals(ExecutionState.FAILED, cancelled.store.snapshot().execution)
+        assertEquals(ExecutionState.STARTING, cancelled.store.snapshot().execution)
 
         val exception = Fixture()
         exception.port.throwOnCall = true
         exception.executor.start()
-        assertEquals(ExecutionState.FAILED, exception.store.snapshot().execution)
+        assertEquals(ExecutionState.STARTING, exception.store.snapshot().execution)
+    }
+
+    @Test
+    fun doesNotRepeatPauseAfterItsDjiReceiptIsLost() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.scheduler.fire()
+
+        assertEquals(
+            ExecutionRejection.OPERATION_UNCONFIRMED,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.pause()).reason,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+    }
+
+    @Test
+    fun acceptsResumeWhenTheMatchingPauseStateArrivedBeforeThePauseReceiptTimedOut() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                4,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.PAUSED,
+            ),
+        )
+        fixture.executor.observeExecutionState(
+            ExecutionState.PAUSED,
+            fixture.store.snapshot().missionRevision!!,
+            fixture.store.snapshot().deviceGeneration,
+        )
+        fixture.scheduler.fire()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
+    }
+
+    @Test
+    fun doesNotRepeatResumeAfterItsDjiReceiptIsLost() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                4,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.PAUSED,
+            ),
+        )
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
+        fixture.scheduler.fire()
+
+        assertEquals(
+            ExecutionRejection.OPERATION_UNCONFIRMED,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.resume()).reason,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+    }
+
+    @Test
+    fun acceptsPauseWhenTheMatchingResumeStateArrivedBeforeTheResumeReceiptTimedOut() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                4,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.PAUSED,
+            ),
+        )
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                5,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.EXECUTING,
+            ),
+        )
+        fixture.executor.observeExecutionState(
+            ExecutionState.EXECUTING,
+            fixture.store.snapshot().missionRevision!!,
+            fixture.store.snapshot().deviceGeneration,
+        )
+        fixture.scheduler.fire()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
     }
 
     @Test
@@ -138,7 +232,7 @@ class MissionExecutorContractTest {
             executor = OperationExecutor { it() },
             scheduler = scheduler,
         )
-        val executor = MissionExecutor.create(store, port, coordinator)
+        val executor = MissionExecutor.create(store, port, coordinator, startSafetyGate = MissionStartSafetyGate { true })
 
         init {
             if (ready) {

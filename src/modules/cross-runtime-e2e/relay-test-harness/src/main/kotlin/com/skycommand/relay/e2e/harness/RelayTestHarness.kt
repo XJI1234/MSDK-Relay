@@ -74,6 +74,7 @@ import com.skycommand.relay.telemetry.snapshot.TelemetryInputs
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
+import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
@@ -289,7 +290,7 @@ class RelayTestHarness private constructor(
             val storage = InMemoryMissionStorage()
             val wayline = WaylineMission.create(
                 WaylineMissionDependencies(
-                    storage, storage, ports.missionUpload, ports.missionControl, ports.executionSignals,
+                    storage, storage, ports.missionUpload, ports.missionControl, MissionStartSafetyGate { true }, ports.executionSignals,
                     device.operations(), uploadTimeoutMillis = 1_000, controlTimeoutMillis = 1_000,
                 ),
             )
@@ -499,12 +500,14 @@ private object HarnessTelemetryMapper {
         "aircraftModel" to snapshot.aircraftModel.json(),
         "isFlying" to snapshot.isFlying.json(), "motorsOn" to snapshot.motorsOn.json(),
         "flightMode" to snapshot.flightMode.json(), "batteryPercent" to snapshot.batteryPercent.json(),
+        "lowBatteryRthState" to snapshot.lowBatteryRthState?.name.json(),
         "remainingFlightTimeSeconds" to snapshot.remainingFlightTimeSeconds.json(),
         "altitudeMeters" to snapshot.altitudeMeters.json(), "latitude" to snapshot.latitude.json(),
         "longitude" to snapshot.longitude.json(), "liveStreaming" to JsonBoolean(snapshot.liveStreaming),
         "liveStreamNotice" to snapshot.liveStreamNotice.json(), "liveResolution" to snapshot.liveResolution.json(),
         "liveFps" to snapshot.liveFps.json(), "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),
-        "liveRttMillis" to snapshot.liveRttMillis.json(), "missionExecution" to JsonString(snapshot.missionExecution.name),
+        "liveRttMillis" to snapshot.liveRttMillis.json(), "missionRevision" to snapshot.missionRevision.json(),
+        "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(), "missionExecution" to JsonString(snapshot.missionExecution.name),
         "missionUploadProgress" to snapshot.missionUploadProgress.json(), "missionFileName" to snapshot.missionFileName.json(),
     )
 

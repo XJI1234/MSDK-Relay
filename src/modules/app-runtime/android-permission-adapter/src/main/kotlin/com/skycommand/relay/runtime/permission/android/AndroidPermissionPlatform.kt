@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.util.Log
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +42,7 @@ internal class AndroidPermissionPlatform private constructor(
                 UsbManager.ACTION_USB_ACCESSORY_ATTACHED -> {
                     val accessory = accessoryFrom(intent) ?: currentAccessory()
                     synchronized(lock) { attachedAccessory = accessory }
+                    recordLinkDiagnostic("event=usb-accessory-attached present=${accessory != null}")
                     requestPendingUsbPermission()
                     notifyUsbPresenceChanged()
                 }
@@ -50,6 +52,7 @@ internal class AndroidPermissionPlatform private constructor(
                         attachedAccessory = null
                         usbRequestInFlight = false
                     }
+                    recordLinkDiagnostic("event=usb-accessory-detached")
                     notifyUsbPresenceChanged()
                 }
 
@@ -57,6 +60,7 @@ internal class AndroidPermissionPlatform private constructor(
                     val outcome = usbPermissionOutcome(
                         intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false),
                     )
+                    recordLinkDiagnostic("event=usb-permission outcome=$outcome")
                     val callback = synchronized(lock) {
                         usbRequestInFlight = false
                         when (outcome) {
@@ -349,3 +353,10 @@ internal enum class UsbPermissionOutcome {
 
 internal fun usbPermissionOutcome(permissionGranted: Boolean): UsbPermissionOutcome =
     if (permissionGranted) UsbPermissionOutcome.GRANTED else UsbPermissionOutcome.DENIED
+
+private const val LINK_DIAGNOSTIC_TAG = "SCLinkDiag"
+private const val LINK_DIAGNOSTIC_PREFIX = "[DEBUG-link-order]"
+
+private fun recordLinkDiagnostic(message: String) {
+    runCatching { Log.i(LINK_DIAGNOSTIC_TAG, "$LINK_DIAGNOSTIC_PREFIX $message") }
+}

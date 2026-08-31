@@ -8,8 +8,8 @@ import kotlin.concurrent.withLock
 
 data class AircraftSignal(
     val sourceRevision: Long,
-    val aircraftConnected: Boolean,
-    val flightControllerConnected: Boolean,
+    val aircraftConnected: Boolean?,
+    val flightControllerConnected: Boolean?,
     val displayModel: String?,
 )
 
@@ -139,16 +139,17 @@ class AircraftLink private constructor(
 
     private fun applySignal(signal: AircraftSignal) {
         runCatching {
+            val aircraft = signal.aircraftConnected.toLinkState()
             store.apply(
                 DeviceStatePatch.aircraft(
                     sourceRevision = signal.sourceRevision,
-                    aircraft = if (signal.aircraftConnected) LinkState.CONNECTED else LinkState.DISCONNECTED,
-                    flightController = if (signal.aircraftConnected && signal.flightControllerConnected) {
-                        LinkState.CONNECTED
-                    } else {
-                        LinkState.DISCONNECTED
+                    aircraft = aircraft,
+                    flightController = when (aircraft) {
+                        LinkState.CONNECTED -> signal.flightControllerConnected.toLinkState()
+                        LinkState.DISCONNECTED -> LinkState.DISCONNECTED
+                        LinkState.UNKNOWN -> LinkState.UNKNOWN
                     },
-                    model = signal.displayModel,
+                    model = signal.displayModel?.takeIf { aircraft == LinkState.CONNECTED },
                 ),
             )
         }.onFailure { record(AircraftDiagnosticKind.INVALID_SIGNAL) }
@@ -156,6 +157,12 @@ class AircraftLink private constructor(
 
     private fun record(kind: AircraftDiagnosticKind) {
         runCatching { diagnosticSink.record(AircraftDiagnostic(kind)) }
+    }
+
+    private fun Boolean?.toLinkState(): LinkState = when (this) {
+        true -> LinkState.CONNECTED
+        false -> LinkState.DISCONNECTED
+        null -> LinkState.UNKNOWN
     }
 
     companion object {

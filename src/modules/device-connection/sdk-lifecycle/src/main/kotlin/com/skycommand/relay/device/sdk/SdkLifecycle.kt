@@ -1,5 +1,7 @@
 package com.skycommand.relay.device.sdk
 
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -47,6 +49,14 @@ fun interface Registration {
     fun unregister()
 }
 
+fun interface SdkStartupTimeout {
+    fun cancel()
+}
+
+fun interface SdkStartupTimeoutScheduler {
+    fun schedule(delayMillis: Long, callback: () -> Unit): SdkStartupTimeout
+}
+
 fun interface SdkLifecycleDiagnosticSink {
     fun record(diagnostic: SdkLifecycleDiagnostic)
 }
@@ -57,6 +67,7 @@ data class SdkLifecycleDiagnostic(
 
 enum class SdkLifecycleDiagnosticKind {
     PORT_FAILURE,
+    START_TIMEOUT,
     LISTENER_FAILURE,
     STALE_CALLBACK,
 }
@@ -64,12 +75,14 @@ enum class SdkLifecycleDiagnosticKind {
 class SdkLifecycle private constructor(
     private val port: DjiSdkPort,
     private val diagnosticSink: SdkLifecycleDiagnosticSink,
+    private val startupTimeoutScheduler: SdkStartupTimeoutScheduler,
 ) {
     private val lock = ReentrantLock()
     private val listeners = mutableListOf<ListenerSlot>()
     private var state = SdkAvailability.STOPPED
     private var runToken = 0L
     private var closeRequired = false
+    private var startupTimeout: PendingStartupTimeout? = null
 
     fun start(): StartResult {
             val token = lock.withLock {
@@ -83,7 +96,12 @@ class SdkLifecycle private constructor(
         }
         notifyState(SdkAvailability.STARTING)
 
-            val result = runCatching {
+        if (!armStartupTimeout(token)) {
+            if (transitionToFailed(token) != null) notifyState(SdkAvailability.FAILED)
+            return StartResult.StartRejected("SDK initialization unavailable")
+        }
+
+        val result = runCatching {
             port.initialize(object : DjiSdkCallbacks {
                 override fun onReady() {
                     handleReady(token)
@@ -99,22 +117,17 @@ class SdkLifecycle private constructor(
         }
 
         if (result is PortStartResult.Rejected) {
-            val failed = lock.withLock {
-                if (runToken == token && state == SdkAvailability.STARTING) {
-                    state = SdkAvailability.FAILED
-                    true
-                } else {
-                    false
-                }
+            transitionToFailed(token)?.let { transition ->
+                transition.timeout?.cancel()
+                notifyState(SdkAvailability.FAILED)
             }
-            if (failed) notifyState(SdkAvailability.FAILED)
             return StartResult.StartRejected("SDK initialization was rejected")
         }
         return StartResult.StartAccepted
     }
 
     fun stop(): StopResult {
-        val shouldClose = lock.withLock {
+        val stopped = lock.withLock {
             if (state == SdkAvailability.STOPPED) {
                 return StopResult.AlreadyStopped
             }
@@ -122,9 +135,10 @@ class SdkLifecycle private constructor(
             state = SdkAvailability.STOPPED
             val close = closeRequired
             closeRequired = false
-            close
+            StoppedRun(close, startupTimeout?.handle.also { startupTimeout = null })
         }
-        if (shouldClose) {
+        stopped.timeout?.cancel()
+        if (stopped.closeRequired) {
             runCatching { port.close() }
                 .onFailure { record(SdkLifecycleDiagnosticKind.PORT_FAILURE) }
         }
@@ -145,31 +159,77 @@ class SdkLifecycle private constructor(
     }
 
     private fun handleReady(token: Long) {
-        val accepted = lock.withLock {
-            if (token != runToken || state != SdkAvailability.STARTING) {
-                false
-            } else {
-                state = SdkAvailability.READY
-                true
-            }
+        val transition = transitionToReady(token)
+        if (transition !== null) {
+            transition.timeout?.cancel()
+            notifyState(SdkAvailability.READY)
+        } else {
+            record(SdkLifecycleDiagnosticKind.STALE_CALLBACK)
         }
-        if (accepted) notifyState(SdkAvailability.READY) else record(SdkLifecycleDiagnosticKind.STALE_CALLBACK)
     }
 
     private fun handleFailure(token: Long) {
-        val failed = lock.withLock {
-            if (token != runToken || state != SdkAvailability.STARTING) {
-                false
-            } else {
-                state = SdkAvailability.FAILED
-                true
-            }
-        }
-        if (failed) {
+        val transition = transitionToFailed(token)
+        if (transition !== null) {
+            transition.timeout?.cancel()
             record(SdkLifecycleDiagnosticKind.PORT_FAILURE)
             notifyState(SdkAvailability.FAILED)
         } else {
             record(SdkLifecycleDiagnosticKind.STALE_CALLBACK)
+        }
+    }
+
+    private fun armStartupTimeout(token: Long): Boolean {
+        val timeout = runCatching {
+            startupTimeoutScheduler.schedule(STARTUP_TIMEOUT_MILLIS) { handleStartupTimeout(token) }
+        }.getOrElse {
+            record(SdkLifecycleDiagnosticKind.PORT_FAILURE)
+            return false
+        }
+        val installed = lock.withLock {
+            if (runToken != token || state != SdkAvailability.STARTING) {
+                false
+            } else {
+                startupTimeout = PendingStartupTimeout(token, timeout)
+                true
+            }
+        }
+        if (!installed) timeout.cancel()
+        return true
+    }
+
+    private fun handleStartupTimeout(token: Long) {
+        val transition = transitionToFailed(token) ?: return
+        transition.timeout?.cancel()
+        record(SdkLifecycleDiagnosticKind.START_TIMEOUT)
+        notifyState(SdkAvailability.FAILED)
+    }
+
+    private fun transitionToReady(token: Long): TerminalTransition? = lock.withLock {
+        if (token != runToken || state != SdkAvailability.STARTING) {
+            null
+        } else {
+            state = SdkAvailability.READY
+            TerminalTransition(takeStartupTimeout(token))
+        }
+    }
+
+    private fun transitionToFailed(token: Long): TerminalTransition? = lock.withLock {
+        if (token != runToken || state != SdkAvailability.STARTING) {
+            null
+        } else {
+            state = SdkAvailability.FAILED
+            TerminalTransition(takeStartupTimeout(token))
+        }
+    }
+
+    private fun takeStartupTimeout(token: Long): SdkStartupTimeout? {
+        val pending = startupTimeout
+        return if (pending !== null && pending.token == token) {
+            startupTimeout = null
+            pending.handle
+        } else {
+            null
         }
     }
 
@@ -202,10 +262,38 @@ class SdkLifecycle private constructor(
         }
     }
 
+    private data class PendingStartupTimeout(
+        val token: Long,
+        val handle: SdkStartupTimeout,
+    )
+
+    private data class StoppedRun(
+        val closeRequired: Boolean,
+        val timeout: SdkStartupTimeout?,
+    )
+
+    private data class TerminalTransition(
+        val timeout: SdkStartupTimeout?,
+    )
+
     companion object {
+        private const val STARTUP_TIMEOUT_MILLIS = 30_000L
+
         fun create(
             port: DjiSdkPort,
             diagnosticSink: SdkLifecycleDiagnosticSink = SdkLifecycleDiagnosticSink { },
-        ): SdkLifecycle = SdkLifecycle(port, diagnosticSink)
+            startupTimeoutScheduler: SdkStartupTimeoutScheduler = ProcessStartupTimeoutScheduler,
+        ): SdkLifecycle = SdkLifecycle(port, diagnosticSink, startupTimeoutScheduler)
+    }
+}
+
+private object ProcessStartupTimeoutScheduler : SdkStartupTimeoutScheduler {
+    private val executor = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "skycommand-sdk-start-timeout").apply { isDaemon = true }
+    }
+
+    override fun schedule(delayMillis: Long, callback: () -> Unit): SdkStartupTimeout {
+        val future = executor.schedule(callback, delayMillis, TimeUnit.MILLISECONDS)
+        return SdkStartupTimeout { future.cancel(false) }
     }
 }

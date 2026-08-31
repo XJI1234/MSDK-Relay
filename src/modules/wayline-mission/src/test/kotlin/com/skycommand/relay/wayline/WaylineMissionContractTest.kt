@@ -12,6 +12,7 @@ import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonBoolean
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
@@ -33,6 +34,189 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class WaylineMissionContractTest {
+    @Test
+    fun rejectsReplacementTransferWhileTheCurrentMissionIsExecuting() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+
+        val replacement = fixture.mission.missionSink()
+
+        assertEquals(
+            MissionSinkResult.Rejected,
+            replacement.begin(GatewayMissionMetadata("replacement", "replacement.kmz", 3, hash(byteArrayOf(4, 5, 6)))),
+        )
+        assertEquals("survey.kmz", fixture.mission.snapshot().file?.fileName)
+        assertEquals(ExecutionState.EXECUTING, fixture.mission.snapshot().execution)
+    }
+
+    @Test
+    fun rejectsStartWhileAReplacementTransferIsInProgress() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        val replacement = fixture.mission.missionSink()
+
+        assertEquals(
+            MissionSinkResult.Accepted,
+            replacement.begin(GatewayMissionMetadata("replacement", "replacement.kmz", 3, hash(byteArrayOf(4, 5, 6)))),
+        )
+        val completion = Completion()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), completion)
+
+        assertEquals(listOf("reject:Mission operation was rejected"), completion.events)
+        assertEquals(false, fixture.control.hasStarted)
+        replacement.abort(com.skycommand.relay.gateway.mission.MissionAbortReason.TRANSFER_FAILED)
+    }
+
+    @Test
+    fun confirmsAnUncertainPauseOnlyAfterTheMatchingDjiStateArrives() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+
+        fixture.mission.commandHandler().handle(confirm("wayline.pause"), Completion())
+        fixture.scheduler.fire()
+        fixture.signals.emit(MissionExecutionSignal.PAUSED)
+
+        val resume = Completion()
+        fixture.mission.commandHandler().handle(confirm("wayline.resume"), resume)
+
+        assertEquals(emptyList(), resume.events)
+        assertEquals("resume", fixture.control.command)
+    }
+
+    @Test
+    fun ignoresTerminalSignalsUntilTheCurrentMissionReportsExecuting() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+
+        fixture.signals.emit(MissionExecutionSignal.COMPLETED)
+
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+        fixture.signals.emit(MissionExecutionSignal.COMPLETED)
+        assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
+    }
+
+    @Test
+    fun abortsAnIncomingReplacementWhenTheDeviceBecomesUnavailable() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        val replacement = fixture.mission.missionSink()
+        val bytes = byteArrayOf(4, 5, 6)
+
+        assertEquals(
+            MissionSinkResult.Accepted,
+            replacement.begin(GatewayMissionMetadata("replacement", "replacement.kmz", 3, hash(bytes))),
+        )
+        assertEquals(MissionSinkResult.Accepted, replacement.append(bytes))
+        fixture.mission.markDeviceUnavailable()
+
+        assertEquals(MissionSinkCompletionResult.Rejected, replacement.complete())
+        assertEquals("survey.kmz", fixture.mission.snapshot().file?.fileName)
+        assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
+    }
+
+    @Test
+    fun allowsReplacementAfterFailureOnlyWhenGroundedReadinessIsConfirmedAgain() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.markDeviceUnavailable()
+        fixture.allowStart = false
+        val replacement = fixture.mission.missionSink()
+        val metadata = GatewayMissionMetadata("replacement", "replacement.kmz", 3, hash(byteArrayOf(4, 5, 6)))
+
+        assertEquals(MissionSinkResult.Rejected, replacement.begin(metadata))
+        fixture.allowStart = true
+        assertEquals(MissionSinkResult.Accepted, replacement.begin(metadata))
+        replacement.abort(com.skycommand.relay.gateway.mission.MissionAbortReason.TRANSFER_FAILED)
+    }
+
+    @Test
+    fun holdsEarlyExecutionStateUntilDjiAcknowledgesStartThenCommitsIt() {
+        val fixture = Fixture()
+        val facts = mutableListOf<MissionPhaseFact>()
+        fixture.mission.onPhaseChanged { facts += it }
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+        assertEquals(emptyList(), facts)
+
+        fixture.control.completeSuccess()
+
+        assertEquals(ExecutionState.EXECUTING, fixture.mission.snapshot().execution)
+        assertEquals(
+            listOf(MissionPhaseFact(1, 0, 1, MissionPhase.ROUTE_EXECUTION_STARTED, "survey.kmz")),
+            facts,
+        )
+    }
+
+    @Test
+    fun ignoresTerminalStateObservedBeforeDjiAcknowledgesStart() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.signals.emit(MissionExecutionSignal.COMPLETED)
+        fixture.control.completeSuccess()
+
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+    }
+
+    @Test
+    fun leavesStartUnconfirmedAfterTimeoutAndIgnoresSubsequentExecutionState() {
+        val fixture = Fixture()
+        val facts = mutableListOf<MissionPhaseFact>()
+        fixture.mission.onPhaseChanged { facts += it }
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.scheduler.fire()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+        assertEquals(emptyList(), facts)
+    }
+
+    @Test
+    fun rejectsStartWhenThePhoneSafetyGateDoesNotConfirmGroundedReadyState() {
+        val fixture = Fixture()
+        fixture.allowStart = false
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        val completion = Completion()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), completion)
+
+        assertEquals(ExecutionState.NOT_STARTED, fixture.mission.snapshot().execution)
+        assertEquals(false, fixture.control.hasStarted)
+        assertEquals(listOf("reject:Mission operation was rejected"), completion.events)
+    }
+
     @Test
     fun djiEnterWaylineKeepsStartingUntilExecutingPublishesRouteExecutionStarted() {
         val fixture = Fixture()
@@ -99,12 +283,16 @@ class WaylineMissionContractTest {
         fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
         fixture.control.completeSuccess()
         fixture.signals.emit(MissionExecutionSignal.ENTER_WAYLINE)
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
 
         fixture.signals.emit(MissionExecutionSignal.COMPLETED)
 
         assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
         assertEquals(
-            listOf(MissionPhaseFact(1, 0, 1, MissionPhase.START_POINT_REACHED, "survey.kmz")),
+            listOf(
+                MissionPhaseFact(1, 0, 1, MissionPhase.START_POINT_REACHED, "survey.kmz"),
+                MissionPhaseFact(1, 0, 2, MissionPhase.ROUTE_EXECUTION_STARTED, "survey.kmz"),
+            ),
             facts,
         )
 
@@ -278,6 +466,8 @@ class WaylineMissionContractTest {
         val upload = UploadPort()
         val control = ControlPort()
         val signals = SignalSource()
+        val scheduler = Scheduler()
+        var allowStart = true
         val mission = WaylineMission.create(
             WaylineMissionDependencies(
                 stagingStorage = storage,
@@ -286,10 +476,11 @@ class WaylineMissionContractTest {
                 },
                 uploadPort = upload,
                 controlPort = control,
+                startSafetyGate = MissionStartSafetyGate { allowStart },
                 executionSignalSource = signals,
                 operationCoordinator = DjiOperationCoordinator.create(
                     executor = OperationExecutor { it() },
-                    scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                    scheduler = scheduler,
                 ),
             ),
         )
@@ -321,11 +512,12 @@ class WaylineMissionContractTest {
 
     private class ControlPort : MissionControlPort {
         private var completion: ControlCompletion? = null
+        var command: String? = null
         val hasStarted: Boolean get() = completion != null
-        override fun start(completion: ControlCompletion) { this.completion = completion }
-        override fun pause(completion: ControlCompletion) { this.completion = completion }
-        override fun resume(completion: ControlCompletion) { this.completion = completion }
-        override fun stop(completion: ControlCompletion) { this.completion = completion }
+        override fun start(completion: ControlCompletion) { command = "start"; this.completion = completion }
+        override fun pause(completion: ControlCompletion) { command = "pause"; this.completion = completion }
+        override fun resume(completion: ControlCompletion) { command = "resume"; this.completion = completion }
+        override fun stop(completion: ControlCompletion) { command = "stop"; this.completion = completion }
         fun completeSuccess() { requireNotNull(completion).succeed() }
         fun completeFailure() { requireNotNull(completion).fail() }
     }
@@ -336,7 +528,21 @@ class WaylineMissionContractTest {
             this.listener = listener
             return MissionExecutionSignalRegistration { this.listener = null }
         }
+        override fun beginStartAttempt() = Unit
+        override fun confirmStartAttempt() = Unit
+        override fun invalidateStartAttempt() = Unit
         fun emit(signal: MissionExecutionSignal) { listener?.onSignal(signal) }
+    }
+
+    private class Scheduler : OperationScheduler {
+        private var callback: (() -> Unit)? = null
+
+        override fun schedule(delayMillis: Long, callback: () -> Unit): OperationCancellation {
+            this.callback = callback
+            return OperationCancellation { }
+        }
+
+        fun fire() { callback?.invoke() }
     }
 
     private fun hash(bytes: ByteArray): String =

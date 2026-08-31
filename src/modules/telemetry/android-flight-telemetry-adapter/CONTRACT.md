@@ -7,7 +7,7 @@
 
 ## 唯一职责
 
-本模块是 DJI MSDK v5 飞行事实到 `FlightTelemetrySnapshot` 的唯一 Android 适配器。它只观察飞行状态、电机状态、飞行模式、聚合电量、预计剩余飞行时间、相对高度和飞行器经纬度，并向组合根提供一个原子只读快照和变化通知。
+本模块是 DJI MSDK v5 飞行事实到 `FlightTelemetrySnapshot` 的唯一 Android 适配器。它只观察飞行状态、电机状态、飞行模式、主电池电量、低电量返航状态与预估时间、相对高度和飞行器经纬度，并向组合根提供一个原子只读快照和变化通知。
 
 它不判断设备连接，不拥有业务遥测，不发布网络消息，不控制飞行，不管理直播或航线，不注册 DJI SDK，不请求权限，也不渲染界面。
 
@@ -28,11 +28,12 @@ source.close() -> Unit
 
 1. `isFlying`、`motorsOn` 仅来自对应 DJI 飞控键；平台没有有效值时为 `null`。
 2. `flightMode` 仅来自 DJI 飞行模式的稳定名称；未知、空白、控制字符或超长值为 `null`。
-3. `batteryPercent` 仅接受 `0..100`；其他值为 `null`。
-4. `remainingFlightTimeSeconds` 仅接受非负秒数；其他值为 `null`。
-5. `altitudeMeters` 仅接受有限数值；其他值为 `null`。
-6. 纬度和经度必须同时有限且分别位于 `-90..90`、`-180..180`；任一无效时两者同时为 `null`。
-7. 一次平台回调必须先生成新的完整快照，再在锁外通知调用方。监听器异常不得破坏后续更新或清理。
+3. `batteryPercent` 仅来自 `BatteryKey.KeyChargeRemainingInPercent` 的 `LEFT_OR_MAIN` 电池索引，表示当前飞行器主电池的剩余百分比。不得把 `AGGREGATION` 索引用于该字段；多电池产品的总电量必须在专门的聚合策略中按各电池容量计算，不能在本模块推测。仅接受 `0..100`；其他值为 `null`。
+4. `lowBatteryRthState` 与 `remainingFlightTimeSeconds` 必须从同一个 `KeyLowBatteryRTHInfo` 原子读取。仅将 DJI `IDLE`、`COUNTING_DOWN`、`EXECUTED`、`CANCELLED` 映射为公开状态；`UNKNOWN`、null 或未识别值为 `null`。
+5. `remainingFlightTimeSeconds` 仅来自同一对象的 `remainingFlightTime`，表示 DJI 低电量返航策略下的预估时间，不能表示通用“预计可飞时间”，也绝不参与任何安全门禁。只有返航状态已知且值为正秒数时才保留；DJI 默认组合 `UNKNOWN + 0` 必须归一为未知，不能显示为“0 分 0 秒”。
+6. `altitudeMeters` 仅接受有限数值；其他值为 `null`。
+7. 纬度和经度必须同时有限且分别位于 `-90..90`、`-180..180`；任一无效时两者同时为 `null`。
+8. 一次平台回调必须先生成新的完整快照，再在锁外通知调用方。监听器异常不得破坏后续更新或清理。
 
 ## 生命周期与失败
 

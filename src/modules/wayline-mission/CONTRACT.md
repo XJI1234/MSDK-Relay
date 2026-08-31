@@ -31,7 +31,7 @@ Gradle 路径：`:wayline-mission`
 - `startMission` 的成功回调只表示 DJI 接受了启动请求，绝不表示飞行器已到达首航点或已开始飞行航线。
 - 仅 DJI 的 `ENTER_WAYLINE` 原始状态可确认飞行器已进入首航点。收到该状态时只产生 `START_POINT_REACHED`，任务执行状态必须保持 `STARTING`，不得把入场当成已经开始执行航线。
 - 仅 DJI 的 `EXECUTING` 原始状态可确认航线开始执行。已见过首点后的首次 `EXECUTING` 产生 `ROUTE_EXECUTION_STARTED`，门面此时才把当前任务写成 `EXECUTING`。没有收到 `ENTER_WAYLINE` 而直接收到 `EXECUTING` 时，只能确认 `ROUTE_EXECUTION_STARTED`，不得补造 `START_POINT_REACHED`；必须记录不含敏感数据的 `ENTRY_STATE_MISSING` 诊断。两条事实可以紧挨着到达，但不得由一次 `ENTER_WAYLINE` 同时合成。
-- `COMPLETED` 是 DJI 确认的自然任务完成：仅对当前已武装任务将执行状态写为 `FINISHED`，随后使该任务的阶段跟踪器失效。`INTERRUPTED` 或 `DISCONNECTED` 仅对当前已武装任务写为 `FAILED`，随后失效。它们不产生伪造的首点或开始执行阶段事实。`PAUSED` 只能把当前 `EXECUTING` 任务同步为 `PAUSED`；重复或不匹配当前状态的信号必须无害。
+- `COMPLETED` 是 DJI 确认的自然任务完成：仅对已经产生 `ROUTE_EXECUTION_STARTED` 的当前已武装任务将执行状态写为 `FINISHED`，随后使该任务的阶段跟踪器失效。`INTERRUPTED` 或 `DISCONNECTED` 仅对同样已确认进入执行的当前任务写为 `FAILED`，随后失效。任务尚未进入执行时的终态不能可靠归属，必须忽略并保持保守的 `STARTING`，只允许操作员停止。它们不产生伪造的首点或开始执行阶段事实。`PAUSED` 只能把当前 `EXECUTING` 任务同步为 `PAUSED`；重复或不匹配当前状态的信号必须无害。
 - 任何基于时间、距离、手机定位或预估速度的首航点到达判断都是禁止的。设备断开、任务替换、停止、失败或过期回调后，旧任务不得产生阶段事实。
 - 同时只能存在一个活动暂存写入；失败、取消和重启必须清理半成品。
 - 所有对外结果不包含 Android 绝对路径、临时文件名、原始异常或文件全部内容。
@@ -56,7 +56,9 @@ mission.markDeviceUnavailable() -> MissionSnapshot
 
 原始 DJI 执行信号也可能给出任务终态。门面必须先让 `mission-flight-phase` 验证该信号仍属于当前已武装任务，再根据上面的终态规则更新 `MissionStateStore`；任务替换、停止、设备失效或此前终态后的迟到信号不得修改新任务，也不得产生新的阶段帧。
 
-完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
+由于 DJI 原始状态不含任务标识，门面在准备新启动前必须关闭 Android 状态源的 `beginStartAttempt` 隔离，在该启动得到成功回执后才 `confirmStartAttempt`，并在失败、超时、取消、停止、任务替换、设备失效及终态时 `invalidateStartAttempt`。隔离窗口中的状态必须丢弃，不能暂存、重放或用于判断新任务；这优先于快速显示状态，保证迟到回调不会被归属给新任务。
+
+完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。启动、暂停、继续和停止的回执丢失不能作为 DJI 未执行的证据：启动保持 `STARTING`，暂停/继续等待匹配 DJI 状态，停止保持 `STOPPING`；除明确失败外不得自动重发，操作员只能使用保守停止处置。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
 
 依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、原始 DJI 任务状态源、共享 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。
 

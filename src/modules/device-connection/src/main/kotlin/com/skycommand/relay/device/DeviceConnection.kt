@@ -136,6 +136,7 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
             pairingStatusLink.stop()
             aircraftLink.stop()
             remoteControllerLink.stop()
+            store.markHardwareObservationsUnknown()
             remoteControllerLink.start()
             aircraftLink.start()
             pairingStatusLink.start()

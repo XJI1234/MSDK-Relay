@@ -3,6 +3,7 @@ package com.skycommand.relay.device.sdk
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class SdkLifecycleContractTest {
 
@@ -54,6 +55,87 @@ class SdkLifecycleContractTest {
         assertEquals(SdkAvailability.STOPPED, lifecycle.state())
     }
 
+    @Test
+    fun failsWithAStableDiagnosticWhenAcceptedStartupNeverCallsBack() {
+        val port = RecordingPort()
+        val timeouts = RecordingStartupTimeoutScheduler()
+        val diagnostics = mutableListOf<SdkLifecycleDiagnosticKind>()
+        val lifecycle = SdkLifecycle.create(
+            port,
+            SdkLifecycleDiagnosticSink { diagnostics += it.kind },
+            timeouts,
+        )
+
+        assertIs<StartResult.StartAccepted>(lifecycle.start())
+        timeouts.latest().fire()
+
+        assertEquals(SdkAvailability.FAILED, lifecycle.state())
+        assertEquals(listOf(SdkLifecycleDiagnosticKind.START_TIMEOUT), diagnostics)
+    }
+
+    @Test
+    fun readyCancelsTheStartupTimeout() {
+        val port = RecordingPort()
+        val timeouts = RecordingStartupTimeoutScheduler()
+        val lifecycle = SdkLifecycle.create(port, startupTimeoutScheduler = timeouts)
+
+        lifecycle.start()
+        val timeout = timeouts.latest()
+        port.ready()
+
+        assertEquals(SdkAvailability.READY, lifecycle.state())
+        assertTrue(timeout.cancelled)
+    }
+
+    @Test
+    fun failureCancelsTheStartupTimeout() {
+        val port = RecordingPort()
+        val timeouts = RecordingStartupTimeoutScheduler()
+        val lifecycle = SdkLifecycle.create(port, startupTimeoutScheduler = timeouts)
+
+        lifecycle.start()
+        val timeout = timeouts.latest()
+        port.failure()
+
+        assertEquals(SdkAvailability.FAILED, lifecycle.state())
+        assertTrue(timeout.cancelled)
+    }
+
+    @Test
+    fun aCancelledTimeoutFromAnOldRunCannotFailTheNextRun() {
+        val port = RecordingPort()
+        val timeouts = RecordingStartupTimeoutScheduler()
+        val lifecycle = SdkLifecycle.create(port, startupTimeoutScheduler = timeouts)
+
+        lifecycle.start()
+        val oldTimeout = timeouts.latest()
+        lifecycle.stop()
+        lifecycle.start()
+        oldTimeout.fire()
+
+        assertTrue(oldTimeout.cancelled)
+        assertEquals(SdkAvailability.STARTING, lifecycle.state())
+    }
+
+    @Test
+    fun reportsFailedWhenTheStartupTimeoutCannotBeScheduled() {
+        val port = RecordingPort()
+        val states = mutableListOf<SdkAvailability>()
+        val lifecycle = SdkLifecycle.create(
+            port,
+            startupTimeoutScheduler = SdkStartupTimeoutScheduler { _, _ ->
+                error("timeout scheduler unavailable")
+            },
+        )
+        lifecycle.onChanged { states += it }
+
+        assertIs<StartResult.StartRejected>(lifecycle.start())
+
+        assertEquals(0, port.initializeCalls)
+        assertEquals(SdkAvailability.FAILED, lifecycle.state())
+        assertEquals(listOf(SdkAvailability.STARTING, SdkAvailability.FAILED), states)
+    }
+
     private class RecordingPort : DjiSdkPort {
         var initializeCalls = 0
         var closeCalls = 0
@@ -80,6 +162,31 @@ class SdkLifecycleContractTest {
         }
 
         fun ready() = checkNotNull(callbacks).onReady()
+
+        fun failure() = checkNotNull(callbacks).onFailure()
+    }
+
+    private class RecordingStartupTimeoutScheduler : SdkStartupTimeoutScheduler {
+        private val scheduled = mutableListOf<RecordingStartupTimeout>()
+
+        override fun schedule(delayMillis: Long, callback: () -> Unit): SdkStartupTimeout =
+            RecordingStartupTimeout(callback).also { scheduled += it }
+
+        fun latest(): RecordingStartupTimeout = checkNotNull(scheduled.lastOrNull())
+    }
+
+    private class RecordingStartupTimeout(
+        private val callback: () -> Unit,
+    ) : SdkStartupTimeout {
+        var cancelled = false
+
+        override fun cancel() {
+            cancelled = true
+        }
+
+        fun fire() {
+            callback()
+        }
     }
 
     private enum class PortCallback { READY, FAILURE }

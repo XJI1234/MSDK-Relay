@@ -11,6 +11,18 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AndroidAircraftPortContractTest {
+
+    @Test
+    fun preservesUnobservedPlatformLinksInsteadOfSeedingDisconnectedDefaults() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("private var aircraftConnected: Boolean? = null"))
+        assertTrue(source.contains("private var flightControllerConnected: Boolean? = null"))
+        assertFalse(source.contains("next == true"))
+    }
     @Test
     fun publishesAnInitialConnectedAircraftFact() {
         val platform = FakePlatform(initial = Fact(true, true, "M350 RTK"))
@@ -39,7 +51,7 @@ class AndroidAircraftPortContractTest {
     }
 
     @Test
-    fun productConnectionWithoutFlightControllerIsNotAircraftConnected() {
+    fun preservesProductConnectionWhenFlightControllerIsDisconnected() {
         val platform = FakePlatform(initial = Fact(true, false, "M350 RTK"))
         val port = AndroidAircraftPort(platform)
         val received = mutableListOf<String>()
@@ -49,7 +61,21 @@ class AndroidAircraftPortContractTest {
         })
         platform.publish(true, true, "M350 RTK")
 
-        assertEquals(listOf("false:false:null", "true:true:M350 RTK"), received)
+        assertEquals(listOf("true:false:M350 RTK", "true:true:M350 RTK"), received)
+    }
+
+    @Test
+    fun preservesProductConnectionWhenFlightControllerBecomesUnknown() {
+        val platform = FakePlatform(initial = Fact(true, true, "M350 RTK"))
+        val port = AndroidAircraftPort(platform)
+        val received = mutableListOf<String>()
+
+        port.start(AircraftListener { signal ->
+            received += "${signal.aircraftConnected}:${signal.flightControllerConnected}:${signal.displayModel}"
+        })
+        platform.publish(true, null, "M350 RTK")
+
+        assertEquals(listOf("true:true:M350 RTK", "true:null:M350 RTK"), received)
     }
 
     @Test
@@ -130,9 +156,33 @@ class AndroidAircraftPortContractTest {
         assertFalse(source.contains("manager.getValue(flightControllerKey, false)"))
     }
 
+    @Test
+    fun recordsRawAircraftAndFlightControllerKeyTransitionsForLinkDiagnosis() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("[DEBUG-link-order]"))
+        assertTrue(source.contains("ProductKey.KeyConnection"))
+        assertTrue(source.contains("FlightControllerKey.KeyConnection"))
+        assertTrue(source.contains("Log.i("))
+    }
+
+    @Test
+    fun publishesTheCurrentMsdkKeysAsTheInitialAircraftFact() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("publishInitialFact()"))
+        assertFalse(source.contains("recordInitialConnections()"))
+    }
+
     private data class Fact(
-        val aircraftConnected: Boolean,
-        val flightControllerConnected: Boolean,
+        val aircraftConnected: Boolean?,
+        val flightControllerConnected: Boolean?,
         val displayModel: String? = null,
     )
 
@@ -156,7 +206,7 @@ class AndroidAircraftPortContractTest {
             }
         }
 
-        fun publish(aircraftConnected: Boolean, flightControllerConnected: Boolean, displayModel: String? = null) {
+        fun publish(aircraftConnected: Boolean?, flightControllerConnected: Boolean?, displayModel: String? = null) {
             listenerOrThrow().onChanged(DjiAircraftFact(aircraftConnected, flightControllerConnected, displayModel))
         }
 

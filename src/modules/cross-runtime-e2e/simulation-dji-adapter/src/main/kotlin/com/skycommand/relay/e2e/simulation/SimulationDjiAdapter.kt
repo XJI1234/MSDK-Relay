@@ -475,6 +475,12 @@ class SimulationDjiAdapter private constructor(
             lock.withLock { if (!closed) signalListeners += listener }
             return MissionExecutionSignalRegistration { lock.withLock { signalListeners.remove(listener) } }
         }
+
+        override fun beginStartAttempt() = Unit
+
+        override fun confirmStartAttempt() = Unit
+
+        override fun invalidateStartAttempt() = Unit
     }
 
     private inner class SimulatedSettingsPort : DjiSettingsPort {

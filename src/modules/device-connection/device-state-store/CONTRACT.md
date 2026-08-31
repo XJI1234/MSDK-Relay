@@ -19,6 +19,7 @@ DeviceStateStore.create(diagnosticSink?) -> DeviceStateStore
 store.apply(observation) -> Applied(snapshot) | IgnoredStale(sourceRevision)
 store.applyPairing(pairing) -> Applied(snapshot) | IgnoredStale(sourceRevision)
 store.applySdk(availability) -> Applied(snapshot) | IgnoredStale(sourceRevision)
+store.markHardwareObservationsUnknown() -> Applied(snapshot)
 store.markRuntimeUnavailable() -> Applied(snapshot)
 store.snapshot() -> DeviceSnapshot
 store.onChanged(listener) -> Registration
@@ -30,16 +31,18 @@ store.onChanged(listener) -> Registration
 
 `applySdk` 用于 SDK 生命周期转换。它在仓库锁内为 SDK 来源分配下一个版本；只有生命周期组合层可以调用此接口。
 
-`markRuntimeUnavailable` 由一级组合门面在停止时调用，一次性清除 SDK、遥控器、飞行器、飞控、配对和型号事实，避免停止后继续暴露上一次运行的连接状态。
+`markRuntimeUnavailable` 由一级组合门面在停止时调用，一次性清除 SDK、遥控器、飞行器、飞控、配对和型号事实，并将三段连接设为 `UNKNOWN`，避免停止后继续暴露上一次运行的连接状态或伪报已断开。
+
+`markHardwareObservationsUnknown` 只在遥控器、飞行器和对频 MSDK 观察代次切换时调用。它保留当前 SDK 生命周期值，但立即清除遥控器、飞行器、飞控、对频和型号事实为未知，直到新代次的初始 Key 读取或后续 Key 事件抵达；它绝不能按时间调用，也不得改写各来源的观察版本。
 
 `DeviceSnapshot` 固定包含：
 
 ```text
 revision: Long
 sdkAvailability: STOPPED | STARTING | READY | FAILED
-remoteController: DISCONNECTED | CONNECTED
-aircraft: DISCONNECTED | CONNECTED
-flightController: DISCONNECTED | CONNECTED
+remoteController: UNKNOWN | DISCONNECTED | CONNECTED
+aircraft: UNKNOWN | DISCONNECTED | CONNECTED
+flightController: UNKNOWN | DISCONNECTED | CONNECTED
 pairing: UNKNOWN | IDLE | PAIRING | PAIRED | STOPPING | FAILED
 remoteControllerModel: String?
 aircraftModel: String?
@@ -49,7 +52,8 @@ aircraftModel: String?
 
 ## 3. 状态与通知规则
 
-- 初始快照的版本为 `0`，SDK 状态为 `STOPPED`，其余连接状态为 `DISCONNECTED`，配对状态为 `UNKNOWN`。
+- 连接状态严格区分：`CONNECTED` 仅表示已明确观察到连接，`DISCONNECTED` 仅表示已明确观察到断开，`UNKNOWN` 表示尚未观察、平台回调为 null、SDK 未就绪或运行时已停止；`UNKNOWN` 绝不能显示或处理成 `DISCONNECTED`。飞行器为 `CONNECTED` 时，飞控字段可独立为任一三态；飞行器为 `DISCONNECTED` 或 `UNKNOWN` 时，飞控必须分别为 `DISCONNECTED` 或 `UNKNOWN`。
+- 初始快照的版本为 `0`，SDK 状态为 `STOPPED`，其余连接状态为 `UNKNOWN`，配对状态为 `UNKNOWN`。
 - `apply` 对有效新来源版本原子合并快照，并返回替换后的同一不可变对象。
 - 同一来源的旧版本或相同版本返回 `IgnoredStale`，不改变快照，也不通知监听器。
 - 每次有效替换只产生一次 `DeviceStateEvent(previous, current)`；事件顺序与成功 `apply` 顺序一致。

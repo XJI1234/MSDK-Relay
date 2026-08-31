@@ -80,6 +80,7 @@ class SnapshotAssemblerContractTest {
                     flightMode = "WAYPOINT",
                     batteryPercent = 86,
                     remainingFlightTimeSeconds = 420,
+                    lowBatteryRthState = LowBatteryRthState.IDLE,
                     altitudeMeters = 80.5,
                     latitude = 30.123,
                     longitude = 120.456,
@@ -104,9 +105,12 @@ class SnapshotAssemblerContractTest {
 
         assertEquals(true, result.isFlying)
         assertEquals(86, result.batteryPercent)
+        assertEquals(LowBatteryRthState.IDLE, result.lowBatteryRthState)
         assertEquals(30.123, result.latitude)
         assertEquals(true, result.liveStreaming)
         assertEquals("1920x1080", result.liveResolution)
+        assertEquals(1, result.missionRevision)
+        assertEquals(0, result.missionDeviceGeneration)
         assertEquals(ExecutionState.EXECUTING, result.missionExecution)
         assertEquals(65, result.missionUploadProgress)
         assertEquals("survey.kmz", result.missionFileName)
@@ -146,6 +150,7 @@ class SnapshotAssemblerContractTest {
         assertEquals(null, result.motorsOn)
         assertEquals(null, result.flightMode)
         assertEquals(null, result.batteryPercent)
+        assertEquals(null, result.lowBatteryRthState)
         assertEquals(null, result.remainingFlightTimeSeconds)
         assertEquals(null, result.altitudeMeters)
         assertEquals(null, result.latitude)
@@ -172,6 +177,7 @@ class SnapshotAssemblerContractTest {
                     flightMode = "WAYPOINT",
                     batteryPercent = 86,
                     remainingFlightTimeSeconds = 420,
+                    lowBatteryRthState = LowBatteryRthState.COUNTING_DOWN,
                     altitudeMeters = 80.5,
                     latitude = 30.123,
                     longitude = 120.456,
@@ -183,6 +189,7 @@ class SnapshotAssemblerContractTest {
         assertEquals(null, result.motorsOn)
         assertEquals(null, result.flightMode)
         assertEquals(null, result.batteryPercent)
+        assertEquals(null, result.lowBatteryRthState)
         assertEquals(null, result.remainingFlightTimeSeconds)
         assertEquals(null, result.altitudeMeters)
         assertEquals(null, result.latitude)

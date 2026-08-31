@@ -12,6 +12,7 @@ enum class SdkAvailability {
 }
 
 enum class LinkState {
+    UNKNOWN,
     DISCONNECTED,
     CONNECTED,
 }
@@ -192,9 +193,9 @@ class DeviceStateStore private constructor(
             current = current.copy(
                 revision = current.revision + 1,
                 sdkAvailability = SdkAvailability.STOPPED,
-                remoteController = LinkState.DISCONNECTED,
-                aircraft = LinkState.DISCONNECTED,
-                flightController = LinkState.DISCONNECTED,
+                remoteController = LinkState.UNKNOWN,
+                aircraft = LinkState.UNKNOWN,
+                flightController = LinkState.UNKNOWN,
                 pairing = PairingState.UNKNOWN,
                 remoteControllerModel = null,
                 aircraftModel = null,
@@ -202,6 +203,30 @@ class DeviceStateStore private constructor(
             DeviceStateSource.entries.forEach { source ->
                 sourceRevisions[source] = (sourceRevisions[source] ?: 0) + 1
             }
+            appliedSnapshot = current
+            pendingEvents.addLast(PendingEvent(DeviceStateEvent(previous, current), listeners.toList()))
+            if (draining) false else {
+                draining = true
+                true
+            }
+        }
+        if (shouldDrain) drain()
+        return ApplyResult.Applied(requireNotNull(appliedSnapshot))
+    }
+
+    fun markHardwareObservationsUnknown(): ApplyResult {
+        var appliedSnapshot: DeviceSnapshot? = null
+        val shouldDrain = lock.withLock {
+            val previous = current
+            current = current.copy(
+                revision = current.revision + 1,
+                remoteController = LinkState.UNKNOWN,
+                aircraft = LinkState.UNKNOWN,
+                flightController = LinkState.UNKNOWN,
+                pairing = PairingState.UNKNOWN,
+                remoteControllerModel = null,
+                aircraftModel = null,
+            )
             appliedSnapshot = current
             pendingEvents.addLast(PendingEvent(DeviceStateEvent(previous, current), listeners.toList()))
             if (draining) false else {
@@ -370,9 +395,9 @@ class DeviceStateStore private constructor(
         private fun initialSnapshot() = DeviceSnapshot(
             revision = 0,
             sdkAvailability = SdkAvailability.STOPPED,
-            remoteController = LinkState.DISCONNECTED,
-            aircraft = LinkState.DISCONNECTED,
-            flightController = LinkState.DISCONNECTED,
+            remoteController = LinkState.UNKNOWN,
+            aircraft = LinkState.UNKNOWN,
+            flightController = LinkState.UNKNOWN,
             pairing = PairingState.UNKNOWN,
             remoteControllerModel = null,
             aircraftModel = null,
@@ -410,8 +435,12 @@ class DeviceStateStore private constructor(
         }
 
         private fun validateAircraftConnection(aircraft: LinkState, flightController: LinkState) {
-            require(aircraft == LinkState.CONNECTED || flightController == LinkState.DISCONNECTED) {
-                "Flight controller cannot be connected when aircraft is disconnected"
+            require(
+                aircraft == LinkState.CONNECTED ||
+                    (aircraft == LinkState.DISCONNECTED && flightController == LinkState.DISCONNECTED) ||
+                    (aircraft == LinkState.UNKNOWN && flightController == LinkState.UNKNOWN),
+            ) {
+                "Flight controller state must match disconnected or unknown aircraft state"
             }
         }
 

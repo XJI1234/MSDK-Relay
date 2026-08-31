@@ -13,6 +13,13 @@ import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import com.skycommand.relay.wayline.state.UploadState
 
+enum class LowBatteryRthState {
+    IDLE,
+    COUNTING_DOWN,
+    EXECUTED,
+    CANCELLED,
+}
+
 data class FlightTelemetrySnapshot(
     val isFlying: Boolean? = null,
     val motorsOn: Boolean? = null,
@@ -22,11 +29,13 @@ data class FlightTelemetrySnapshot(
     val altitudeMeters: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val lowBatteryRthState: LowBatteryRthState? = null,
 ) {
     init {
         flightMode?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
         batteryPercent?.let { require(it in 0..100) }
-        remainingFlightTimeSeconds?.let { require(it >= 0) }
+        remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
+        if (remainingFlightTimeSeconds != null) require(lowBatteryRthState != null)
         altitudeMeters?.let { require(it.isFinite()) }
         require((latitude == null) == (longitude == null)) { "Latitude and longitude must be provided together" }
         latitude?.let { require(it.isFinite() && it in -90.0..90.0) }
@@ -65,10 +74,18 @@ data class TelemetrySnapshot(
     val liveFps: Double? = null,
     val liveVideoBitrateKbps: Double? = null,
     val liveRttMillis: Long? = null,
+    val missionRevision: Long? = null,
+    val missionDeviceGeneration: Long? = null,
     val missionExecution: ExecutionState = ExecutionState.NOT_STARTED,
     val missionUploadProgress: Int? = null,
     val missionFileName: String? = null,
-)
+    val lowBatteryRthState: LowBatteryRthState? = null,
+) {
+    init {
+        remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
+        if (remainingFlightTimeSeconds != null) require(lowBatteryRthState != null)
+    }
+}
 
 object SnapshotAssembler {
     fun assemble(inputs: TelemetryInputs): TelemetrySnapshot {
@@ -92,6 +109,7 @@ object SnapshotAssembler {
         flightMode = flight.flightMode,
         batteryPercent = flight.batteryPercent,
         remainingFlightTimeSeconds = flight.remainingFlightTimeSeconds,
+        lowBatteryRthState = flight.lowBatteryRthState,
         altitudeMeters = flight.altitudeMeters,
         latitude = flight.latitude,
         longitude = flight.longitude,
@@ -101,6 +119,8 @@ object SnapshotAssembler {
         liveFps = inputs.stream.metrics?.fps,
         liveVideoBitrateKbps = inputs.stream.metrics?.videoBitrateKbps,
         liveRttMillis = inputs.stream.metrics?.rttMillis,
+        missionRevision = inputs.mission.missionRevision,
+        missionDeviceGeneration = inputs.mission.missionRevision?.let { inputs.mission.deviceGeneration },
         missionExecution = inputs.mission.execution,
         missionUploadProgress = when (val upload = inputs.mission.upload) {
             is UploadState.Uploading -> upload.progress

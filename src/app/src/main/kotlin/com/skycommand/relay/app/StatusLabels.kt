@@ -22,10 +22,18 @@ internal object StatusLabels {
         SessionState.RECONNECT_WAIT -> "等待重连"
     }
 
+    fun sdk(value: String): String = when (value) {
+        "STOPPED" -> "已停止"
+        "STARTING" -> "正在初始化"
+        "READY" -> "已就绪"
+        "FAILED" -> "初始化失败"
+        else -> "状态未知"
+    }
+
     fun link(value: String): String = when (value) {
         "CONNECTED" -> "已连接"
         "DISCONNECTED" -> "未连接"
-        else -> value
+        else -> "状态未知"
     }
 
     fun pairing(value: String): String = when (value) {

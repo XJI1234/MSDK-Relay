@@ -9,6 +9,8 @@ Gradle 路径：`:device-connection:aircraft-link`
 
 本模块只负责飞行器、飞控连接和飞行器显示型号的观察生命周期与规范化，并把它们提交给 `device-state-store`。它不观察遥控器，不处理配对，不执行航线、图传或遥测操作。
 
+连接事实采用三态：`true` 为明确已连接，`false` 为明确已断开，`null` 为尚未观察或平台未给出值。`null` 必须写成 `LinkState.UNKNOWN`，不得压成断开。飞行器为 `UNKNOWN` 时飞控也必须为 `UNKNOWN`，飞行器明确断开时飞控必须为 `DISCONNECTED`；飞行器明确已连接时，飞控可以独立为 `CONNECTED`、`DISCONNECTED` 或 `UNKNOWN`。
+
 ## 2. 对外接口
 
 ```text
@@ -32,7 +34,7 @@ AircraftSignal(sourceRevision, aircraftConnected, flightControllerConnected, dis
 
 - 只创建一个端口监听；重复启动和重复停止幂等。
 - 停止使当前运行代次失效，旧代次回调必须丢弃。
-- 飞行器断开时强制规范化飞控为断开；不允许产生矛盾快照。
+- 飞行器断开时强制规范化飞控为断开，飞行器未知时强制飞控为未知；飞行器已连接时保留飞控的独立三态事实。
 - 有效信号只提交飞行器补丁，不覆盖 SDK、遥控器或配对状态。
 - 同一来源旧版本和重复版本由状态仓库忽略。
 - 端口异常、信号非法和诊断接收器异常均被隔离，外部只看到稳定结果。

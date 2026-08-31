@@ -14,9 +14,11 @@
     <string name="message_stop_failed">停止请求失败</string>
     <string name="status_runtime">运行时：%1$s</string>
     <string name="status_gateway">电脑连接：%1$s</string>
-    <string name="status_remote_controller">遥控器：%1$s</string>
-    <string name="status_aircraft">飞机：%1$s</string>
-    <string name="status_pairing">对频：%1$s</string>
+    <string name="status_msdk">MSDK 生命周期 [SDKManager]：%1$s</string>
+    <string name="status_remote_controller">遥控器连接 [RemoteControllerKey.KeyConnection]：%1$s</string>
+    <string name="status_pairing">对频状态 [RemoteControllerKey.KeyPairingStatus]：%1$s</string>
+    <string name="status_flight_controller">飞控连接 [FlightControllerKey.KeyConnection]：%1$s</string>
+    <string name="status_aircraft">飞机连接 [ProductKey.KeyConnection]：%1$s</string>
     <string name="status_stream">图传：%1$s</string>
     <string name="status_mission">航线：%1$s</string>
     <string name="pairing_hint">对频是让遥控器和飞机建立链路。启动中继并连上遥控器后，若飞机还没连上，点开始对频；对频成功后再等飞机连上。</string>

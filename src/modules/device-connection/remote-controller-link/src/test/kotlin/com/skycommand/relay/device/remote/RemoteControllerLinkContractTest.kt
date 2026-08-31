@@ -17,8 +17,8 @@ class RemoteControllerLinkContractTest {
         val snapshot = fixture.store.snapshot()
         assertEquals(LinkState.CONNECTED, snapshot.remoteController)
         assertEquals("RC Plus", snapshot.remoteControllerModel)
-        assertEquals(LinkState.DISCONNECTED, snapshot.aircraft)
-        assertEquals(LinkState.DISCONNECTED, snapshot.flightController)
+        assertEquals(LinkState.UNKNOWN, snapshot.aircraft)
+        assertEquals(LinkState.UNKNOWN, snapshot.flightController)
     }
 
     @Test
@@ -71,7 +71,17 @@ class RemoteControllerLinkContractTest {
             link.start(),
         )
 
-        assertEquals(LinkState.DISCONNECTED, store.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, store.snapshot().remoteController)
+    }
+
+    @Test
+    fun mapsAnUnobservedRemoteControllerFactToUnknown() {
+        val fixture = Fixture()
+        fixture.link.start()
+
+        fixture.port.emit(RemoteControllerSignal(1, connected = null, displayModel = null))
+
+        assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().remoteController)
     }
 
     private class Fixture(

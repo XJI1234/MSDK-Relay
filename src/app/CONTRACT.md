@@ -10,11 +10,11 @@ Gradle 路径：`:app`
 
 ## 二级职责
 
-1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、遥控器、对频、飞机，不得把飞机画在对频前面。展示文字必须是操作员能读的中文，不得把 `ACTIVE`、`RECONNECT_WAIT` 等机器词直接画上。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。首次创建时必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图。中继仍在启动或运行时，界面销毁必须保留图和适配器，恢复时必须 `rebind` 到新界面，不得再次 `attach`，也不得因此停止电脑会话。仅当中继已停止、失败或正在停止时，`onDestroy` 才关闭图和适配器。
+1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、MSDK 生命周期、遥控器连接、对频状态、飞控连接、飞机连接。MSDK 状态行必须一对一显示 `SdkLifecycle` 的受限状态；遥控器、对频、飞控和飞机状态行必须一对一显示 `RemoteControllerKey.KeyConnection`、`RemoteControllerKey.KeyPairingStatus`、`FlightControllerKey.KeyConnection`、`ProductKey.KeyConnection` 的受限状态。展示文字必须是操作员能读的中文，不得把 `ACTIVE`、`RECONNECT_WAIT` 等机器词直接画上，也不得把多个 DJI Key 合并为同一行。开始/停止对频按钮只反映 `device-connection` 的能力：飞机未连接时允许开始对频，飞机已连接时不允许。首次创建时必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图。中继仍在启动或运行时，界面销毁必须保留图和适配器，恢复时必须 `rebind` 到新界面，不得再次 `attach`，也不得因此停止电脑会话。仅当中继已停止、失败或正在停止时，`onDestroy` 才关闭图和适配器。
 2. `MobileRelayGraph`：只创建一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。旧 RTMP `LiveStream` 与 WHIP `WhipLiveStream` 必须拥有各自的适配器、状态、命令处理器和关闭路径；任一链路的启动、停止、发布器或 DJI 失败不得调用或改变另一链路。组合根唯一负责在两个命令处理器之前装配运行时图传互斥，拒绝的命令不得调用另一链路。权限适配器由 Activity 持有，图关闭时不得关闭它。
 3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次。SDK 离开 `READY` 时通知直播、航线、飞行控制和设备设置失效。网关已是 `ACTIVE` 但遥测尚未启动时发布设备链路快照。网关从 `ACTIVE` 进入重连或停止时只通知直播失效，从而停止 WHIP/RTMP 发布并释放图传互斥，不得因此停止网关重连。`MobileRelayGraph` 装配网关时握手超时必须为 15 秒，与桌面端一致。
 4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。
-5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成。
+5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；缺失值保持为 `null`。低电量返航状态与预估时间必须作为不同字段原样映射，不能把 `UNKNOWN + 0` 重新写成有效预估。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成。
 
 上述职责之间只通过稳定接口协作。界面不得持有模块内部端口，映射器不得访问 Android，生命周期模块不得解析命令，组合源不得发布网络消息。
 
@@ -40,7 +40,9 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 
 组合根注册 `telemetry.read`、`pairing.start`、`pairing.stop`、`pairing.status`、旧 `live-stream.start|stop`、新 `live-stream-webrtc.start|stop`、全部 `wayline.*` 命令、`flight.takeoff`、`flight.land`、`flight.return-home`、`device.settings.camera.read`、`device.settings.camera.write`、`device.settings.transmission.read` 和 `device.settings.transmission.write`。遥测快照必须完整映射为协议 `TelemetryFrame`，可选值缺失时使用 JSON null，不伪造零值。任何结果不得泄露密钥、路径或原始异常。命令处理器在组合根外包一层诊断记录：成功或拒绝写入现有 `DiagnosticJournal`，`telemetry.read` 成功不记以免刷屏。会话状态变化和结束原因（含握手超时）同样写入该 journal，详情只用固定安全说明。
 
-`telemetry.read` 主动发布当前完整快照；配对命令使用 30 秒超时并且每条命令恰好产生一个终态。`pairing.status` 成功时必须通过 `command-result.result` 返回根契约 §7.4 的结构化快照：`pairingState`、`aircraftConnected`、`flightControllerConnected`、`aircraftModel`、`motorsOn`、`sdkRegistered`。该结果只来自当前遥测快照；遥测不可用时拒绝命令。`pairing.start` / `pairing.stop` 不得附带该结构化 `result`。旧 RTMP 直播和 WHIP 直播分别复用 `LiveStream` 与 `WhipLiveStream` 门面提供的处理器；旧 `live-stream.*` 命令不得路由到 WHIP，`live-stream-webrtc.*` 命令不得路由到旧 RTMP。航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
+`telemetry.read` 必须先调用 `device.refreshHardwareLinks()`，使遥控器、飞行器、飞控和对频 Key 重新订阅并读取当前 MSDK 基线，再主动发布该完整快照；它不轮询桌面缓存，也不调用任何飞控、航线或图传操作。持续状态变化仍由 `Telemetry` 对设备观察事件的订阅立即推送到电脑。配对命令使用 30 秒超时并且每条命令恰好产生一个终态。`pairing.status` 成功时必须通过 `command-result.result` 返回根契约 §7.4 的结构化快照：`pairingState`、`aircraftConnected`、`flightControllerConnected`、`aircraftModel`、`motorsOn`、`sdkRegistered`。该结果只来自当前遥测快照；遥测不可用时拒绝命令。`pairing.start` / `pairing.stop` 不得附带该结构化 `result`。旧 RTMP 直播和 WHIP 直播分别复用 `LiveStream` 与 `WhipLiveStream` 门面提供的处理器；旧 `live-stream.*` 命令不得路由到 WHIP，`live-stream-webrtc.*` 命令不得路由到旧 RTMP。航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
+
+`wayline.start` 的手机端最终门禁由 `MobileRelayGraph` 提供给 `wayline-mission`：同一次判定必须要求 SDK 就绪、遥控器/飞机/飞控均明确连接、当前设备支持航线、电量至少 20、`isFlying == false` 与 `motorsOn == false`。对频不是航线前置条件。任何缺失、未知、异常或不一致事实均为拒绝，且不得触达 DJI `startMission`。该门禁是桌面 `PreflightCheck` 的独立第二层，不能用 UI 按钮可用性或上一次遥测结果替代。
 
 ### 运行时图传互斥
 

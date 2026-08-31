@@ -7,7 +7,9 @@ import dji.sdk.keyvalue.value.common.ComponentIndexType
 import dji.sdk.keyvalue.value.common.LocationCoordinate2D
 import dji.sdk.keyvalue.value.flightcontroller.FCFlightMode
 import dji.sdk.keyvalue.value.flightcontroller.LowBatteryRTHInfo
+import dji.sdk.keyvalue.value.flightcontroller.LowBatteryRTHState
 import dji.v5.manager.KeyManager
+import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 
 internal class MsdkV5FlightTelemetryApi(
     private val manager: KeyManager = KeyManager.getInstance(),
@@ -30,7 +32,7 @@ private class KeyManagerFlightTelemetryObservation(
     private val flightModeKey = KeyTools.createKey(FlightControllerKey.KeyFCFlightMode)
     private val batteryKey = KeyTools.createKey(
         BatteryKey.KeyChargeRemainingInPercent,
-        ComponentIndexType.AGGREGATION,
+        ComponentIndexType.LEFT_OR_MAIN,
     )
     private val remainingFlightTimeKey = KeyTools.createKey(FlightControllerKey.KeyLowBatteryRTHInfo)
     private val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
@@ -47,7 +49,8 @@ private class KeyManagerFlightTelemetryObservation(
             manager.listen(flightModeKey, owner, false) { _, next -> update { copy(flightMode = next.toStableName()) } }
             manager.listen(batteryKey, owner, false) { _, next -> update { copy(batteryPercent = next) } }
             manager.listen(remainingFlightTimeKey, owner, false) { _, next ->
-                update { copy(remainingFlightTimeSeconds = next?.remainingFlightTime) }
+                val rth = next.toRthFact()
+                update { copy(lowBatteryRthState = rth.state, remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds) }
             }
             manager.listen(altitudeKey, owner, false) { _, next -> update { copy(altitudeMeters = next) } }
             manager.listen(locationKey, owner, false) { _, next -> update { withLocation(next) } }
@@ -65,13 +68,15 @@ private class KeyManagerFlightTelemetryObservation(
     }
 
     private fun publishInitial() {
+        val rth = manager.getValue<LowBatteryRTHInfo>(remainingFlightTimeKey).toRthFact()
         val initial = FlightTelemetryFact(
             isFlying = manager.getValue(isFlyingKey),
             motorsOn = manager.getValue(motorsOnKey),
             flightMode = manager.getValue<FCFlightMode>(flightModeKey).toStableName(),
             batteryPercent = manager.getValue(batteryKey),
-            remainingFlightTimeSeconds = manager.getValue<LowBatteryRTHInfo>(remainingFlightTimeKey)?.remainingFlightTime,
+            remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds,
             altitudeMeters = manager.getValue(altitudeKey),
+            lowBatteryRthState = rth.state,
         ).withLocation(manager.getValue(locationKey))
         val next = synchronized(lock) {
             if (!active) null else {
@@ -106,4 +111,23 @@ private class KeyManagerFlightTelemetryObservation(
     private fun FCFlightMode?.toStableName(): String? = this
         ?.takeUnless { it == FCFlightMode.UNKNOWN }
         ?.name
+
+    private fun LowBatteryRTHInfo?.toRthFact(): LowBatteryRthFact {
+        val state = when (this?.lowBatteryRTHStatus) {
+            LowBatteryRTHState.IDLE -> LowBatteryRthState.IDLE
+            LowBatteryRTHState.COUNTING_DOWN -> LowBatteryRthState.COUNTING_DOWN
+            LowBatteryRTHState.EXECUTED -> LowBatteryRthState.EXECUTED
+            LowBatteryRTHState.CANCELLED -> LowBatteryRthState.CANCELLED
+            else -> null
+        }
+        return LowBatteryRthFact(
+            state = state,
+            remainingFlightTimeSeconds = this?.remainingFlightTime?.takeIf { state != null && it in 1..86_400 },
+        )
+    }
+
+    private data class LowBatteryRthFact(
+        val state: LowBatteryRthState?,
+        val remainingFlightTimeSeconds: Int?,
+    )
 }

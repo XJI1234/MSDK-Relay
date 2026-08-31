@@ -1,6 +1,7 @@
 package com.skycommand.relay.telemetry.flight.android
 
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
+import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import com.skycommand.relay.telemetry.flight.FlightTelemetryRegistration
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
 
@@ -13,6 +14,7 @@ internal data class FlightTelemetryFact(
     val altitudeMeters: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val lowBatteryRthState: LowBatteryRthState? = null,
 )
 
 internal fun interface DjiFlightTelemetryListener {
@@ -101,15 +103,17 @@ class AndroidFlightTelemetrySource internal constructor(
             ?.trim()
             ?.takeIf { it.isNotEmpty() && it.none(Char::isISOControl) && it.codePointCount(0, it.length) <= 128 }
             ?.takeUnless { it.equals("UNKNOWN", ignoreCase = true) || it.equals("UNRECOGNIZED", ignoreCase = true) }
+        val rthState = lowBatteryRthState
         return FlightTelemetrySnapshot(
             isFlying = isFlying,
             motorsOn = motorsOn,
             flightMode = normalizedMode,
             batteryPercent = batteryPercent?.takeIf { it in 0..100 },
-            remainingFlightTimeSeconds = remainingFlightTimeSeconds?.takeIf { it >= 0 },
+            remainingFlightTimeSeconds = remainingFlightTimeSeconds?.takeIf { rthState != null && it in 1..86_400 },
             altitudeMeters = altitudeMeters?.takeIf(Double::isFinite),
             latitude = latitude?.takeIf { validCoordinates },
             longitude = longitude?.takeIf { validCoordinates },
+            lowBatteryRthState = rthState,
         )
     }
 

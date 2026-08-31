@@ -6,8 +6,8 @@ import com.skycommand.relay.device.aircraft.AircraftPortSubscription
 import com.skycommand.relay.device.aircraft.AircraftSignal
 
 internal data class DjiAircraftFact(
-    val aircraftConnected: Boolean,
-    val flightControllerConnected: Boolean,
+    val aircraftConnected: Boolean?,
+    val flightControllerConnected: Boolean?,
     val displayModel: String?,
 )
 
@@ -65,14 +65,18 @@ class AndroidAircraftPort internal constructor(
             if (active !== operation || generation != operation.generation) {
                 null
             } else {
-                val aircraftConnected = fact.aircraftConnected && fact.flightControllerConnected
+                val aircraftConnected = fact.aircraftConnected
+                val flightControllerConnected = normalizedFlightControllerConnection(
+                    fact.aircraftConnected,
+                    fact.flightControllerConnected,
+                )
                 AircraftSignal(
                     sourceRevision = ++sourceRevision,
                     aircraftConnected = aircraftConnected,
-                    flightControllerConnected = aircraftConnected,
+                    flightControllerConnected = flightControllerConnected,
                     displayModel = fact.displayModel
                         ?.trim()
-                        ?.takeIf { aircraftConnected && it.isNotEmpty() },
+                        ?.takeIf { aircraftConnected == true && it.isNotEmpty() },
                 ) to operation.listener
             }
         }
@@ -106,4 +110,13 @@ class AndroidAircraftPort internal constructor(
 
         fun create(): AircraftPort = AndroidAircraftPort(MsdkV5AircraftApi())
     }
+}
+
+internal fun normalizedFlightControllerConnection(
+    productConnected: Boolean?,
+    flightControllerConnected: Boolean?,
+): Boolean? = when {
+    productConnected == true -> flightControllerConnected
+    productConnected == false -> false
+    else -> null
 }

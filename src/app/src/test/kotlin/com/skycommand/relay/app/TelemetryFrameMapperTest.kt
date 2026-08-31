@@ -12,6 +12,7 @@ import com.skycommand.relay.protocol.Accepted
 import com.skycommand.relay.telemetry.capability.TelemetryCapabilities
 import com.skycommand.relay.telemetry.capability.WaypointMissionSupport
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
+import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import com.skycommand.relay.wayline.state.ExecutionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -53,6 +54,7 @@ class TelemetryFrameMapperTest {
                 flightMode = "GPS_NORMAL",
                 batteryPercent = 73,
                 remainingFlightTimeSeconds = 840,
+                lowBatteryRthState = LowBatteryRthState.IDLE,
                 altitudeMeters = 52.25,
                 latitude = 31.2,
                 longitude = 121.5,
@@ -62,6 +64,8 @@ class TelemetryFrameMapperTest {
                 liveFps = 30.0,
                 liveVideoBitrateKbps = 4000.0,
                 liveRttMillis = 42,
+                missionRevision = 7,
+                missionDeviceGeneration = 3,
                 missionExecution = ExecutionState.EXECUTING,
                 missionUploadProgress = 100,
                 missionFileName = "survey.kmz",
@@ -80,6 +84,7 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonBoolean(true), frame.payload["motorsOn"])
         assertEquals(JsonString("GPS_NORMAL"), frame.payload["flightMode"])
         assertEquals(JsonNumber("73"), frame.payload["batteryPercent"])
+        assertEquals(JsonString("IDLE"), frame.payload["lowBatteryRthState"])
         assertEquals(JsonNumber("840"), frame.payload["remainingFlightTimeSeconds"])
         assertEquals(JsonNumber("52.25"), frame.payload["altitudeMeters"])
         assertEquals(JsonNumber("31.2"), frame.payload["latitude"])
@@ -90,6 +95,8 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("30.0"), frame.payload["liveFps"])
         assertEquals(JsonNumber("4000.0"), frame.payload["liveVideoBitrateKbps"])
         assertEquals(JsonNumber("42"), frame.payload["liveRttMillis"])
+        assertEquals(JsonNumber("7"), frame.payload["missionRevision"])
+        assertEquals(JsonNumber("3"), frame.payload["missionDeviceGeneration"])
         assertEquals(JsonString("EXECUTING"), frame.payload["missionExecution"])
         assertEquals(JsonNumber("100"), frame.payload["missionUploadProgress"])
         assertEquals(JsonString("survey.kmz"), frame.payload["missionFileName"])
@@ -160,9 +167,9 @@ class TelemetryFrameMapperTest {
         )
         listOf(
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
-            "batteryPercent", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
+            "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
             "liveStreamNotice", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
-            "missionUploadProgress", "missionFileName",
+            "missionRevision", "missionDeviceGeneration", "missionUploadProgress", "missionFileName",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
     }
 }

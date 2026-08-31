@@ -1,6 +1,7 @@
 package com.skycommand.relay.device.sdk.android
 
 import android.content.Context
+import android.util.Log
 import dji.v5.common.register.DJISDKInitEvent
 import dji.v5.manager.SDKManager
 import dji.v5.manager.interfaces.SDKManagerCallback
@@ -53,13 +54,25 @@ internal class MsdkV5ManagerBridge(
         }
         return when (action) {
             is Action.ReportRegistered -> {
+                recordLinkDiagnostic("event=sdk-already-registered")
                 runCatching { action.listener.onRegistered() }
                 BridgeStartResult.Accepted
             }
 
-            Action.Wait -> BridgeStartResult.Accepted
-            Action.Reject -> BridgeStartResult.Rejected
-            is Action.Initialize -> initializeManager(action.generation)
+            Action.Wait -> {
+                recordLinkDiagnostic("event=sdk-initialization-wait")
+                BridgeStartResult.Accepted
+            }
+
+            Action.Reject -> {
+                recordLinkDiagnostic("event=sdk-initialization-rejected")
+                BridgeStartResult.Rejected
+            }
+
+            is Action.Initialize -> {
+                recordLinkDiagnostic("event=sdk-initialization-start generation=${action.generation}")
+                initializeManager(action.generation)
+            }
         }
     }
 
@@ -69,6 +82,7 @@ internal class MsdkV5ManagerBridge(
             listener = null
             if (state != State.REGISTERED) state = State.NEW
         }
+        recordLinkDiagnostic("event=sdk-bridge-close")
     }
 
     private fun initializeManager(generation: Long): BridgeStartResult = runCatching {
@@ -83,6 +97,7 @@ internal class MsdkV5ManagerBridge(
 
     private fun callbackFor(generation: Long) = object : DjiSdkManagerCallback {
         override fun onInitializationComplete() {
+            recordLinkDiagnostic("event=sdk-initialization-complete generation=$generation")
             val shouldRegister = synchronized(lock) {
                 if (generation != activeGeneration || state != State.INITIALIZING) false else {
                     state = State.REGISTERING
@@ -95,10 +110,12 @@ internal class MsdkV5ManagerBridge(
         }
 
         override fun onRegistrationSuccess() {
+            recordLinkDiagnostic("event=sdk-registration-success-callback generation=$generation")
             reportRegistered(generation)
         }
 
         override fun onRegistrationFailure() {
+            recordLinkDiagnostic("event=sdk-registration-failure-callback generation=$generation")
             reportFailure(generation)
         }
     }
@@ -112,6 +129,7 @@ internal class MsdkV5ManagerBridge(
                 listener.also { listener = null }
             }
         }
+        recordLinkDiagnostic("event=sdk-registration-success-applied generation=$generation accepted=${target != null}")
         runCatching { target?.onRegistered() }
     }
 
@@ -124,6 +142,7 @@ internal class MsdkV5ManagerBridge(
                 listener.also { listener = null }
             }
         }
+        recordLinkDiagnostic("event=sdk-registration-failure-applied generation=$generation accepted=${target != null}")
         runCatching { target?.onFailure() }
     }
 
@@ -169,11 +188,17 @@ private class AndroidDjiSdkManagerApi : DjiSdkManagerApi {
             override fun onRegisterFailure(error: dji.v5.common.error.IDJIError?) =
                 callback.onRegistrationFailure()
 
-            override fun onProductDisconnect(productId: Int) = Unit
+            override fun onProductDisconnect(productId: Int) {
+                recordLinkDiagnostic("event=msdk-product-disconnect")
+            }
 
-            override fun onProductConnect(productId: Int) = Unit
+            override fun onProductConnect(productId: Int) {
+                recordLinkDiagnostic("event=msdk-product-connect")
+            }
 
-            override fun onProductChanged(productId: Int) = Unit
+            override fun onProductChanged(productId: Int) {
+                recordLinkDiagnostic("event=msdk-product-changed")
+            }
 
             override fun onDatabaseDownloadProgress(current: Long, total: Long) = Unit
         })
@@ -182,4 +207,11 @@ private class AndroidDjiSdkManagerApi : DjiSdkManagerApi {
     override fun registerApp() {
         manager.registerApp()
     }
+}
+
+private const val LINK_DIAGNOSTIC_TAG = "SCLinkDiag"
+private const val LINK_DIAGNOSTIC_PREFIX = "[DEBUG-link-order]"
+
+private fun recordLinkDiagnostic(message: String) {
+    runCatching { Log.i(LINK_DIAGNOSTIC_TAG, "$LINK_DIAGNOSTIC_PREFIX $message") }
 }

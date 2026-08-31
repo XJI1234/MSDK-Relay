@@ -56,6 +56,7 @@ class AndroidDjiWaylineAdapter internal constructor(
     private val uploadFiles = mutableMapOf<Long, StoredMissionFile>()
     private val signalListeners = mutableSetOf<SignalListenerSlot>()
     private var djiExecutionRegistration: DjiExecutionStateRegistration? = null
+    private var startSignalsEnabled = false
 
     override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
         if (!metadata.fileName.isSafeKmzName()) return safeFail(completion)
@@ -111,6 +112,24 @@ class AndroidDjiWaylineAdapter internal constructor(
         }
     }
 
+    override fun beginStartAttempt() {
+        synchronized(lock) {
+            if (!closed) startSignalsEnabled = false
+        }
+    }
+
+    override fun confirmStartAttempt() {
+        synchronized(lock) {
+            if (!closed) startSignalsEnabled = true
+        }
+    }
+
+    override fun invalidateStartAttempt() {
+        synchronized(lock) {
+            startSignalsEnabled = false
+        }
+    }
+
     fun close() {
         synchronized(submissionLock) {
             val (files, registration) = synchronized(lock) {
@@ -146,7 +165,7 @@ class AndroidDjiWaylineAdapter internal constructor(
 
     private fun dispatchExecutionState(state: DjiMissionExecutionState) {
         val listeners = synchronized(lock) {
-            if (closed) emptyList() else signalListeners.toList()
+            if (closed || !startSignalsEnabled) emptyList() else signalListeners.toList()
         }
         val signal = state.toMissionExecutionSignal()
         listeners.forEach { runCatching { it.listener.onSignal(signal) } }

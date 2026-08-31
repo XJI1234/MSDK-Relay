@@ -17,7 +17,7 @@ class AircraftLinkContractTest {
         assertEquals(LinkState.CONNECTED, fixture.store.snapshot().aircraft)
         assertEquals(LinkState.CONNECTED, fixture.store.snapshot().flightController)
         assertEquals("Matrice 4", fixture.store.snapshot().aircraftModel)
-        assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().remoteController)
     }
 
     @Test
@@ -28,6 +28,18 @@ class AircraftLinkContractTest {
 
         assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().aircraft)
         assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().flightController)
+    }
+
+    @Test
+    fun preservesConnectedAircraftWhenFlightControllerIsUnavailable() {
+        val fixture = Fixture()
+        fixture.link.start()
+
+        fixture.port.emit(AircraftSignal(1, true, false, "Matrice 4"))
+
+        assertEquals(LinkState.CONNECTED, fixture.store.snapshot().aircraft)
+        assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().flightController)
+        assertEquals("Matrice 4", fixture.store.snapshot().aircraftModel)
     }
 
     @Test
@@ -53,7 +65,19 @@ class AircraftLinkContractTest {
         val failingStore = DeviceStateStore.create()
         val result = AircraftLink.create(failingStore, SynchronousPort(fails = true)).start()
         assertIs<AircraftStartResult.Rejected>(result)
-        assertEquals(LinkState.DISCONNECTED, failingStore.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, failingStore.snapshot().aircraft)
+    }
+
+    @Test
+    fun mapsAnUnobservedAircraftFactToUnknownForBothAircraftAndFlightController() {
+        val fixture = Fixture()
+        fixture.link.start()
+
+        fixture.port.emit(AircraftSignal(1, aircraftConnected = null, flightControllerConnected = true, displayModel = "Matrice"))
+
+        assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().flightController)
+        assertEquals(null, fixture.store.snapshot().aircraftModel)
     }
 
     @Test

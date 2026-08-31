@@ -8,7 +8,7 @@ import kotlin.concurrent.withLock
 
 data class RemoteControllerSignal(
     val sourceRevision: Long,
-    val connected: Boolean,
+    val connected: Boolean?,
     val displayModel: String?,
 )
 
@@ -140,7 +140,7 @@ class RemoteControllerLink private constructor(
             store.apply(
                 DeviceStatePatch.remoteController(
                     sourceRevision = signal.sourceRevision,
-                    link = if (signal.connected) LinkState.CONNECTED else LinkState.DISCONNECTED,
+                    link = signal.connected.toLinkState(),
                     model = signal.displayModel,
                 ),
             )
@@ -151,6 +151,12 @@ class RemoteControllerLink private constructor(
 
     private fun record(kind: RemoteControllerDiagnosticKind) {
         runCatching { diagnosticSink.record(RemoteControllerDiagnostic(kind)) }
+    }
+
+    private fun Boolean?.toLinkState(): LinkState = when (this) {
+        true -> LinkState.CONNECTED
+        false -> LinkState.DISCONNECTED
+        null -> LinkState.UNKNOWN
     }
 
     companion object {

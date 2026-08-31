@@ -24,4 +24,17 @@ class UsbPermissionOutcomeTest {
         assertTrue(source.contains("registerReceiver"))
         assertTrue(source.contains("unregisterReceiver"))
     }
+
+    @Test
+    fun recordsUsbAttachDetachAndPermissionEventsForLinkDiagnosis() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/runtime/permission/android/AndroidPermissionPlatform.kt"),
+            Path("src/modules/app-runtime/android-permission-adapter/src/main/kotlin/com/skycommand/relay/runtime/permission/android/AndroidPermissionPlatform.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("[DEBUG-link-order]"))
+        assertTrue(source.contains("UsbManager.ACTION_USB_ACCESSORY_ATTACHED"))
+        assertTrue(source.contains("UsbManager.ACTION_USB_ACCESSORY_DETACHED"))
+        assertTrue(source.contains("Log.i("))
+    }
 }

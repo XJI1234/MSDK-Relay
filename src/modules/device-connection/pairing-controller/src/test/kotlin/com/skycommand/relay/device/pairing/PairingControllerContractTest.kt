@@ -76,15 +76,12 @@ class PairingControllerContractTest {
     }
 
     @Test
-    fun rejectsStartFromNonIdlePairingStates() {
+    fun allowsStartingPairingAgainWhenReplacingAnAlreadyPairedAircraft() {
         val fixture = Fixture()
         fixture.makeReady()
         fixture.store.apply(DeviceStatePatch.pairing(2, PairingState.PAIRED))
 
-        assertEquals(
-            PairingRequestResult.Rejected(PairingRejection.NOT_READY),
-            fixture.controller.start(1_000) { },
-        )
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
     }
 
     @Test

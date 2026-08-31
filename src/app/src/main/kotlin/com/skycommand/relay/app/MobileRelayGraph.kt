@@ -11,6 +11,7 @@ import com.skycommand.relay.device.operation.OperationScheduler
 import com.skycommand.relay.device.pairing.PairingOperationResult
 import com.skycommand.relay.device.pairing.PairingRequestResult
 import com.skycommand.relay.device.state.SdkAvailability
+import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.pairing.command.android.AndroidPairingPort
 import com.skycommand.relay.device.pairing.status.android.AndroidPairingStatusPort
 import com.skycommand.relay.device.remote.android.AndroidRemoteControllerPort
@@ -75,6 +76,7 @@ import com.skycommand.relay.telemetry.snapshot.SnapshotAssembler
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
 import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
+import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.staging.android.AndroidMissionStagingStorage
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -85,9 +87,11 @@ import java.util.UUID
 data class MobileRelayStatus(
     val runtime: RuntimeState,
     val gateway: SessionState,
+    val sdk: String,
     val remoteController: String,
-    val aircraft: String,
     val pairing: String,
+    val flightController: String,
+    val aircraft: String,
     val stream: String,
     val mission: String,
     val canStartPairing: Boolean,
@@ -146,13 +150,15 @@ class MobileRelayGraph private constructor(
         val missionSnapshot = wayline.snapshot()
         val running = runtime.snapshot() == RuntimeState.RUNNING
         return MobileRelayStatus(
-            runtime.snapshot(),
-            gateway.connectionState(),
-            deviceSnapshot.remoteController.name,
-            deviceSnapshot.aircraft.name,
-            deviceSnapshot.pairing.name,
-            stream.snapshot().state.name,
-            missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
+            runtime = runtime.snapshot(),
+            gateway = gateway.connectionState(),
+            sdk = deviceSnapshot.sdkAvailability.name,
+            remoteController = deviceSnapshot.remoteController.name,
+            pairing = deviceSnapshot.pairing.name,
+            flightController = deviceSnapshot.flightController.name,
+            aircraft = deviceSnapshot.aircraft.name,
+            stream = stream.snapshot().state.name,
+            mission = missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
             canStartPairing = running && capabilities.canStartPairing,
             canStopPairing = running && capabilities.canStopPairing,
         )
@@ -393,6 +399,7 @@ class MobileRelayGraph private constructor(
                     },
                 ),
             )
+            val flight = AndroidFlightTelemetrySource.create()
             val staging = AndroidMissionStagingStorage.create(activity)
             val waylineAdapter = AndroidDjiWaylineAdapter.create(activity)
             val wayline = WaylineMission.create(
@@ -401,6 +408,18 @@ class MobileRelayGraph private constructor(
                     contentReader = staging,
                     uploadPort = waylineAdapter,
                     controlPort = waylineAdapter,
+                    startSafetyGate = MissionStartSafetyGate {
+                        val deviceSnapshot = device.snapshot()
+                        val flightSnapshot = flight.snapshot()
+                        deviceSnapshot.sdkAvailability == SdkAvailability.READY &&
+                            deviceSnapshot.remoteController == LinkState.CONNECTED &&
+                            deviceSnapshot.aircraft == LinkState.CONNECTED &&
+                            deviceSnapshot.flightController == LinkState.CONNECTED &&
+                            device.capabilities().canRunWayline &&
+                            flightSnapshot.isFlying == false &&
+                            flightSnapshot.motorsOn == false &&
+                            (flightSnapshot.batteryPercent ?: -1) >= 20
+                    },
                     executionSignalSource = waylineAdapter,
                     operationCoordinator = device.operations(),
                     uploadTimeoutMillis = 60_000,
@@ -512,7 +531,6 @@ class MobileRelayGraph private constructor(
                     )
                 }
             }
-            val flight = AndroidFlightTelemetrySource.create()
             val source = CompositeTelemetrySource(
                 feed({ device.snapshot() }) { changed ->
                     device.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
@@ -623,13 +641,16 @@ class MobileRelayGraph private constructor(
         ) {
             val telemetryHandler = CommandHandler { command, completion ->
                 if (command.fields.fields.isNotEmpty()) completion.reject("Telemetry command fields are invalid")
-                else when (val read = telemetry.read()) {
+                else {
+                    device.refreshHardwareLinks()
+                    when (val read = telemetry.read()) {
                     is TelemetryReadResult.ReadSucceeded -> when (telemetry.publishCurrent()) {
                         PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
                             completion.succeed("Telemetry published", TelemetryFrameMapper.commandResult(read.snapshot))
                         PublishTelemetryResult.Rejected -> completion.reject("Telemetry is unavailable")
                     }
                     TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
+                    }
                 }
             }
             val pairingHandler = pairingHandler(device, telemetry)

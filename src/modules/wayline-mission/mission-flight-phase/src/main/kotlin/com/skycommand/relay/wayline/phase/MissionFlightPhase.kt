@@ -25,6 +25,18 @@ fun interface MissionExecutionSignalRegistration {
 
 interface MissionExecutionSignalSource {
     fun onSignal(listener: MissionExecutionSignalListener): MissionExecutionSignalRegistration
+
+    /**
+     * Identity-free platform sources close this fence before a new start attempt so a delayed
+     * status callback from a prior task cannot be attributed to the task now being prepared.
+     */
+    fun beginStartAttempt()
+
+    /** Enables signals only after the current start command has an explicit DJI success receipt. */
+    fun confirmStartAttempt()
+
+    /** Closes the fence when the pending start is no longer a current task. */
+    fun invalidateStartAttempt()
 }
 
 enum class MissionPhase {
@@ -59,6 +71,8 @@ enum class MissionPhaseDiagnosticKind {
 
 sealed interface MissionSignalAcceptance {
     data object Accepted : MissionSignalAcceptance
+    data object Deferred : MissionSignalAcceptance
+    data object IgnoredBeforeExecution : MissionSignalAcceptance
     data object IgnoredStale : MissionSignalAcceptance
 }
 
@@ -69,13 +83,30 @@ class MissionFlightPhase private constructor(
     private val lock = ReentrantLock()
     private var active: ActiveMission? = null
 
-    fun arm(missionRevision: Long, deviceGeneration: Long, fileName: String) {
+    fun prepareStart(missionRevision: Long, deviceGeneration: Long, fileName: String) {
         require(missionRevision > 0) { "Mission revision must be positive" }
         require(deviceGeneration >= 0) { "Device generation must not be negative" }
         require(isSafeMissionFileName(fileName)) { "Mission file name is invalid" }
         lock.withLock {
             active = ActiveMission(missionRevision, deviceGeneration, fileName)
         }
+    }
+
+    /** Signals received during startMission are held until DJI acknowledges this exact request. */
+    fun confirmStart(missionRevision: Long, deviceGeneration: Long): List<MissionExecutionSignal> {
+        val confirmed = lock.withLock {
+            val current = active
+            if (current == null || current.missionRevision != missionRevision || current.deviceGeneration != deviceGeneration) {
+                null
+            } else {
+                current.confirmStart()
+            }
+        } ?: return emptyList()
+        confirmed.deliveries.forEach { delivery ->
+            delivery.diagnostics.forEach(::recordDiagnostic)
+            delivery.facts.forEach(::publishFact)
+        }
+        return confirmed.signals
     }
 
     fun accept(
@@ -90,9 +121,15 @@ class MissionFlightPhase private constructor(
             }
             current.accept(signal)
         }
-        delivery.diagnostics.forEach(::recordDiagnostic)
-        delivery.facts.forEach(::publishFact)
-        return MissionSignalAcceptance.Accepted
+        return when (delivery) {
+            SignalDelivery.Deferred -> MissionSignalAcceptance.Deferred
+            SignalDelivery.IgnoredBeforeExecution -> MissionSignalAcceptance.IgnoredBeforeExecution
+            is SignalDelivery.Published -> {
+                delivery.delivery.diagnostics.forEach(::recordDiagnostic)
+                delivery.delivery.facts.forEach(::publishFact)
+                MissionSignalAcceptance.Accepted
+            }
+        }
     }
 
     fun invalidate(missionRevision: Long?, deviceGeneration: Long) {
@@ -123,8 +160,30 @@ class MissionFlightPhase private constructor(
         private var nextSequence: Long = 1,
         private var startPointReached: Boolean = false,
         private var routeExecutionStarted: Boolean = false,
+        private var startConfirmed: Boolean = false,
+        private val deferredSignals: MutableList<MissionExecutionSignal> = mutableListOf(),
     ) {
-        fun accept(signal: MissionExecutionSignal): Delivery = when (signal) {
+        fun accept(signal: MissionExecutionSignal): SignalDelivery {
+            if (!startConfirmed) {
+                if (signal == MissionExecutionSignal.ENTER_WAYLINE || signal == MissionExecutionSignal.EXECUTING) {
+                    deferredSignals += signal
+                }
+                return SignalDelivery.Deferred
+            }
+            if (!routeExecutionStarted && signal.requiresExecutionProof()) {
+                return SignalDelivery.IgnoredBeforeExecution
+            }
+            return SignalDelivery.Published(acceptConfirmed(signal))
+        }
+
+        fun confirmStart(): ConfirmedStart {
+            startConfirmed = true
+            val signals = deferredSignals.toList()
+            deferredSignals.clear()
+            return ConfirmedStart(signals, signals.map(::acceptConfirmed))
+        }
+
+        private fun acceptConfirmed(signal: MissionExecutionSignal): Delivery = when (signal) {
             MissionExecutionSignal.ENTER_WAYLINE -> enterWayline()
             MissionExecutionSignal.EXECUTING -> executionObserved()
             else -> Delivery.EMPTY
@@ -158,6 +217,17 @@ class MissionFlightPhase private constructor(
         )
     }
 
+    private sealed interface SignalDelivery {
+        data object Deferred : SignalDelivery
+        data object IgnoredBeforeExecution : SignalDelivery
+        data class Published(val delivery: Delivery) : SignalDelivery
+    }
+
+    private data class ConfirmedStart(
+        val signals: List<MissionExecutionSignal>,
+        val deliveries: List<Delivery>,
+    )
+
     private data class Delivery(
         val facts: List<MissionPhaseFact> = emptyList(),
         val diagnostics: List<MissionPhaseDiagnostic> = emptyList(),
@@ -181,4 +251,14 @@ class MissionFlightPhase private constructor(
                 fileName.codePointCount(0, fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
                 fileName.none { it == '/' || it == '\\' || it.isISOControl() }
     }
+}
+
+private fun MissionExecutionSignal.requiresExecutionProof(): Boolean = when (this) {
+    MissionExecutionSignal.PAUSED,
+    MissionExecutionSignal.COMPLETED,
+    MissionExecutionSignal.INTERRUPTED,
+    MissionExecutionSignal.IDLE,
+    MissionExecutionSignal.DISCONNECTED,
+    -> true
+    else -> false
 }

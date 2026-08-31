@@ -9,22 +9,40 @@ import kotlin.test.assertIs
 class DeviceStateStoreContractTest {
 
     @Test
-    fun exposesTheStableDisconnectedInitialSnapshot() {
+    fun exposesTheStableUnknownInitialSnapshot() {
         val store = DeviceStateStore.create()
 
-        assertEquals(
-            DeviceSnapshot(
-                revision = 0,
-                sdkAvailability = SdkAvailability.STOPPED,
-                remoteController = LinkState.DISCONNECTED,
-                aircraft = LinkState.DISCONNECTED,
-                flightController = LinkState.DISCONNECTED,
-                pairing = PairingState.UNKNOWN,
-                remoteControllerModel = null,
-                aircraftModel = null,
-            ),
-            store.snapshot(),
-        )
+        assertEquals("UNKNOWN", store.snapshot().remoteController.name)
+        assertEquals("UNKNOWN", store.snapshot().aircraft.name)
+        assertEquals("UNKNOWN", store.snapshot().flightController.name)
+    }
+
+    @Test
+    fun marksAllLinksUnknownWhenTheRuntimeStops() {
+        val store = DeviceStateStore.create()
+        store.apply(readyObservation(revision = 1))
+
+        store.markRuntimeUnavailable()
+
+        assertEquals("UNKNOWN", store.snapshot().remoteController.name)
+        assertEquals("UNKNOWN", store.snapshot().aircraft.name)
+        assertEquals("UNKNOWN", store.snapshot().flightController.name)
+    }
+
+    @Test
+    fun marksHardwareFactsUnknownWhileTheirMsdkObserversAreBeingReestablished() {
+        val store = DeviceStateStore.create()
+        store.apply(readyObservation(revision = 1))
+
+        store.markHardwareObservationsUnknown()
+
+        assertEquals(SdkAvailability.READY, store.snapshot().sdkAvailability)
+        assertEquals(LinkState.UNKNOWN, store.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, store.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, store.snapshot().flightController)
+        assertEquals(PairingState.UNKNOWN, store.snapshot().pairing)
+        assertEquals(null, store.snapshot().remoteControllerModel)
+        assertEquals(null, store.snapshot().aircraftModel)
     }
 
     @Test
@@ -72,6 +90,17 @@ class DeviceStateStoreContractTest {
         }
 
         assertEquals(0, store.snapshot().revision)
+    }
+
+    @Test
+    fun acceptsConnectedAircraftWithUnavailableFlightController() {
+        val store = DeviceStateStore.create()
+
+        store.apply(DeviceStatePatch.aircraft(1, LinkState.CONNECTED, LinkState.DISCONNECTED, "Matrice 4"))
+
+        assertEquals(LinkState.CONNECTED, store.snapshot().aircraft)
+        assertEquals(LinkState.DISCONNECTED, store.snapshot().flightController)
+        assertEquals("Matrice 4", store.snapshot().aircraftModel)
     }
 
     @Test

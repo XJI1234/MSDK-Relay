@@ -1,6 +1,7 @@
 package com.skycommand.relay.telemetry.flight.android
 
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
+import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -9,7 +10,7 @@ class AndroidFlightTelemetrySourceContractTest {
     @Test
     fun publishesTheNormalizedInitialPlatformSnapshot() {
         val platform = FakePlatform(
-            FlightTelemetryFact(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2),
+            FlightTelemetryFact(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE),
         )
         val source = AndroidFlightTelemetrySource(platform)
         var changes = 0
@@ -18,7 +19,7 @@ class AndroidFlightTelemetrySourceContractTest {
 
         assertEquals(1, changes)
         assertEquals(
-            FlightTelemetrySnapshot(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2),
+            FlightTelemetrySnapshot(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE),
             source.snapshot(),
         )
     }
@@ -31,6 +32,17 @@ class AndroidFlightTelemetrySourceContractTest {
         source.onChanged { }
 
         assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+    }
+
+    @Test
+    fun doesNotTreatAnUnknownLowBatteryRthDefaultZeroAsAnEstimate() {
+        val source = AndroidFlightTelemetrySource(
+            FakePlatform(FlightTelemetryFact(remainingFlightTimeSeconds = 0)),
+        )
+
+        source.onChanged { }
+
+        assertEquals(null, source.snapshot().remainingFlightTimeSeconds)
     }
 
     @Test

@@ -12,7 +12,7 @@ class MissionFlightPhaseContractTest {
         val tracker = MissionFlightPhase.create(MissionPhaseSink { })
 
         assertFailsWith<IllegalArgumentException> {
-            tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "a".repeat(125) + ".kmz")
+            tracker.prepareStart(missionRevision = 1, deviceGeneration = 0, fileName = "a".repeat(125) + ".kmz")
         }
     }
 
@@ -24,7 +24,8 @@ class MissionFlightPhaseContractTest {
             sink = MissionPhaseSink { facts += it },
             diagnosticSink = MissionPhaseDiagnosticSink { diagnostics += it.kind },
         )
-        tracker.arm(missionRevision = 7, deviceGeneration = 2, fileName = "survey.kmz")
+        tracker.prepareStart(missionRevision = 7, deviceGeneration = 2, fileName = "survey.kmz")
+        tracker.confirmStart(missionRevision = 7, deviceGeneration = 2)
 
         assertIs<MissionSignalAcceptance.Accepted>(
             tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 7, deviceGeneration = 2),
@@ -61,7 +62,8 @@ class MissionFlightPhaseContractTest {
             sink = MissionPhaseSink { facts += it },
             diagnosticSink = MissionPhaseDiagnosticSink { diagnostics += it.kind },
         )
-        tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "route.kmz")
+        tracker.prepareStart(missionRevision = 1, deviceGeneration = 0, fileName = "route.kmz")
+        tracker.confirmStart(missionRevision = 1, deviceGeneration = 0)
 
         tracker.accept(MissionExecutionSignal.EXECUTING, missionRevision = 1, deviceGeneration = 0)
 
@@ -76,8 +78,10 @@ class MissionFlightPhaseContractTest {
     fun ignoresSignalsForReplacedOrInvalidatedTasks() {
         val facts = mutableListOf<MissionPhaseFact>()
         val tracker = MissionFlightPhase.create(MissionPhaseSink { facts += it })
-        tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "old.kmz")
-        tracker.arm(missionRevision = 2, deviceGeneration = 0, fileName = "new.kmz")
+        tracker.prepareStart(missionRevision = 1, deviceGeneration = 0, fileName = "old.kmz")
+        tracker.confirmStart(missionRevision = 1, deviceGeneration = 0)
+        tracker.prepareStart(missionRevision = 2, deviceGeneration = 0, fileName = "new.kmz")
+        tracker.confirmStart(missionRevision = 2, deviceGeneration = 0)
 
         assertIs<MissionSignalAcceptance.IgnoredStale>(
             tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 1, deviceGeneration = 0),
@@ -101,7 +105,8 @@ class MissionFlightPhaseContractTest {
             },
             diagnosticSink = MissionPhaseDiagnosticSink { diagnostics += it.kind },
         )
-        tracker.arm(missionRevision = 1, deviceGeneration = 0, fileName = "route.kmz")
+        tracker.prepareStart(missionRevision = 1, deviceGeneration = 0, fileName = "route.kmz")
+        tracker.confirmStart(missionRevision = 1, deviceGeneration = 0)
 
         tracker.accept(MissionExecutionSignal.ENTER_WAYLINE, missionRevision = 1, deviceGeneration = 0)
 

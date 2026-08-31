@@ -21,7 +21,7 @@ PairingController.state() -> PairingState
 
 ## 3. 规则
 
-- 开始配对要求 SDK `READY`、遥控器 `CONNECTED`、飞行器 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`FAILED` 或 `STOPPING`。`FAILED` 和停止完成后的 `STOPPING` 必须允许再次开始。已连接飞行器时不得开始对频。
+- 配对是新飞机或更换遥控器时的低频维护操作，不是常规连接、图传、航线或飞行控制前置条件。开始配对要求 SDK `READY`、遥控器明确 `CONNECTED`、飞行器明确 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`PAIRED`、`FAILED` 或 `STOPPING`。连接状态 `UNKNOWN` 时不得开始；已连接飞行器时不得开始。`PAIRED` 允许重新开始，以支持更换飞机。
 - 停止配对要求当前状态为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - 开始/停止请求被接受只表示请求进入 DJI 调度队列，不表示设备已经配对或已经停止配对。
 - 接受开始请求后进入 `PAIRING`；接受停止请求后进入 `STOPPING`。

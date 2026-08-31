@@ -624,15 +624,15 @@ device.settings.transmission.write
 {
   "type": "telemetry",
   "payload": {
-    "sdkRegistered": true,
-    "remoteControllerConnected": true,
-    "flightControllerConnected": true,
-    "connected": true,
+    "sdkAvailability": "READY",
+    "remoteController": "CONNECTED",
+    "flightController": "CONNECTED",
+    "aircraft": "CONNECTED",
     "isFlying": false,
     "motorsOn": false,
     "flightMode": "状态值",
-    "model": "机型",
-    "pairingState": "状态值",
+    "aircraftModel": "机型",
+    "pairing": "PAIRED",
     "batteryPercent": 86,
     "altitude": 80.0,
     "latitude": 30.123,
@@ -656,19 +656,20 @@ device.settings.transmission.write
 
 | 字段 | 含义 |
 | --- | --- |
-| `sdkRegistered` | DJI SDK 是否已经注册成功 |
-| `remoteControllerConnected` | 遥控器是否连接 |
-| `remoteControllerType` | 遥控器类型；未知时使用 `UNKNOWN` |
-| `flightControllerConnected` | 飞控是否连接 |
-| `pairingState` | 当前遥控器/飞行器配对状态 |
-| `connected` | 飞行器是否连接；它不是 WebSocket 连接状态 |
+| `sdkAvailability` | 手机端 DJI MSDK 生命周期状态。只允许 `STOPPED`、`STARTING`、`READY`、`FAILED`；仅 `READY` 表示 SDK 已注册且可供 DJI 业务模块调用。它不表示遥控器、飞控或飞机已经连接。 |
+| `remoteController` | `RemoteControllerKey.KeyConnection` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，不得折叠成布尔值 |
+| `remoteControllerModel` | 遥控器型号；未知时为 `null` |
+| `flightController` | `FlightControllerKey.KeyConnection` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，不得由产品连接推断 |
+| `pairing` | `RemoteControllerKey.KeyPairingStatus` 的原始受限状态；不得由连接状态推断 |
+| `aircraft` | `ProductKey.KeyConnection` 的原始三态；它不是 WebSocket 连接状态，且不得折叠成布尔值 |
 | `isFlying` | 飞行器是否正在飞行 |
 | `motorsOn` | 电机是否启动 |
 | `flightMode` | DJI 当前飞行模式 |
 | `model` | 飞行器型号 |
 | `altitude` | 当前高度；无法读取时可省略 |
 | `batteryPercent` | 电池百分比；无法读取时可省略 |
-| `remainingFlightTimeSeconds` | 估计剩余飞行时间；无法读取时可省略 |
+| `lowBatteryRthState` | 低电量返航状态；仅允许 `IDLE`、`COUNTING_DOWN`、`EXECUTED`、`CANCELLED`，未知时省略 |
+| `remainingFlightTimeSeconds` | DJI 低电量返航策略给出的正秒数预估；状态未知或值为 `0` 时必须省略，不能以零伪造有效时间 |
 | `latitude` / `longitude` | 当前坐标；无法读取时必须省略，不能用 `0` 冒充有效位置 |
 | `liveStreaming` | 是否正在直播 |
 | `liveStreamNotice` | 直播状态说明 |

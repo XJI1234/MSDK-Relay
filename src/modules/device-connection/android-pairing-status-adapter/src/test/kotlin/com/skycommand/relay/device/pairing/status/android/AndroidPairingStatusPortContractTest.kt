@@ -40,6 +40,16 @@ class AndroidPairingStatusPortContractTest {
     }
 
     @Test
+    fun publishesTheCurrentMsdkPairingKeyWhenObservationStarts() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+            Path("src/modules/device-connection/android-pairing-status-adapter/src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("manager.getValue<PairingState>(key)"))
+    }
+
+    @Test
     fun retainsOneObservationAndRejectsStaleCallbacks() {
         val platform = FakePlatform()
         val port = AndroidPairingStatusPort(platform)
