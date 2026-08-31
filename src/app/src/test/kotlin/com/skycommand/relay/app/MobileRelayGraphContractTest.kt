@@ -40,6 +40,17 @@ class MobileRelayGraphContractTest {
 
         assertTrue(telemetryHandler.contains("device.refreshHardwareLinks()"))
     }
+
+    @Test
+    fun productConnectionIsNeverLabelledAsAircraftConnection() {
+        val strings = listOf(
+            Path("src/main/res/values/strings.xml"),
+            Path("src/app/src/main/res/values/strings.xml"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
+        assertFalse(strings.contains("飞机连接 [ProductKey.KeyConnection]"))
+    }
 }
 
 class MainActivityRetentionContractTest {
@@ -74,6 +85,6 @@ class MainActivityMsdkFactContractTest {
         assertTrue(strings.contains("遥控器连接 [RemoteControllerKey.KeyConnection]"))
         assertTrue(strings.contains("对频状态 [RemoteControllerKey.KeyPairingStatus]"))
         assertTrue(strings.contains("飞控连接 [FlightControllerKey.KeyConnection]"))
-        assertTrue(strings.contains("飞机连接 [ProductKey.KeyConnection]"))
+        assertTrue(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
     }
 }
