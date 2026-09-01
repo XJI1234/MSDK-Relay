@@ -29,9 +29,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
+fun interface StreamStartGate {
+    fun allowsStart(): Boolean
+}
+
 data class LiveStreamDependencies(
     val djiPort: DjiStreamPort,
     val operationCoordinator: DjiOperationCoordinator,
+    val startGate: StreamStartGate,
     val timeoutMillis: Long = 30_000,
     val diagnosticSink: StreamStateDiagnosticSink = StreamStateDiagnosticSink { },
 )
@@ -92,6 +97,9 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
 
     private inner class Actions : StreamCommandActions {
         override fun start(config: ValidatedStreamConfig, completion: StreamActionCompletion): StreamActionResult = lifecycleLock.withLock {
+            if (!runCatching { dependencies.startGate.allowsStart() }.getOrDefault(false)) {
+                return StreamActionResult.Rejected
+            }
             val tracked = TrackedOperation()
             val result = adapter.start(config, StreamDjiTerminalListener {
                 completeTrackedOperation(tracked)

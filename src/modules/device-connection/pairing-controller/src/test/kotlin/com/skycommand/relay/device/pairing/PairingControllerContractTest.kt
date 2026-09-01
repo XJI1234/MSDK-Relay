@@ -67,7 +67,14 @@ class PairingControllerContractTest {
         val aircraftFixture = Fixture()
         aircraftFixture.makeReady()
         aircraftFixture.store.apply(
-            DeviceStatePatch.aircraft(2, LinkState.CONNECTED, LinkState.CONNECTED, "Matrice"),
+            DeviceStatePatch.aircraft(
+                sourceRevision = 2,
+                aircraft = LinkState.CONNECTED,
+                flightController = LinkState.CONNECTED,
+                model = "Matrice",
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
+            ),
         )
         assertEquals(
             PairingRequestResult.Rejected(PairingRejection.NOT_READY),
@@ -213,7 +220,16 @@ class PairingControllerContractTest {
 
         fun makeReady() {
             store.apply(DeviceStatePatch.remoteController(1, LinkState.CONNECTED, "RC"))
-            store.apply(DeviceStatePatch.aircraft(1, LinkState.DISCONNECTED, LinkState.DISCONNECTED, null))
+            store.apply(
+                DeviceStatePatch.aircraft(
+                    sourceRevision = 1,
+                    aircraft = LinkState.DISCONNECTED,
+                    flightController = LinkState.DISCONNECTED,
+                    model = null,
+                    airLink = LinkState.DISCONNECTED,
+                    camera = LinkState.DISCONNECTED,
+                ),
+            )
             store.apply(DeviceStatePatch.pairing(1, PairingState.IDLE))
             store.apply(DeviceStatePatch.sdk(1, SdkAvailability.READY))
         }

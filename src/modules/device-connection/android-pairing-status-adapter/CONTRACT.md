@@ -37,7 +37,7 @@ PairingStatusSignal(sourceRevision, state)
 2. DJI `UNPAIRED` 映射为 `PairingState.IDLE`，`PAIRING` 映射为 `PAIRING`，`PAIRED` 映射为 `PAIRED`。
 3. DJI 的停止中或切换中状态映射为 `STOPPING`；明确停止失败或设备不匹配等终态映射为 `FAILED`；未知或未来厂商值映射为 `UNKNOWN`。映射表以实际 MSDK v5.17 枚举为准，新增厂商枚举值只能安全映射为 `UNKNOWN`，不得伪造成功。
 4. 适配器不得从连接状态、USB 状态、历史状态、产品类型、序列号、固件或配对命令结果推断状态。
-5. `start` 成功后必须先注册 `RemoteControllerKey.KeyPairingStatus` 的持续监听，再读取该 Key 的当前值并发布一个普通初始信号。读取失败或 MSDK 返回 null 必须如实映射为 `UNKNOWN`；注册期间同步到达的事件必须在初始读取之后按到达顺序重放，不能被初始读取反向覆盖。相同值可带更新版本再次发布；跨来源排序和去重属于 `PairingStatusLink` 与状态存储。
+5. `start` 成功后必须先注册 `RemoteControllerKey.KeyPairingStatus` 的持续监听，再通过 `KeyManager.getValue(key, callback)` 显式向硬件异步读取一次初值。不得调用同步 `getValue(key)`，因为其只读取 MSDK 缓存。读取成功前保持 `UNKNOWN`；读取失败或硬件返回 null 也保持 `UNKNOWN`。每次硬件初读必须记录该 Key 已接收监听事件的版本；读取请求之后先到达的监听事件优先，较晚返回的初读结果必须丢弃，不能反向覆盖新事件。相同值可带更新版本再次发布；跨来源排序和去重属于 `PairingStatusLink` 与状态存储。
 
 ## 生命周期、依赖和验证规则
 

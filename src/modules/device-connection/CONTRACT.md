@@ -37,17 +37,17 @@ DeviceConnection.operations().submit(action, timeoutMillis, completion)
 | `dji-operation-coordinator` | 对所有 DJI 操作做串行、超时、取消和一次性完成保护 | `DjiOperationCoordinator` | 判断某项业务是否应执行 |
 | `device-state-store` | 保存唯一、不可变、带版本的设备状态快照 | `DeviceSnapshotReader` | 读取 DJI SDK、发送网络消息 |
 | `remote-controller-link` | 规范化遥控器连接和基本信息 | `RemoteControllerObservation` | 推断飞行器状态 |
-| `aircraft-link` | 规范化飞行器、飞控和基础连接信息 | `AircraftObservation` | 航线或直播操作 |
+| `aircraft-link` | 规范化产品、AirLink、主相机、飞控和基础连接信息 | `AircraftObservation` | 航线或直播操作 |
 | `pairing-controller` | 验证并串行提交开始/停止配对命令；只表达命令阶段 | 配对命令请求结果 | 观察真实配对结果、伪造 `PAIRED` 或 `IDLE` |
 | `pairing-status-link` | 接收已规范化的真实配对状态并写入状态仓库 | `PairingStatusPort`、配对状态观察链接 | 发起或停止配对命令、推断配对状态 |
 | `device-capability-reader` | 从当前设备状态推导可用功能 | `DeviceCapabilities` | 执行功能对应操作 |
 
 ## 4. 数据所有权与不变量
 
-- `device-state-store` 是 SDK 可用性、遥控器连接、飞行器连接和配对状态的唯一状态拥有者。每条连接事实均为三态：仅明确观察到 true 才是 `CONNECTED`，仅明确观察到 false 才是 `DISCONNECTED`，未观察、null、SDK 未就绪和停止后均为 `UNKNOWN`。每个 Android Key 适配器必须用“先订阅、后读取初值、持续发布变化”的同一观察链路更新它；状态在监听仍有效且未收到反向事件时保持为当前 MSDK 事实，不因经过时间自动降级。端口重启、SDK 停止和运行代次更替必须先使旧观察失效，新的代次只有收到其初始 Key 读取后才恢复可信事实。
+- `device-state-store` 是 SDK 可用性、遥控器、产品、AirLink、主相机、飞控连接和配对状态的唯一状态拥有者。每条连接事实均为三态：仅明确观察到 true 才是 `CONNECTED`，仅明确观察到 false 才是 `DISCONNECTED`，未观察、null、SDK 未就绪和停止后均为 `UNKNOWN`。每个 Android Key 适配器必须先用 `KeyManager.listen(key, holder, listener)` 建立持续订阅，再用 `KeyManager.getValue(key, callback)` 请求一次异步硬件读取；连接事实不得用同步 `getValue(key)` 的 MSDK 缓存初始化。初始硬件读取返回时，若该 Key 已收到更新的监听事件，旧初始结果必须丢弃。状态在监听仍有效且未收到反向事件时保持为当前 MSDK 事实，不因经过时间自动降级。端口重启、SDK 停止和运行代次更替必须先使旧观察失效，新的代次只有收到其初始异步 Key 回调或后续监听事件后才恢复可信事实。
 - 所有读者只能取得不可变快照，不能持有或修改内部可变对象。
 - `dji-operation-coordinator` 是直播、航线、配对、飞行控制和设备设置执行 DJI SDK 调用的唯一调度入口；这些模块不得自行创建 DJI 操作线程或绕开协调器并发调用 DJI。
-- DJI 回调先由对应适配器规范化为公开观察值，再写入状态仓库；业务模块不得直接监听 DJI 回调。
+- DJI 回调先由对应适配器规范化为公开观察值，再写入状态仓库；业务模块不得直接监听 DJI 回调。`ProductKey.KeyConnection`、`AirLinkKey.KeyConnection`、`CameraKey.KeyConnection(LEFT_OR_MAIN)` 与 `FlightControllerKey.KeyConnection` 必须分别保留，绝不相互推断或合并为“飞机已连接”。
 - `pairing-controller` 在接受开始或停止命令时只能写入临时命令阶段 `PAIRING` 或 `STOPPING`。命令成功绝不代表已配对或已停止配对；`PAIRED`、`IDLE` 与 `UNKNOWN` 的设备事实必须由 `pairing-status-link` 的真实观察写入。命令失败可以安全地写入 `FAILED`，而真实观察到的 `FAILED` 同样由 `pairing-status-link` 写入。
 - `pairing-status-link` 是配对事实的唯一观察入口。门面层只负责其生命周期编排，不解释配对状态、不过滤有效状态、也不接触 DJI 回调。
 - 每个来自 DJI 适配器的观察值必须有单调递增的来源版本。旧版本和重复版本不得回滚当前快照。

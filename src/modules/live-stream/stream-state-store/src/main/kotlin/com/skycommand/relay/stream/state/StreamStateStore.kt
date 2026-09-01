@@ -18,6 +18,10 @@ data class StreamMetrics(
     val fps: Double? = null,
     val videoBitrateKbps: Double? = null,
     val rttMillis: Long? = null,
+    /** Raw MSDK LiveStreamStatus.packetLoss value; its unit is intentionally not inferred. */
+    val packetLoss: Long? = null,
+    /** Raw MSDK LiveStreamStatus.packetCacheLen value; its unit is intentionally not inferred. */
+    val packetCacheLength: Long? = null,
 )
 
 data class StreamSnapshot(
@@ -342,6 +346,8 @@ class StreamStateStore private constructor(
         metrics.fps?.let { require(it.isFinite() && it in 0.0..240.0) }
         metrics.videoBitrateKbps?.let { require(it.isFinite() && it in 0.0..1_000_000.0) }
         metrics.rttMillis?.let { require(it in 0..60_000) }
+        metrics.packetLoss?.let { require(it in 0..Int.MAX_VALUE.toLong()) }
+        metrics.packetCacheLength?.let { require(it in 0..Int.MAX_VALUE.toLong()) }
     }
 
     private fun validateNotice(notice: String) {

@@ -74,12 +74,16 @@ data class TelemetrySnapshot(
     val liveFps: Double? = null,
     val liveVideoBitrateKbps: Double? = null,
     val liveRttMillis: Long? = null,
+    val livePacketLoss: Long? = null,
+    val livePacketCacheLength: Long? = null,
     val missionRevision: Long? = null,
     val missionDeviceGeneration: Long? = null,
     val missionExecution: ExecutionState = ExecutionState.NOT_STARTED,
     val missionUploadProgress: Int? = null,
     val missionFileName: String? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
+    val airLink: LinkState = LinkState.UNKNOWN,
+    val camera: LinkState = LinkState.UNKNOWN,
 ) {
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
@@ -103,6 +107,8 @@ object SnapshotAssembler {
         pairing = inputs.device.pairing,
         remoteControllerModel = inputs.device.remoteControllerModel,
         aircraftModel = inputs.device.aircraftModel,
+        airLink = inputs.device.airLink,
+        camera = inputs.device.camera,
         capabilities = CapabilityCalculator.calculate(DeviceCapabilityReader.read(inputs.device)),
         isFlying = flight.isFlying,
         motorsOn = flight.motorsOn,
@@ -119,6 +125,8 @@ object SnapshotAssembler {
         liveFps = inputs.stream.metrics?.fps,
         liveVideoBitrateKbps = inputs.stream.metrics?.videoBitrateKbps,
         liveRttMillis = inputs.stream.metrics?.rttMillis,
+        livePacketLoss = inputs.stream.metrics?.packetLoss,
+        livePacketCacheLength = inputs.stream.metrics?.packetCacheLength,
         missionRevision = inputs.mission.missionRevision,
         missionDeviceGeneration = inputs.mission.missionRevision?.let { inputs.mission.deviceGeneration },
         missionExecution = inputs.mission.execution,
@@ -142,6 +150,8 @@ object SnapshotAssembler {
         pairing = device.pairing,
         remoteControllerModel = device.remoteControllerModel,
         aircraftModel = device.aircraftModel,
+        airLink = device.airLink,
+        camera = device.camera,
         capabilities = CapabilityCalculator.calculate(DeviceCapabilityReader.read(device)),
     )
 }

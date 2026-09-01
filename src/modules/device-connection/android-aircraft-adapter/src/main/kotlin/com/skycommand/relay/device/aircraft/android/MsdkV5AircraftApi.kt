@@ -1,10 +1,16 @@
 package com.skycommand.relay.device.aircraft.android
 
 import android.util.Log
+import dji.sdk.keyvalue.key.AirLinkKey
+import dji.sdk.keyvalue.key.CameraKey
+import dji.sdk.keyvalue.key.DJIKey
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
 import dji.sdk.keyvalue.key.ProductKey
 import dji.sdk.keyvalue.value.product.ProductType
+import dji.sdk.keyvalue.value.common.ComponentIndexType
+import dji.v5.common.callback.CommonCallbacks
+import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
 
 internal class MsdkV5AircraftApi(
@@ -24,20 +30,38 @@ private class KeyManagerObservation(
     private val lock = Any()
     private val owner = Any()
     private val aircraftKey = KeyTools.createKey(ProductKey.KeyConnection)
+    private val airLinkKey = KeyTools.createKey(AirLinkKey.KeyConnection)
+    private val cameraKey = KeyTools.createKey(CameraKey.KeyConnection, ComponentIndexType.LEFT_OR_MAIN)
     private val flightControllerKey = KeyTools.createKey(FlightControllerKey.KeyConnection)
     private val productTypeKey = KeyTools.createKey(ProductKey.KeyProductType)
     private var active = true
-    private var initializing = true
     private var aircraftConnected: Boolean? = null
+    private var airLinkConnected: Boolean? = null
+    private var cameraConnected: Boolean? = null
     private var flightControllerConnected: Boolean? = null
     private var productType = ProductType.UNKNOWN
-    private val pendingInitialUpdates = mutableListOf<KeyManagerObservation.() -> Unit>()
+    private val connectionEventRevisions = mutableMapOf<ConnectionKey, Long>()
+    private var productTypeEventRevision = 0L
 
     fun start() {
         try {
             manager.listen(aircraftKey, owner) { previous, next ->
                 publishConnection(
                     key = ConnectionKey.PRODUCT,
+                    previousValue = previous,
+                    nextValue = next,
+                )
+            }
+            manager.listen(airLinkKey, owner) { previous, next ->
+                publishConnection(
+                    key = ConnectionKey.AIR_LINK,
+                    previousValue = previous,
+                    nextValue = next,
+                )
+            }
+            manager.listen(cameraKey, owner) { previous, next ->
+                publishConnection(
+                    key = ConnectionKey.CAMERA,
                     previousValue = previous,
                     nextValue = next,
                 )
@@ -52,7 +76,11 @@ private class KeyManagerObservation(
             manager.listen(productTypeKey, owner) { _, next ->
                 publishProductType(next ?: ProductType.UNKNOWN)
             }
-            publishInitialFact()
+            requestInitialConnection(aircraftKey, ConnectionKey.PRODUCT)
+            requestInitialConnection(airLinkKey, ConnectionKey.AIR_LINK)
+            requestInitialConnection(cameraKey, ConnectionKey.CAMERA)
+            requestInitialConnection(flightControllerKey, ConnectionKey.FLIGHT_CONTROLLER)
+            requestInitialProductType()
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             throw failure
@@ -70,10 +98,8 @@ private class KeyManagerObservation(
         nextValue: Boolean?,
     ) {
         val fact = update {
-            when (key) {
-                ConnectionKey.PRODUCT -> aircraftConnected = nextValue
-                ConnectionKey.FLIGHT_CONTROLLER -> flightControllerConnected = nextValue
-            }
+            connectionEventRevisions[key] = (connectionEventRevisions[key] ?: 0L) + 1L
+            setConnection(key, nextValue)
         }
         recordLinkDiagnostic(
             "$LINK_DIAGNOSTIC_PREFIX event=key-change key=${key.diagnosticName} old=$previousValue new=$nextValue",
@@ -82,53 +108,89 @@ private class KeyManagerObservation(
     }
 
     private fun publishProductType(nextProductType: ProductType) {
-        val fact = update { productType = nextProductType }
+        val fact = update {
+            productTypeEventRevision += 1L
+            productType = nextProductType
+        }
         fact?.let(listener::onChanged)
+    }
+
+    private fun requestInitialConnection(djiKey: DJIKey<Boolean>, key: ConnectionKey) {
+        val initialEventRevision = synchronized(lock) {
+            if (!active) return
+            connectionEventRevisions[key] ?: 0L
+        }
+        requestInitialValue(djiKey, key.diagnosticName) { initialValue ->
+            val fact = synchronized(lock) {
+                if (!active || connectionEventRevisions[key] != initialEventRevision) {
+                    null
+                } else {
+                    setConnection(key, initialValue)
+                    currentFact()
+                }
+            }
+            fact?.let(listener::onChanged)
+        }
+    }
+
+    private fun requestInitialProductType() {
+        val initialEventRevision = synchronized(lock) {
+            if (!active) return
+            productTypeEventRevision
+        }
+        requestInitialValue(productTypeKey, "ProductKey.KeyProductType") { initialValue ->
+            val fact = synchronized(lock) {
+                if (!active || productTypeEventRevision != initialEventRevision) {
+                    null
+                } else {
+                    productType = initialValue ?: ProductType.UNKNOWN
+                    currentFact()
+                }
+            }
+            fact?.let(listener::onChanged)
+        }
+    }
+
+    private fun <T> requestInitialValue(
+        key: DJIKey<T>,
+        diagnosticName: String,
+        onSuccess: (T?) -> Unit,
+    ) {
+        manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T> {
+            override fun onSuccess(value: T) {
+                onSuccess(value)
+            }
+
+            override fun onFailure(error: IDJIError) {
+                recordLinkDiagnostic("$LINK_DIAGNOSTIC_PREFIX event=hardware-read-failure key=$diagnosticName")
+            }
+        })
+    }
+
+    private fun setConnection(key: ConnectionKey, value: Boolean?) {
+        when (key) {
+            ConnectionKey.PRODUCT -> aircraftConnected = value
+            ConnectionKey.AIR_LINK -> airLinkConnected = value
+            ConnectionKey.CAMERA -> cameraConnected = value
+            ConnectionKey.FLIGHT_CONTROLLER -> flightControllerConnected = value
+        }
     }
 
     private fun currentFact(): DjiAircraftFact = DjiAircraftFact(
         aircraftConnected = aircraftConnected,
-        flightControllerConnected = normalizedFlightControllerConnection(
-            aircraftConnected,
-            flightControllerConnected,
-        ),
+        airLinkConnected = airLinkConnected,
+        cameraConnected = cameraConnected,
+        flightControllerConnected = flightControllerConnected,
         displayModel = if (aircraftConnected == true) productType.toDisplayModel() else null,
     )
 
     private fun update(transform: KeyManagerObservation.() -> Unit): DjiAircraftFact? = synchronized(lock) {
-        when {
-            !active -> null
-            initializing -> {
-                pendingInitialUpdates += transform
-                null
-            }
-            else -> {
-                transform(this)
-                currentFact()
-            }
+        if (!active) {
+            null
+        } else {
+            transform(this)
+            currentFact()
         }
-    }
-
-    private fun publishInitialFact() {
-        val product = runCatching { manager.getValue<Boolean>(aircraftKey) }.getOrNull()
-        val flightController = runCatching { manager.getValue<Boolean>(flightControllerKey) }.getOrNull()
-        val initialProductType = runCatching { manager.getValue<ProductType>(productTypeKey) }.getOrNull()
-            ?: ProductType.UNKNOWN
-        val fact = synchronized(lock) {
-            if (!active) null else {
-                aircraftConnected = product
-                flightControllerConnected = flightController
-                productType = initialProductType
-                pendingInitialUpdates.forEach { update -> update(this) }
-                pendingInitialUpdates.clear()
-                initializing = false
-                currentFact()
-            }
-        }
-        recordLinkDiagnostic(
-            "$LINK_DIAGNOSTIC_PREFIX event=initial-read product=$product flightController=$flightController",
-        )
-        fact?.let(listener::onChanged)
     }
 
     private fun ProductType.toDisplayModel(): String? = when (this) {
@@ -143,6 +205,8 @@ private class KeyManagerObservation(
 
     private enum class ConnectionKey(val diagnosticName: String) {
         PRODUCT("ProductKey.KeyConnection"),
+        AIR_LINK("AirLinkKey.KeyConnection"),
+        CAMERA("CameraKey.KeyConnection(LEFT_OR_MAIN)"),
         FLIGHT_CONTROLLER("FlightControllerKey.KeyConnection"),
     }
 

@@ -35,6 +35,8 @@ data class DeviceSnapshot(
     val pairing: PairingState,
     val remoteControllerModel: String?,
     val aircraftModel: String?,
+    val airLink: LinkState = LinkState.UNKNOWN,
+    val camera: LinkState = LinkState.UNKNOWN,
 )
 
 data class DeviceObservation(
@@ -46,6 +48,8 @@ data class DeviceObservation(
     val pairing: PairingState,
     val remoteControllerModel: String?,
     val aircraftModel: String?,
+    val airLink: LinkState = LinkState.UNKNOWN,
+    val camera: LinkState = LinkState.UNKNOWN,
 )
 
 enum class DeviceStateSource {
@@ -64,6 +68,8 @@ class DeviceStatePatch private constructor(
     val aircraft: LinkState? = null,
     val flightController: LinkState? = null,
     val aircraftModel: String? = null,
+    val airLink: LinkState? = null,
+    val camera: LinkState? = null,
     val pairing: PairingState? = null,
 ) {
     companion object {
@@ -92,12 +98,16 @@ class DeviceStatePatch private constructor(
             aircraft: LinkState,
             flightController: LinkState,
             model: String?,
+            airLink: LinkState,
+            camera: LinkState,
         ): DeviceStatePatch = DeviceStatePatch(
             source = DeviceStateSource.AIRCRAFT,
             sourceRevision = sourceRevision,
             aircraft = aircraft,
             flightController = flightController,
             aircraftModel = model,
+            airLink = airLink,
+            camera = camera,
         )
 
         fun pairing(sourceRevision: Long, pairing: PairingState): DeviceStatePatch = DeviceStatePatch(
@@ -196,6 +206,8 @@ class DeviceStateStore private constructor(
                 remoteController = LinkState.UNKNOWN,
                 aircraft = LinkState.UNKNOWN,
                 flightController = LinkState.UNKNOWN,
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
                 pairing = PairingState.UNKNOWN,
                 remoteControllerModel = null,
                 aircraftModel = null,
@@ -223,6 +235,8 @@ class DeviceStateStore private constructor(
                 remoteController = LinkState.UNKNOWN,
                 aircraft = LinkState.UNKNOWN,
                 flightController = LinkState.UNKNOWN,
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
                 pairing = PairingState.UNKNOWN,
                 remoteControllerModel = null,
                 aircraftModel = null,
@@ -269,6 +283,8 @@ class DeviceStateStore private constructor(
                     aircraft = requireNotNull(patch.aircraft),
                     flightController = requireNotNull(patch.flightController),
                     aircraftModel = patch.aircraftModel,
+                    airLink = requireNotNull(patch.airLink),
+                    camera = requireNotNull(patch.camera),
                 )
 
                 DeviceStateSource.PAIRING -> current.copy(
@@ -401,11 +417,12 @@ class DeviceStateStore private constructor(
             pairing = PairingState.UNKNOWN,
             remoteControllerModel = null,
             aircraftModel = null,
+            airLink = LinkState.UNKNOWN,
+            camera = LinkState.UNKNOWN,
         )
 
         private fun validate(observation: DeviceObservation) {
             require(observation.sourceRevision > 0) { "Observation revision must be positive" }
-            validateAircraftConnection(observation.aircraft, observation.flightController)
             validateModel(observation.remoteControllerModel)
             validateModel(observation.aircraftModel)
         }
@@ -418,7 +435,8 @@ class DeviceStateStore private constructor(
                 DeviceStateSource.AIRCRAFT -> {
                     requireNotNull(patch.aircraft)
                     requireNotNull(patch.flightController)
-                    validateAircraftConnection(patch.aircraft, patch.flightController)
+                    requireNotNull(patch.airLink)
+                    requireNotNull(patch.camera)
                 }
 
                 DeviceStateSource.PAIRING -> requireNotNull(patch.pairing)
@@ -434,15 +452,6 @@ class DeviceStateStore private constructor(
             require(model.none(Char::isISOControl)) { "Device model contains a control character" }
         }
 
-        private fun validateAircraftConnection(aircraft: LinkState, flightController: LinkState) {
-            require(
-                aircraft == LinkState.CONNECTED ||
-                    (aircraft == LinkState.DISCONNECTED && flightController == LinkState.DISCONNECTED) ||
-                    (aircraft == LinkState.UNKNOWN && flightController == LinkState.UNKNOWN),
-            ) {
-                "Flight controller state must match disconnected or unknown aircraft state"
-            }
-        }
 
         private fun DeviceObservation.toSnapshot() = DeviceSnapshot(
             revision = sourceRevision,
@@ -453,6 +462,8 @@ class DeviceStateStore private constructor(
             pairing = pairing,
             remoteControllerModel = remoteControllerModel,
             aircraftModel = aircraftModel,
+            airLink = airLink,
+            camera = camera,
         )
     }
 }

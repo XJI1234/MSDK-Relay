@@ -64,14 +64,18 @@ class TelemetryFrameMapperTest {
                 liveFps = 30.0,
                 liveVideoBitrateKbps = 4000.0,
                 liveRttMillis = 42,
+                livePacketLoss = 7,
+                livePacketCacheLength = 96,
                 missionRevision = 7,
                 missionDeviceGeneration = 3,
                 missionExecution = ExecutionState.EXECUTING,
                 missionUploadProgress = 100,
                 missionFileName = "survey.kmz",
             ),
+            telemetrySequence = 12,
         )
 
+        assertEquals(JsonNumber("12"), frame.payload["telemetrySequence"])
         assertEquals(JsonNumber("9"), frame.payload["deviceRevision"])
         assertEquals(JsonString("READY"), frame.payload["sdkAvailability"])
         assertEquals(JsonString("CONNECTED"), frame.payload["remoteController"])
@@ -95,6 +99,8 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("30.0"), frame.payload["liveFps"])
         assertEquals(JsonNumber("4000.0"), frame.payload["liveVideoBitrateKbps"])
         assertEquals(JsonNumber("42"), frame.payload["liveRttMillis"])
+        assertEquals(JsonNumber("7"), frame.payload["livePacketLoss"])
+        assertEquals(JsonNumber("96"), frame.payload["livePacketCacheLength"])
         assertEquals(JsonNumber("7"), frame.payload["missionRevision"])
         assertEquals(JsonNumber("3"), frame.payload["missionDeviceGeneration"])
         assertEquals(JsonString("EXECUTING"), frame.payload["missionExecution"])
@@ -164,6 +170,7 @@ class TelemetryFrameMapperTest {
                 LinkState.DISCONNECTED, PairingState.UNKNOWN, null, null,
                 TelemetryCapabilities(false, false, WaypointMissionSupport.UNSUPPORTED, false),
             ),
+            telemetrySequence = 1,
         )
         listOf(
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
@@ -171,5 +178,19 @@ class TelemetryFrameMapperTest {
             "liveStreamNotice", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
             "missionRevision", "missionDeviceGeneration", "missionUploadProgress", "missionFileName",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
+    }
+
+    @Test fun emitsExplicitUnknownStatesForAirLinkAndPrimaryCamera() {
+        val frame = TelemetryFrameMapper.map(
+            TelemetrySnapshot(
+                0, SdkAvailability.STOPPED, LinkState.DISCONNECTED, LinkState.DISCONNECTED,
+                LinkState.DISCONNECTED, PairingState.UNKNOWN, null, null,
+                TelemetryCapabilities(false, false, WaypointMissionSupport.UNSUPPORTED, false),
+            ),
+            telemetrySequence = 1,
+        )
+
+        assertEquals(JsonString("UNKNOWN"), frame.payload["airLink"])
+        assertEquals(JsonString("UNKNOWN"), frame.payload["camera"])
     }
 }

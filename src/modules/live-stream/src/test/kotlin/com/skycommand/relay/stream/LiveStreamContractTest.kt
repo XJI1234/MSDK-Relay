@@ -16,8 +16,22 @@ import com.skycommand.relay.stream.state.StreamMetrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 
 class LiveStreamContractTest {
+    @Test
+    fun declaresAReadOnlyStartGateBeforeDispatchingToDji() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/LiveStream.kt"),
+            Path("src/modules/live-stream/src/main/kotlin/com/skycommand/relay/stream/LiveStream.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("StreamStartGate"))
+    }
+
     @Test
     fun reportsStartAndStopAfterDjiTerminalSuccess() {
         val fixture = Fixture()
@@ -46,6 +60,18 @@ class LiveStreamContractTest {
 
         assertEquals(listOf("reject:RTMP configuration is invalid"), completion.events)
         assertEquals(0, fixture.port.startCalls)
+    }
+
+    @Test
+    fun rejectsStartBeforeCallingDjiWhenTheReadOnlyDeviceGateIsClosed() {
+        val fixture = Fixture(startAllowed = false)
+        val completion = Completion()
+
+        fixture.liveStream.commandHandler().handle(start(), completion)
+
+        assertEquals(listOf("reject:Stream operation was rejected"), completion.events)
+        assertEquals(0, fixture.port.startCalls)
+        assertEquals(StreamLifecycleState.STOPPED, fixture.liveStream.snapshot().state)
     }
 
     @Test
@@ -90,13 +116,13 @@ class LiveStreamContractTest {
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
     }
 
-    private class Fixture {
+    private class Fixture(startAllowed: Boolean = true) {
         val port = Port()
         private val coordinator = DjiOperationCoordinator.create(
             executor = OperationExecutor { it() },
             scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
         )
-        val liveStream = LiveStream.create(LiveStreamDependencies(port, coordinator))
+        val liveStream = LiveStream.create(LiveStreamDependencies(port, coordinator, StreamStartGate { startAllowed }))
     }
 
     private class Completion : CommandCompletion {

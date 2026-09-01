@@ -90,7 +90,14 @@ class SnapshotAssemblerContractTest {
                     state = StreamLifecycleState.STREAMING,
                     targetConfigured = true,
                     notice = "Streaming",
-                    metrics = StreamMetrics("1920x1080", 30.0, 4_000.0, 42),
+                    metrics = StreamMetrics(
+                        resolution = "1920x1080",
+                        fps = 30.0,
+                        videoBitrateKbps = 4_000.0,
+                        rttMillis = 42,
+                        packetLoss = 7,
+                        packetCacheLength = 96,
+                    ),
                 ),
                 mission = MissionSnapshot(
                     revision = 5,
@@ -109,6 +116,8 @@ class SnapshotAssemblerContractTest {
         assertEquals(30.123, result.latitude)
         assertEquals(true, result.liveStreaming)
         assertEquals("1920x1080", result.liveResolution)
+        assertEquals(7, result.livePacketLoss)
+        assertEquals(96, result.livePacketCacheLength)
         assertEquals(1, result.missionRevision)
         assertEquals(0, result.missionDeviceGeneration)
         assertEquals(ExecutionState.EXECUTING, result.missionExecution)

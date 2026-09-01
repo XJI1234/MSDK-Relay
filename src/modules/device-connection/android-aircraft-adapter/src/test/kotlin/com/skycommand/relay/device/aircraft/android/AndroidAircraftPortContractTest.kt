@@ -37,7 +37,7 @@ class AndroidAircraftPortContractTest {
     }
 
     @Test
-    fun normalizesAnInitiallyDisconnectedAircraftFact() {
+    fun preservesAnIndependentlyObservedFlightControllerFactWhenProductIsDisconnected() {
         val platform = FakePlatform(initial = Fact(false, true, "M350 RTK"))
         val port = AndroidAircraftPort(platform)
         val received = mutableListOf<String>()
@@ -47,7 +47,7 @@ class AndroidAircraftPortContractTest {
         })
         platform.publish(true, true, "  ")
 
-        assertEquals(listOf("false:false:null", "true:true:null"), received)
+        assertEquals(listOf("false:true:null", "true:true:null"), received)
     }
 
     @Test
@@ -76,6 +76,20 @@ class AndroidAircraftPortContractTest {
         platform.publish(true, null, "M350 RTK")
 
         assertEquals(listOf("true:true:M350 RTK", "true:null:M350 RTK"), received)
+    }
+
+    @Test
+    fun forwardsAirLinkAndPrimaryCameraFactsWithoutUsingFlightControllerAsTheirProxy() {
+        val port = AndroidAircraftPort(
+            FakePlatform(initial = Fact(true, false, "M350 RTK", airLinkConnected = true, cameraConnected = true)),
+        )
+        val received = mutableListOf<String>()
+
+        port.start(AircraftListener { signal ->
+            received += "${signal.airLinkConnected}:${signal.cameraConnected}:${signal.flightControllerConnected}"
+        })
+
+        assertEquals(listOf("true:true:false"), received)
     }
 
     @Test
@@ -170,20 +184,62 @@ class AndroidAircraftPortContractTest {
     }
 
     @Test
-    fun publishesTheCurrentMsdkKeysAsTheInitialAircraftFact() {
+    fun observesRawAirLinkAndPrimaryCameraConnectionKeys() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
             Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("publishInitialFact()"))
-        assertFalse(source.contains("recordInitialConnections()"))
+        assertTrue(source.contains("AirLinkKey.KeyConnection"))
+        assertTrue(source.contains("CameraKey.KeyConnection"))
+        assertTrue(source.contains("ComponentIndexType.LEFT_OR_MAIN"))
+    }
+
+    @Test
+    fun requestsAnInitialHardwareValueForEveryConnectionKeyWhileListening() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("manager.listen(aircraftKey, owner)"))
+        assertTrue(source.contains("manager.listen(airLinkKey, owner)"))
+        assertTrue(source.contains("manager.listen(cameraKey, owner)"))
+        assertTrue(source.contains("manager.listen(flightControllerKey, owner)"))
+        assertTrue(source.contains("requestInitialConnection(aircraftKey, ConnectionKey.PRODUCT)"))
+        assertTrue(source.contains("requestInitialConnection(airLinkKey, ConnectionKey.AIR_LINK)"))
+        assertTrue(source.contains("requestInitialConnection(cameraKey, ConnectionKey.CAMERA)"))
+        assertTrue(source.contains("requestInitialConnection(flightControllerKey, ConnectionKey.FLIGHT_CONTROLLER)"))
+        assertTrue(source.contains("requestInitialValue(productTypeKey"))
+        assertTrue(source.contains("manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T>"))
+        assertTrue(source.contains("connectionEventRevisions[key] != initialEventRevision"))
+        assertFalse(source.contains("manager.getValue<Boolean>(aircraftKey)"))
+        assertFalse(source.contains("manager.getValue<Boolean>(airLinkKey)"))
+        assertFalse(source.contains("manager.getValue<Boolean>(cameraKey)"))
+        assertFalse(source.contains("manager.getValue<Boolean>(flightControllerKey)"))
+        assertFalse(source.contains("manager.listen(aircraftKey, owner, true)"))
+        assertFalse(source.contains("manager.listen(airLinkKey, owner, true)"))
+        assertFalse(source.contains("manager.listen(cameraKey, owner, true)"))
+        assertFalse(source.contains("manager.listen(flightControllerKey, owner, true)"))
+    }
+
+    @Test
+    fun keepsUnknownUntilTheOneTimeHardwareReadsReportTheirFacts() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertFalse(source.contains("publishInitialFact()"))
+        assertFalse(source.contains("manager.getValue<"))
     }
 
     private data class Fact(
         val aircraftConnected: Boolean?,
         val flightControllerConnected: Boolean?,
         val displayModel: String? = null,
+        val airLinkConnected: Boolean? = null,
+        val cameraConnected: Boolean? = null,
     )
 
     private class FakePlatform(
@@ -199,7 +255,17 @@ class AndroidAircraftPortContractTest {
             if (throwOnObserve) error("DJI registration failure")
             observeCalls += 1
             this.listener = listener
-            initial?.let { listener.onChanged(DjiAircraftFact(it.aircraftConnected, it.flightControllerConnected, it.displayModel)) }
+            initial?.let {
+                listener.onChanged(
+                    DjiAircraftFact(
+                        aircraftConnected = it.aircraftConnected,
+                        flightControllerConnected = it.flightControllerConnected,
+                        displayModel = it.displayModel,
+                        airLinkConnected = it.airLinkConnected,
+                        cameraConnected = it.cameraConnected,
+                    ),
+                )
+            }
             return DjiAircraftObservation {
                 closeCalls += 1
                 if (throwOnClose) error("DJI removal failure")

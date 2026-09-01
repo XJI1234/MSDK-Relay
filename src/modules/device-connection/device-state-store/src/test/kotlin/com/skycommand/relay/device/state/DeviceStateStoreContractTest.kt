@@ -82,21 +82,38 @@ class DeviceStateStoreContractTest {
     }
 
     @Test
-    fun rejectsAnImpossibleAircraftAndFlightControllerCombination() {
+    fun preservesIndependentlyObservedProductAndFlightControllerFacts() {
         val store = DeviceStateStore.create()
 
-        assertFailsWith<IllegalArgumentException> {
-            store.apply(DeviceStatePatch.aircraft(1, LinkState.DISCONNECTED, LinkState.CONNECTED, null))
-        }
+        store.apply(
+            DeviceStatePatch.aircraft(
+                sourceRevision = 1,
+                aircraft = LinkState.DISCONNECTED,
+                flightController = LinkState.CONNECTED,
+                model = null,
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
+            ),
+        )
 
-        assertEquals(0, store.snapshot().revision)
+        assertEquals(LinkState.DISCONNECTED, store.snapshot().aircraft)
+        assertEquals(LinkState.CONNECTED, store.snapshot().flightController)
     }
 
     @Test
     fun acceptsConnectedAircraftWithUnavailableFlightController() {
         val store = DeviceStateStore.create()
 
-        store.apply(DeviceStatePatch.aircraft(1, LinkState.CONNECTED, LinkState.DISCONNECTED, "Matrice 4"))
+        store.apply(
+            DeviceStatePatch.aircraft(
+                sourceRevision = 1,
+                aircraft = LinkState.CONNECTED,
+                flightController = LinkState.DISCONNECTED,
+                model = "Matrice 4",
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
+            ),
+        )
 
         assertEquals(LinkState.CONNECTED, store.snapshot().aircraft)
         assertEquals(LinkState.DISCONNECTED, store.snapshot().flightController)
@@ -135,6 +152,8 @@ class DeviceStateStoreContractTest {
                 aircraft = LinkState.CONNECTED,
                 flightController = LinkState.CONNECTED,
                 model = "Matrice 4",
+                airLink = LinkState.UNKNOWN,
+                camera = LinkState.UNKNOWN,
             ),
         )
 

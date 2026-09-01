@@ -64,7 +64,16 @@ class TelemetryContractTest {
         assertEquals(0, sink.values.size)
 
         sink.next = PublishTelemetryResult.Published
-        store.apply(DeviceStatePatch.aircraft(1, LinkState.CONNECTED, LinkState.CONNECTED, "Aircraft"))
+        store.apply(
+            DeviceStatePatch.aircraft(
+                1,
+                LinkState.CONNECTED,
+                LinkState.CONNECTED,
+                "Aircraft",
+                LinkState.UNKNOWN,
+                LinkState.UNKNOWN,
+            ),
+        )
         assertEquals(1, sink.values.size)
         assertIs<TelemetryStopResult.Stopped>(telemetry.stop())
         assertIs<TelemetryStopResult.AlreadyStopped>(telemetry.stop())

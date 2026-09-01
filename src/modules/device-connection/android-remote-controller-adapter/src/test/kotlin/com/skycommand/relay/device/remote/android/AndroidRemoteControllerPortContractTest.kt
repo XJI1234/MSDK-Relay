@@ -150,14 +150,30 @@ class AndroidRemoteControllerPortContractTest {
     }
 
     @Test
-    fun publishesTheCurrentMsdkKeyAsTheInitialRemoteControllerFact() {
+    fun keepsUnknownUntilTheOneTimeHardwareReadReportsItsFact() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
             Path("src/modules/device-connection/android-remote-controller-adapter/src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("publishInitialFact()"))
-        assertFalse(source.contains("recordInitialConnection()"))
+        assertFalse(source.contains("publishInitialFact()"))
+        assertFalse(source.contains("manager.getValue<"))
+    }
+
+    @Test
+    fun requestsAnInitialHardwareValueForTheRemoteControllerWhileListening() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+            Path("src/modules/device-connection/android-remote-controller-adapter/src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("manager.listen(connectionKey, owner)"))
+        assertTrue(source.contains("requestInitialValue(connectionKey"))
+        assertTrue(source.contains("requestInitialValue(typeKey"))
+        assertTrue(source.contains("manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T>"))
+        assertTrue(source.contains("connectionEventRevision != initialEventRevision"))
+        assertFalse(source.contains("manager.getValue<Boolean>(connectionKey)"))
+        assertFalse(source.contains("manager.listen(connectionKey, owner, true)"))
     }
 
     private data class Fact(

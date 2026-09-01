@@ -12,6 +12,8 @@ internal data class DjiLiveStreamFact(
     val fps: Int,
     val bitrateKbps: Int,
     val rttMillis: Int,
+    val packetLoss: Int = 0,
+    val packetCacheLength: Int = 0,
 )
 
 internal interface DjiLiveStreamListener {
@@ -95,7 +97,7 @@ class AndroidDjiStreamPort internal constructor(
             active.also { active = null }
         }
         operation?.let {
-            it.startCompleted()
+            it.startCompleted(false)
             detach(it)
         }
         val finish = {
@@ -113,15 +115,28 @@ class AndroidDjiStreamPort internal constructor(
 
     private fun listenerFor(operation: Active) = object : DjiLiveStreamListener {
         override fun onStatus(fact: DjiLiveStreamFact) {
-            if (!fact.streaming || !isActive(operation)) return
+            if (!isActive(operation)) return
+            if (!fact.streaming) {
+                if (!operation.claimReportedStoppedStatus()) return
+                runCatching {
+                    stop(object : StreamDjiCompletion {
+                        override fun succeed() = Unit
+                        override fun fail() = Unit
+                    })
+                }
+                runCatching { operation.runtimeFailure() }
+                return
+            }
             val resolution = if (fact.width > 0 && fact.height > 0) "${fact.width}x${fact.height}" else null
             runCatching {
                 operation.metrics(
                     StreamMetrics(
-                        resolution,
-                        fact.fps.takeIf { it >= 0 }?.toDouble(),
-                        fact.bitrateKbps.takeIf { it >= 0 }?.toDouble(),
-                        fact.rttMillis.takeIf { it >= 0 }?.toLong(),
+                        resolution = resolution,
+                        fps = fact.fps.takeIf { it >= 0 }?.toDouble(),
+                        videoBitrateKbps = fact.bitrateKbps.takeIf { it >= 0 }?.toDouble(),
+                        rttMillis = fact.rttMillis.takeIf { it >= 0 }?.toLong(),
+                        packetLoss = fact.packetLoss.takeIf { it >= 0 }?.toLong(),
+                        packetCacheLength = fact.packetCacheLength.takeIf { it >= 0 }?.toLong(),
                     ),
                 )
             }
@@ -146,7 +161,7 @@ class AndroidDjiStreamPort internal constructor(
     }
 
     private fun finishStart(operation: Active, succeeded: Boolean) {
-        if (!operation.startCompleted()) return
+        if (!operation.startCompleted(succeeded)) return
         if (!succeeded) {
             synchronized(lock) { if (active === operation) active = null }
             detach(operation)
@@ -204,8 +219,25 @@ class AndroidDjiStreamPort internal constructor(
         val completion: StreamDjiCompletion,
         var listener: DjiLiveStreamListener? = null,
     ) {
-        private val lock = Any(); private var completed = false
-        fun startCompleted(): Boolean = synchronized(lock) { if(completed) false else { completed=true; true } }
+        private val lock = Any()
+        private var completed = false
+        private var startSucceeded = false
+        private var stoppedStatusReported = false
+
+        fun startCompleted(succeeded: Boolean): Boolean = synchronized(lock) {
+            if (completed) false else {
+                completed = true
+                startSucceeded = succeeded
+                true
+            }
+        }
+
+        fun claimReportedStoppedStatus(): Boolean = synchronized(lock) {
+            if (!startSucceeded || stoppedStatusReported) false else {
+                stoppedStatusReported = true
+                true
+            }
+        }
     }
 
     private data class PreparedStart(val previous: Active?, val operation: Active)

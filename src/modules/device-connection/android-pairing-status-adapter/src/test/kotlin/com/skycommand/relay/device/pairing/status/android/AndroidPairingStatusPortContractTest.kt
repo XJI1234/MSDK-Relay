@@ -40,13 +40,18 @@ class AndroidPairingStatusPortContractTest {
     }
 
     @Test
-    fun publishesTheCurrentMsdkPairingKeyWhenObservationStarts() {
+    fun requestsTheInitialPairingStateFromHardwareWhileContinuingToListen() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
             Path("src/modules/device-connection/android-pairing-status-adapter/src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("manager.getValue<PairingState>(key)"))
+        assertTrue(source.contains("manager.listen(key, owner)"))
+        assertTrue(source.contains("requestInitialValue(key)"))
+        assertTrue(source.contains("manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T>"))
+        assertTrue(source.contains("pairingEventRevision != initialEventRevision"))
+        assertFalse(source.contains("manager.getValue<PairingState>(key)"))
+        assertFalse(source.contains("publishInitialFact()"))
     }
 
     @Test

@@ -1,9 +1,12 @@
 package com.skycommand.relay.device.remote.android
 
 import android.util.Log
+import dji.sdk.keyvalue.key.DJIKey
 import dji.sdk.keyvalue.key.KeyTools
 import dji.sdk.keyvalue.key.RemoteControllerKey
 import dji.sdk.keyvalue.value.remotecontroller.RemoteControllerType
+import dji.v5.common.callback.CommonCallbacks
+import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
 
 internal fun groundUnitConnected(
@@ -29,10 +32,10 @@ private class KeyManagerObservation(
     private val connectionKey = KeyTools.createKey(RemoteControllerKey.KeyConnection)
     private val typeKey = KeyTools.createKey(RemoteControllerKey.KeyRemoteControllerType)
     private var active = true
-    private var initializing = true
     private var remoteControllerConnected: Boolean? = null
     private var type = RemoteControllerType.UNKNOWN
-    private val pendingInitialUpdates = mutableListOf<KeyManagerObservation.() -> Unit>()
+    private var connectionEventRevision = 0L
+    private var typeEventRevision = 0L
 
     fun start() {
         try {
@@ -42,7 +45,8 @@ private class KeyManagerObservation(
             manager.listen(typeKey, owner) { _, next ->
                 publishType(next ?: RemoteControllerType.UNKNOWN)
             }
-            publishInitialFact()
+            requestInitialConnection()
+            requestInitialType()
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             throw failure
@@ -60,7 +64,10 @@ private class KeyManagerObservation(
         previousRemoteController: Boolean?,
         nextRemoteController: Boolean?,
     ) {
-        val fact = update { remoteControllerConnected = nextRemoteController }
+        val fact = update {
+            connectionEventRevision += 1L
+            remoteControllerConnected = nextRemoteController
+        }
         recordLinkDiagnostic(
             "$LINK_DIAGNOSTIC_PREFIX event=key-change key=RemoteControllerKey.KeyConnection " +
                 "old=$previousRemoteController new=$nextRemoteController",
@@ -69,44 +76,77 @@ private class KeyManagerObservation(
     }
 
     private fun publishType(nextType: RemoteControllerType) {
-        val fact = update { type = nextType }
+        val fact = update {
+            typeEventRevision += 1L
+            type = nextType
+        }
         fact?.let { listener.onChanged(it) }
     }
 
-    private fun update(transform: KeyManagerObservation.() -> Unit): DjiRemoteControllerFact? = synchronized(lock) {
-        when {
-            !active -> null
-            initializing -> {
-                pendingInitialUpdates += transform
-                null
+    private fun requestInitialConnection() {
+        val initialEventRevision = synchronized(lock) {
+            if (!active) return
+            connectionEventRevision
+        }
+        requestInitialValue(connectionKey, "RemoteControllerKey.KeyConnection") { initialValue ->
+            val fact = synchronized(lock) {
+                if (!active || connectionEventRevision != initialEventRevision) {
+                    null
+                } else {
+                    remoteControllerConnected = initialValue
+                    currentFact()
+                }
             }
-            else -> {
-                transform(this)
-                val connected = groundUnitConnected(remoteControllerConnected)
-                DjiRemoteControllerFact(connected, if (connected == true) type.toDisplayModel() else null)
-            }
+            fact?.let(listener::onChanged)
         }
     }
 
-    private fun publishInitialFact() {
-        val connection = runCatching { manager.getValue<Boolean>(connectionKey) }.getOrNull()
-        val initialType = runCatching { manager.getValue<RemoteControllerType>(typeKey) }.getOrNull()
-            ?: RemoteControllerType.UNKNOWN
-        val fact = synchronized(lock) {
-            if (!active) null else {
-                remoteControllerConnected = connection
-                type = initialType
-                pendingInitialUpdates.forEach { update -> update(this) }
-                pendingInitialUpdates.clear()
-                initializing = false
-                val connected = groundUnitConnected(remoteControllerConnected)
-                DjiRemoteControllerFact(connected, if (connected == true) type.toDisplayModel() else null)
-            }
+    private fun requestInitialType() {
+        val initialEventRevision = synchronized(lock) {
+            if (!active) return
+            typeEventRevision
         }
-        recordLinkDiagnostic(
-            "$LINK_DIAGNOSTIC_PREFIX event=initial-read remoteController=$connection",
-        )
-        fact?.let(listener::onChanged)
+        requestInitialValue(typeKey, "RemoteControllerKey.KeyRemoteControllerType") { initialValue ->
+            val fact = synchronized(lock) {
+                if (!active || typeEventRevision != initialEventRevision) {
+                    null
+                } else {
+                    type = initialValue ?: RemoteControllerType.UNKNOWN
+                    currentFact()
+                }
+            }
+            fact?.let(listener::onChanged)
+        }
+    }
+
+    private fun <T> requestInitialValue(
+        key: DJIKey<T>,
+        diagnosticName: String,
+        onSuccess: (T?) -> Unit,
+    ) {
+        manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T> {
+            override fun onSuccess(value: T) {
+                onSuccess(value)
+            }
+
+            override fun onFailure(error: IDJIError) {
+                recordLinkDiagnostic("$LINK_DIAGNOSTIC_PREFIX event=hardware-read-failure key=$diagnosticName")
+            }
+        })
+    }
+
+    private fun currentFact(): DjiRemoteControllerFact {
+        val connected = groundUnitConnected(remoteControllerConnected)
+        return DjiRemoteControllerFact(connected, if (connected == true) type.toDisplayModel() else null)
+    }
+
+    private fun update(transform: KeyManagerObservation.() -> Unit): DjiRemoteControllerFact? = synchronized(lock) {
+        if (!active) {
+            null
+        } else {
+            transform(this)
+            currentFact()
+        }
     }
 
     private fun RemoteControllerType.toDisplayModel(): String? = when (this) {

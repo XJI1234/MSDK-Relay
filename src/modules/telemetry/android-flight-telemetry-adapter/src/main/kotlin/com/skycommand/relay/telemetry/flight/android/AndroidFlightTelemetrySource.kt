@@ -42,35 +42,58 @@ class AndroidFlightTelemetrySource internal constructor(
     override fun onChanged(listener: () -> Unit): FlightTelemetryRegistration {
         val operation = synchronized(lock) {
             active?.let { return FlightTelemetryRegistration { } }
+            current = FlightTelemetrySnapshot()
             Active(++generation, listener).also { active = it }
         }
-        val observation = runCatching { platform.observe(listenerFor(operation)) }
-            .getOrElse {
-                clear(operation)
-                throw IllegalStateException(UNAVAILABLE_REASON)
-            }
-        val mustClose = synchronized(lock) {
-            if (active === operation) {
-                operation.observation = observation
-                false
-            } else {
-                true
-            }
+        val observationGeneration = nextObservationGeneration(operation)
+        if (observationGeneration == null || !startObservation(operation, observationGeneration)) {
+            clear(operation)
+            throw IllegalStateException(UNAVAILABLE_REASON)
         }
-        if (mustClose) runCatching { observation.close() }
         return FlightTelemetryRegistration { cancel(operation) }
+    }
+
+    override fun invalidate() {
+        val listener = synchronized(lock) {
+            val operation = active
+            if (operation != null) operation.observationGeneration += 1L
+            current = FlightTelemetrySnapshot()
+            operation?.listener
+        }
+        listener?.let { callback -> runCatching { callback() } }
+    }
+
+    override fun refresh() {
+        val refresh = synchronized(lock) {
+            val operation = active
+            if (operation == null) {
+                current = FlightTelemetrySnapshot()
+                null
+            } else {
+                current = FlightTelemetrySnapshot()
+                operation.observationGeneration += 1L
+                Reobservation(operation, operation.observationGeneration)
+            }
+        } ?: return
+        runCatching { refresh.operation.listener() }
+        startObservation(refresh.operation, refresh.observationGeneration)
     }
 
     override fun close() {
         val observation = synchronized(lock) {
+            current = FlightTelemetrySnapshot()
             active?.also { active = null }?.observation
         }
         runCatching { observation?.close() }
     }
 
-    private fun listenerFor(operation: Active) = DjiFlightTelemetryListener { fact ->
+    private fun listenerFor(operation: Active, observationGeneration: Long) = DjiFlightTelemetryListener { fact ->
         val delivery = synchronized(lock) {
-            if (active !== operation || generation != operation.generation) {
+            if (
+                active !== operation ||
+                generation != operation.generation ||
+                operation.observationGeneration != observationGeneration
+            ) {
                 null
             } else {
                 current = fact.toSnapshot()
@@ -78,6 +101,38 @@ class AndroidFlightTelemetrySource internal constructor(
             }
         }
         delivery?.let { callback -> runCatching { callback() } }
+    }
+
+    private fun nextObservationGeneration(operation: Active): Long? = synchronized(lock) {
+        if (active !== operation || generation != operation.generation) {
+            null
+        } else {
+            operation.observationGeneration += 1L
+            operation.observationGeneration
+        }
+    }
+
+    private fun startObservation(operation: Active, observationGeneration: Long): Boolean {
+        val observation = runCatching {
+            platform.observe(listenerFor(operation, observationGeneration))
+        }.getOrNull() ?: return false
+        val previous = synchronized(lock) {
+            if (
+                active !== operation ||
+                generation != operation.generation ||
+                operation.observationGeneration != observationGeneration
+            ) {
+                observation
+            } else {
+                operation.observation.also { operation.observation = observation }
+            }
+        }
+        if (previous === observation) {
+            runCatching { observation.close() }
+            return false
+        }
+        runCatching { previous?.close() }
+        return true
     }
 
     private fun cancel(operation: Active) {
@@ -121,6 +176,12 @@ class AndroidFlightTelemetrySource internal constructor(
         val generation: Long,
         val listener: () -> Unit,
         var observation: DjiFlightTelemetryObservation? = null,
+        var observationGeneration: Long = 0L,
+    )
+
+    private data class Reobservation(
+        val operation: Active,
+        val observationGeneration: Long,
     )
 
     companion object {

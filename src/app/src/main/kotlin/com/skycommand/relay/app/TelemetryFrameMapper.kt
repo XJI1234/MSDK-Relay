@@ -12,14 +12,19 @@ import com.skycommand.relay.protocol.TelemetryFrame
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 
 object TelemetryFrameMapper {
-    fun map(snapshot: TelemetrySnapshot): TelemetryFrame = TelemetryFrame(
+    fun map(snapshot: TelemetrySnapshot, telemetrySequence: Long): TelemetryFrame {
+        require(telemetrySequence > 0) { "Telemetry sequence must be positive" }
+        return TelemetryFrame(
         payload = JsonObject(
-            mapOf(
+            payloadFields(snapshot) + mapOf(
+                "telemetrySequence" to JsonNumber(telemetrySequence.toString()),
                 "deviceRevision" to JsonNumber(snapshot.deviceRevision.toString()),
                 "sdkAvailability" to JsonString(snapshot.sdkAvailability.name),
                 "remoteController" to JsonString(snapshot.remoteController.name),
                 "aircraft" to JsonString(snapshot.aircraft.name),
                 "flightController" to JsonString(snapshot.flightController.name),
+                "airLink" to JsonString(snapshot.airLink.name),
+                "camera" to JsonString(snapshot.camera.name),
                 "pairing" to JsonString(snapshot.pairing.name),
                 "remoteControllerModel" to snapshot.remoteControllerModel.json(),
                 "aircraftModel" to snapshot.aircraftModel.json(),
@@ -38,6 +43,8 @@ object TelemetryFrameMapper {
                 "liveFps" to snapshot.liveFps.json(),
                 "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),
                 "liveRttMillis" to snapshot.liveRttMillis.json(),
+                "livePacketLoss" to snapshot.livePacketLoss.json(),
+                "livePacketCacheLength" to snapshot.livePacketCacheLength.json(),
                 "missionRevision" to snapshot.missionRevision.json(),
                 "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(),
                 "missionExecution" to JsonString(snapshot.missionExecution.name),
@@ -45,20 +52,22 @@ object TelemetryFrameMapper {
                 "missionFileName" to snapshot.missionFileName.json(),
             ),
         ),
-        capabilities = JsonObject(
-            mapOf(
-                "liveVideo" to JsonBoolean(snapshot.capabilities.liveVideo),
-                "waypointMission" to JsonBoolean(snapshot.capabilities.waypointMission),
-                "waypointMissionSupport" to JsonString(snapshot.capabilities.waypointMissionSupport.name),
-                "virtualStick" to JsonBoolean(snapshot.capabilities.virtualStick),
-            ),
-        ),
-    )
-
-    fun commandResult(snapshot: TelemetrySnapshot): JsonObject {
-        val frame = map(snapshot)
-        return JsonObject(frame.payload.fields + ("capabilities" to frame.capabilities))
+        capabilities = capabilities(snapshot),
+        )
     }
+
+    fun commandResult(snapshot: TelemetrySnapshot): JsonObject =
+        JsonObject(payloadFields(snapshot) + mapOf(
+            "deviceRevision" to JsonNumber(snapshot.deviceRevision.toString()),
+            "sdkAvailability" to JsonString(snapshot.sdkAvailability.name),
+            "remoteController" to JsonString(snapshot.remoteController.name),
+            "aircraft" to JsonString(snapshot.aircraft.name),
+            "flightController" to JsonString(snapshot.flightController.name),
+            "airLink" to JsonString(snapshot.airLink.name),
+            "camera" to JsonString(snapshot.camera.name),
+            "pairing" to JsonString(snapshot.pairing.name),
+            "capabilities" to capabilities(snapshot),
+        ))
 
     fun pairingStatus(snapshot: TelemetrySnapshot): JsonObject = JsonObject(
         mapOf(
@@ -68,6 +77,42 @@ object TelemetryFrameMapper {
             "aircraftModel" to JsonString(snapshot.aircraftModel?.takeIf(String::isNotBlank) ?: "UNKNOWN"),
             "motorsOn" to snapshot.motorsOn.json(),
             "sdkRegistered" to JsonBoolean(snapshot.sdkAvailability == SdkAvailability.READY),
+        ),
+    )
+
+    private fun payloadFields(snapshot: TelemetrySnapshot): Map<String, JsonValue> = mapOf(
+        "remoteControllerModel" to snapshot.remoteControllerModel.json(),
+        "aircraftModel" to snapshot.aircraftModel.json(),
+        "isFlying" to snapshot.isFlying.json(),
+        "motorsOn" to snapshot.motorsOn.json(),
+        "flightMode" to snapshot.flightMode.json(),
+        "batteryPercent" to snapshot.batteryPercent.json(),
+        "lowBatteryRthState" to snapshot.lowBatteryRthState?.name.json(),
+        "remainingFlightTimeSeconds" to snapshot.remainingFlightTimeSeconds.json(),
+        "altitudeMeters" to snapshot.altitudeMeters.json(),
+        "latitude" to snapshot.latitude.json(),
+        "longitude" to snapshot.longitude.json(),
+        "liveStreaming" to JsonBoolean(snapshot.liveStreaming),
+        "liveStreamNotice" to snapshot.liveStreamNotice.json(),
+        "liveResolution" to snapshot.liveResolution.json(),
+        "liveFps" to snapshot.liveFps.json(),
+        "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),
+        "liveRttMillis" to snapshot.liveRttMillis.json(),
+        "livePacketLoss" to snapshot.livePacketLoss.json(),
+        "livePacketCacheLength" to snapshot.livePacketCacheLength.json(),
+        "missionRevision" to snapshot.missionRevision.json(),
+        "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(),
+        "missionExecution" to JsonString(snapshot.missionExecution.name),
+        "missionUploadProgress" to snapshot.missionUploadProgress.json(),
+        "missionFileName" to snapshot.missionFileName.json(),
+    )
+
+    private fun capabilities(snapshot: TelemetrySnapshot): JsonObject = JsonObject(
+        mapOf(
+            "liveVideo" to JsonBoolean(snapshot.capabilities.liveVideo),
+            "waypointMission" to JsonBoolean(snapshot.capabilities.waypointMission),
+            "waypointMissionSupport" to JsonString(snapshot.capabilities.waypointMissionSupport.name),
+            "virtualStick" to JsonBoolean(snapshot.capabilities.virtualStick),
         ),
     )
 

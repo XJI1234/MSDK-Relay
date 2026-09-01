@@ -52,6 +52,7 @@ import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
 import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
+import com.skycommand.relay.stream.StreamStartGate
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.camera.CameraStreamSource
 import com.skycommand.relay.stream.camera.android.AndroidCameraStreamApi
@@ -126,6 +127,8 @@ class MobileRelayGraph private constructor(
     private var usbWatchStarted = false
     private var usbCancellation: PermissionCancellation? = null
     private var hardwareRefreshedForSdkReady = false
+    private val flightTelemetryLifecycleLock = Any()
+    private var flightTelemetryInvalidated = false
 
     fun start(): RuntimeStartResult {
         val result = runtime.start(setOf(PermissionKind.RUNTIME))
@@ -136,6 +139,7 @@ class MobileRelayGraph private constructor(
     fun stop(): RuntimeStopResult {
         cancelUsbWatch()
         hardwareRefreshedForSdkReady = false
+        synchronized(flightTelemetryLifecycleLock) { flightTelemetryInvalidated = false }
         startCancellation?.cancel()
         startCancellation = null
         return runtime.stop()
@@ -178,6 +182,7 @@ class MobileRelayGraph private constructor(
             CloseableRegistration { registration.unregister() }
         }
         registrations += device.onChanged {
+            synchronizeFlightTelemetryWithFlightController()
             notifyStatus()
             refreshHardwareIfSdkReady()
         }.let { registration ->
@@ -280,6 +285,33 @@ class MobileRelayGraph private constructor(
             device.refreshHardwareLinks()
         } else {
             hardwareRefreshedForSdkReady = false
+        }
+    }
+
+    private fun synchronizeFlightTelemetryWithFlightController() {
+        val action = synchronized(flightTelemetryLifecycleLock) {
+            when (device.snapshot().flightController) {
+                LinkState.DISCONNECTED -> {
+                    if (flightTelemetryInvalidated) null else {
+                        flightTelemetryInvalidated = true
+                        FlightTelemetryLinkAction.INVALIDATE
+                    }
+                }
+
+                LinkState.CONNECTED -> {
+                    if (!flightTelemetryInvalidated) null else {
+                        flightTelemetryInvalidated = false
+                        FlightTelemetryLinkAction.REFRESH
+                    }
+                }
+
+                LinkState.UNKNOWN -> null
+            }
+        }
+        when (action) {
+            FlightTelemetryLinkAction.INVALIDATE -> flight.invalidate()
+            FlightTelemetryLinkAction.REFRESH -> flight.refresh()
+            null -> Unit
         }
     }
 
@@ -439,6 +471,7 @@ class MobileRelayGraph private constructor(
                 LiveStreamDependencies(
                     AndroidDjiStreamPort.create(),
                     device.operations(),
+                    StreamStartGate { device.capabilities().canStreamVideo },
                     diagnosticSink = { kind ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -545,10 +578,11 @@ class MobileRelayGraph private constructor(
                     wayline.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
                 },
             )
+            val telemetrySequence = TelemetryFrameSequence()
             val telemetry = Telemetry.create(
                 source,
                 TelemetrySink { snapshot ->
-                    when (gateway.publishTelemetry(TelemetryFrameMapper.map(snapshot))) {
+                    when (gateway.publishTelemetry(TelemetryFrameMapper.map(snapshot, telemetrySequence.next()))) {
                         PublishResult.Delivered -> PublishTelemetryResult.Published
                         is PublishResult.Rejected -> PublishTelemetryResult.Rejected
                     }
@@ -572,7 +606,9 @@ class MobileRelayGraph private constructor(
                     override fun stopTelemetry() { telemetry.stop() }
                     override fun publishTelemetry() { telemetry.publishCurrent() }
                     override fun publishLinkSnapshot() {
-                        gateway.publishTelemetry(TelemetryFrameMapper.map(SnapshotAssembler.assemble(device.snapshot())))
+                        gateway.publishTelemetry(
+                            TelemetryFrameMapper.map(SnapshotAssembler.assemble(device.snapshot()), telemetrySequence.next()),
+                        )
                     }
                     override fun startGateway() {
                         diagnostics.start()
@@ -642,7 +678,6 @@ class MobileRelayGraph private constructor(
             val telemetryHandler = CommandHandler { command, completion ->
                 if (command.fields.fields.isNotEmpty()) completion.reject("Telemetry command fields are invalid")
                 else {
-                    device.refreshHardwareLinks()
                     when (val read = telemetry.read()) {
                     is TelemetryReadResult.ReadSucceeded -> when (telemetry.publishCurrent()) {
                         PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
@@ -717,6 +752,22 @@ private class OnceCommandCompletion(private val completion: CommandCompletion) {
     private val finished = AtomicBoolean(false)
     fun succeed(detail: String) { if (finished.compareAndSet(false, true)) completion.succeed(detail) }
     fun reject(detail: String) { if (finished.compareAndSet(false, true)) completion.reject(detail) }
+}
+
+private enum class FlightTelemetryLinkAction {
+    INVALIDATE,
+    REFRESH,
+}
+
+private class TelemetryFrameSequence {
+    private val lock = Any()
+    private var current = 0L
+
+    fun next(): Long = synchronized(lock) {
+        check(current < Long.MAX_VALUE) { "Telemetry sequence exhausted" }
+        current += 1L
+        current
+    }
 }
 
 private fun commandModule(name: String): String = when {

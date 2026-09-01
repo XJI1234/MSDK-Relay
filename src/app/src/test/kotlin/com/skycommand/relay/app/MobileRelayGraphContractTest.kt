@@ -30,7 +30,7 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
-    fun telemetryReadRefreshesTheMsdkConnectionKeysBeforeTakingItsSnapshot() {
+    fun telemetryReadPublishesTheCurrentSnapshotWithoutRestartingMsdkKeyObservers() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
@@ -38,7 +38,20 @@ class MobileRelayGraphContractTest {
         val telemetryHandler = source.substringAfter("val telemetryHandler = CommandHandler")
             .substringBefore("val pairingHandler")
 
-        assertTrue(telemetryHandler.contains("device.refreshHardwareLinks()"))
+        assertFalse(telemetryHandler.contains("device.refreshHardwareLinks()"))
+        assertTrue(telemetryHandler.contains("TelemetryFrameMapper.commandResult(read.snapshot)"))
+    }
+
+    @Test
+    fun flightControllerDisconnectInvalidatesFlightFactsAndReconnectReobservesThem() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("flight.invalidate()"))
+        assertTrue(source.contains("flight.refresh()"))
+        assertTrue(source.contains("flightTelemetryInvalidated"))
     }
 
     @Test

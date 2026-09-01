@@ -11,6 +11,8 @@ data class AircraftSignal(
     val aircraftConnected: Boolean?,
     val flightControllerConnected: Boolean?,
     val displayModel: String?,
+    val airLinkConnected: Boolean? = null,
+    val cameraConnected: Boolean? = null,
 )
 
 fun interface AircraftListener {
@@ -144,12 +146,10 @@ class AircraftLink private constructor(
                 DeviceStatePatch.aircraft(
                     sourceRevision = signal.sourceRevision,
                     aircraft = aircraft,
-                    flightController = when (aircraft) {
-                        LinkState.CONNECTED -> signal.flightControllerConnected.toLinkState()
-                        LinkState.DISCONNECTED -> LinkState.DISCONNECTED
-                        LinkState.UNKNOWN -> LinkState.UNKNOWN
-                    },
+                    flightController = signal.flightControllerConnected.toLinkState(),
                     model = signal.displayModel?.takeIf { aircraft == LinkState.CONNECTED },
+                    airLink = signal.airLinkConnected.toLinkState(),
+                    camera = signal.cameraConnected.toLinkState(),
                 ),
             )
         }.onFailure { record(AircraftDiagnosticKind.INVALID_SIGNAL) }

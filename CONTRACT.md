@@ -137,7 +137,7 @@
 | `snapshot-assembler` | 从各公开状态接口收集一次一致的遥测快照 | 不发送网络消息，不调用 DJI 原始 API |
 | `capability-calculator` | 把设备状态转换为电脑端可理解的能力字段 | 不执行能力对应的操作 |
 | `telemetry-command-handler` | 处理 `telemetry.read`，立即生成并返回一次遥测快照 | 不负责持续发布，不解析其他业务命令 |
-| `telemetry-publisher` | 按状态变化或时间策略发布快照，处理合并、节流和断线后的恢复发布 | 不修改设备状态，不解释命令 |
+| `telemetry-publisher` | 按状态变化发布完整快照，并处理断线后的恢复发布 | 不修改设备状态、不编码协议、不解释命令；传输序号由组合根在映射为实际 `TelemetryFrame` 时附加 |
 
 `telemetry` 不保存另一份设备真相。它只负责把状态转换成对外快照；`live-stream` 和 `wayline-mission` 必须通过只读状态接口提供自己的状态。
 
@@ -660,6 +660,8 @@ device.settings.transmission.write
 | `remoteController` | `RemoteControllerKey.KeyConnection` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，不得折叠成布尔值 |
 | `remoteControllerModel` | 遥控器型号；未知时为 `null` |
 | `flightController` | `FlightControllerKey.KeyConnection` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，不得由产品连接推断 |
+| `airLink` | `AirLinkKey.KeyConnection` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，表示 DJI AirLink 组件事实，不得由产品、飞控或相机 Key 推断 |
+| `camera` | 主相机 `CameraKey.KeyConnection(LEFT_OR_MAIN)` 的原始三态；只允许 `UNKNOWN`、`DISCONNECTED`、`CONNECTED`，不得由飞控或产品 Key 推断 |
 | `pairing` | `RemoteControllerKey.KeyPairingStatus` 的原始受限状态；不得由连接状态推断 |
 | `aircraft` | `ProductKey.KeyConnection` 的原始三态；它不是 WebSocket 连接状态，且不得折叠成布尔值 |
 | `isFlying` | 飞行器是否正在飞行 |
@@ -674,9 +676,11 @@ device.settings.transmission.write
 | `liveStreaming` | 是否正在直播 |
 | `liveStreamNotice` | 直播状态说明 |
 | `liveResolution` | 直播分辨率；无直播数据时可省略 |
-| `liveFps` | 直播帧率；无直播数据时可省略 |
-| `liveVbps` | 直播视频码率；无直播数据时可省略 |
-| `liveRtt` | 直播往返时延；无直播数据时可省略 |
+| `liveFps` | `LiveStreamStatus.fps`；无直播数据时可省略 |
+| `liveVideoBitrateKbps` | `LiveStreamStatus.vbps`；无直播数据时可省略 |
+| `livePacketLoss` | `LiveStreamStatus.packetLoss` 的原始非负整数；不推断单位；无直播数据时可省略 |
+| `livePacketCacheLength` | `LiveStreamStatus.packetCacheLen` 的原始非负整数；不推断单位；无直播数据时可省略 |
+| `liveRttMillis` | `LiveStreamStatus.rtt`；无直播数据时可省略 |
 | `missionExecuteState` | 航线任务执行状态 |
 | `missionUploadProgress` | 航线上传进度，范围 `0` 到 `100` |
 | `uploadedMissionFileName` | 当前已上传或暂存的航线文件名 |
@@ -687,7 +691,7 @@ device.settings.transmission.write
 
 | 字段 | 含义 |
 | --- | --- |
-| `liveVideo` | 当前设备是否支持视频直播链路 |
+| `liveVideo` | 当前是否允许请求开始视频直播：MSDK `READY`、产品 Key、AirLink Key 和主相机 Key 均明确连接。它不依赖飞控连接；false 不是机型不支持结论。 |
 | `waypointMission` | 当前设备是否可执行航线任务 |
 | `waypointMissionSupport` | 航线支持级别，例如 `supported` 或 `unsupported` |
 | `virtualStick` | 当前版本固定为 `false`，因为手机端不提供虚拟摇杆 |
@@ -786,7 +790,7 @@ mission-begin
 
 - WebSocket 只传直播命令、结果和状态，不传视频帧。
 - 电脑端必须提供可被手机访问的 RTMP 地址，并在调用 `live-stream.start` 时传入。
-- 手机端必须在开始前校验 URL，在 DJI 确认成功后报告 `liveStreaming=true`。
+- 手机端必须在开始前校验 URL 和 `liveVideo` 图传能力；能力拒绝时不得调用 DJI。DJI 确认成功后才报告 `liveStreaming=true`。
 - 手机端收到停止命令、直播失败或设备断开时，应把 `liveStreaming` 更新为 `false` 并填写说明。
 - 电脑端媒体服务停止、地址不可达或 FFmpeg 不可用时，电脑端应在发送开始命令前提示问题。
 - 直播停止后，电脑端如需再次直播，必须重新发送完整的开始命令；手机端不应依赖旧 URL 的隐式状态。

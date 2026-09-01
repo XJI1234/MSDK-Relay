@@ -525,7 +525,18 @@ class SimulationDjiAdapter private constructor(
     private inner class SimulatedAircraftPort : AircraftPort {
         override fun start(listener: AircraftListener): AircraftPortSubscription {
             lock.withLock { if (!closed) aircraftListeners += listener }
-            schedule(Duration.ZERO) { listener.onChanged(AircraftSignal(1, true, true, "SIMULATED")) }
+            schedule(Duration.ZERO) {
+                listener.onChanged(
+                    AircraftSignal(
+                        sourceRevision = 1,
+                        aircraftConnected = true,
+                        flightControllerConnected = true,
+                        displayModel = "SIMULATED",
+                        airLinkConnected = true,
+                        cameraConnected = true,
+                    ),
+                )
+            }
             return AircraftPortSubscription { lock.withLock { aircraftListeners.remove(listener) } }
         }
         override fun stop() = Unit
@@ -546,17 +557,35 @@ class SimulationDjiAdapter private constructor(
     }
 
     private inner class SimulatedTelemetrySource : FlightTelemetrySource {
-        override fun snapshot(): FlightTelemetrySnapshot = FlightTelemetrySnapshot(
+        private var snapshot = initialSnapshot()
+
+        override fun snapshot(): FlightTelemetrySnapshot = lock.withLock { snapshot }
+        override fun onChanged(listener: () -> Unit): FlightTelemetryRegistration {
+            lock.withLock { if (!closed) telemetryListeners += listener }
+            return FlightTelemetryRegistration { lock.withLock { telemetryListeners.remove(listener) } }
+        }
+        override fun invalidate() {
+            val listeners = lock.withLock {
+                snapshot = FlightTelemetrySnapshot()
+                telemetryListeners.toList()
+            }
+            listeners.forEach { listener -> listener() }
+        }
+        override fun refresh() {
+            val listeners = lock.withLock {
+                snapshot = initialSnapshot()
+                telemetryListeners.toList()
+            }
+            listeners.forEach { listener -> listener() }
+        }
+        override fun close() = Unit
+
+        private fun initialSnapshot() = FlightTelemetrySnapshot(
             isFlying = false,
             motorsOn = false,
             flightMode = "GPS_NORMAL",
             batteryPercent = 80,
         )
-        override fun onChanged(listener: () -> Unit): FlightTelemetryRegistration {
-            lock.withLock { if (!closed) telemetryListeners += listener }
-            return FlightTelemetryRegistration { lock.withLock { telemetryListeners.remove(listener) } }
-        }
-        override fun close() = Unit
     }
 
     companion object {

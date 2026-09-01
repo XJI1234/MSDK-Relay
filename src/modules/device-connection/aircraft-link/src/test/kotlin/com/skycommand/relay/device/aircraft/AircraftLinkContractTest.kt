@@ -21,13 +21,13 @@ class AircraftLinkContractTest {
     }
 
     @Test
-    fun disconnectingAircraftAlwaysDisconnectsItsFlightController() {
+    fun preservesAnIndependentlyObservedFlightControllerFactWhenProductIsDisconnected() {
         val fixture = Fixture()
         fixture.link.start()
         fixture.port.emit(AircraftSignal(1, false, true, "Matrice 4"))
 
         assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().aircraft)
-        assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().flightController)
+        assertEquals(LinkState.CONNECTED, fixture.store.snapshot().flightController)
     }
 
     @Test
@@ -40,6 +40,27 @@ class AircraftLinkContractTest {
         assertEquals(LinkState.CONNECTED, fixture.store.snapshot().aircraft)
         assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().flightController)
         assertEquals("Matrice 4", fixture.store.snapshot().aircraftModel)
+    }
+
+    @Test
+    fun preservesRawAirLinkAndPrimaryCameraFactsIndependentlyOfFlightController() {
+        val fixture = Fixture()
+        fixture.link.start()
+
+        fixture.port.emit(
+            AircraftSignal(
+                sourceRevision = 1,
+                aircraftConnected = true,
+                flightControllerConnected = false,
+                displayModel = "Matrice 4",
+                airLinkConnected = true,
+                cameraConnected = true,
+            ),
+        )
+
+        assertEquals(LinkState.CONNECTED, fixture.store.snapshot().airLink)
+        assertEquals(LinkState.CONNECTED, fixture.store.snapshot().camera)
+        assertEquals(LinkState.DISCONNECTED, fixture.store.snapshot().flightController)
     }
 
     @Test
@@ -69,14 +90,14 @@ class AircraftLinkContractTest {
     }
 
     @Test
-    fun mapsAnUnobservedAircraftFactToUnknownForBothAircraftAndFlightController() {
+    fun preservesAnIndependentlyObservedFlightControllerFactWhenProductIsUnknown() {
         val fixture = Fixture()
         fixture.link.start()
 
         fixture.port.emit(AircraftSignal(1, aircraftConnected = null, flightControllerConnected = true, displayModel = "Matrice"))
 
         assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().aircraft)
-        assertEquals(LinkState.UNKNOWN, fixture.store.snapshot().flightController)
+        assertEquals(LinkState.CONNECTED, fixture.store.snapshot().flightController)
         assertEquals(null, fixture.store.snapshot().aircraftModel)
     }
 

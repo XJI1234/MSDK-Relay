@@ -18,11 +18,15 @@ AndroidFlightTelemetrySource.create() -> FlightTelemetrySource
 
 source.snapshot() -> FlightTelemetrySnapshot
 source.onChanged(listener) -> FlightTelemetryRegistration
+source.invalidate() -> Unit
+source.refresh() -> Unit
 registration.unregister() -> Unit
 source.close() -> Unit
 ```
 
-`snapshot()` 始终返回最近一次完整、不可变且经过校验的快照。`onChanged` 最多建立一个 DJI 观察代次；重复订阅不得替换原监听器，并返回空操作注册。所有 KeyManager 监听必须关闭 DJI 的逐键自动首值回调，再由一次同步完整读取形成唯一初始变化通知，禁止先发布完整快照后又发布多帧部分初值。`unregister` 和 `close` 均幂等，并使该代次的全部迟到回调失效。
+`snapshot()` 始终返回最近一次完整、不可变且经过校验的快照。`onChanged` 最多建立一个 DJI 观察代次；重复订阅不得替换原监听器，并返回空操作注册。每个 Key 必须先注册持续监听，再通过 `KeyManager.getValue(key, callback)` 对同一 Key 向硬件异步读取一次初值；不得调用同步 `getValue(key)`，因为其只读取 MSDK 缓存。初读成功前对应字段保持未知，初读失败或硬件返回 null 也保持未知，绝不能以缓存或其他字段填充。每个初读记录该 Key 的事件版本，请求之后先到达的监听事件优先，较晚返回的初读结果必须丢弃。每次被接受的平台回调都产生一份完整快照，尚未知的字段如实为 `null`；不得用缓存拼装伪完整首帧。`unregister` 和 `close` 均幂等，并使该代次的全部迟到回调失效。
+
+组合根在飞控 Key 明确断开时调用 `invalidate()`：适配器必须同步清空快照并增加观察代次，旧监听和旧异步首读从此无权恢复任何字段。该方法不读取 MSDK 缓存，也不发起飞行操作。该 Key 此后再次明确连接时，组合根调用 `refresh()`；适配器先维持空快照，再建立新代次的全套 `listen + 异步 getValue(callback)` 观察，并在新值到达后逐项发布。重建期间或失败后均保持未知，不能重新公开断开前电量、坐标、飞行状态或模式。
 
 ## 字段规则
 

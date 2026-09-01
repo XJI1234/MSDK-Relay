@@ -46,13 +46,15 @@ flightController: UNKNOWN | DISCONNECTED | CONNECTED
 pairing: UNKNOWN | IDLE | PAIRING | PAIRED | STOPPING | FAILED
 remoteControllerModel: String?
 aircraftModel: String?
+airLink: UNKNOWN | DISCONNECTED | CONNECTED
+camera: UNKNOWN | DISCONNECTED | CONNECTED
 ```
 
 型号字段只允许非空、无控制字符、最多 128 个 Unicode code point 的显示名称；不可包含序列号或认证信息。状态枚举不得用自由文本替代。
 
 ## 3. 状态与通知规则
 
-- 连接状态严格区分：`CONNECTED` 仅表示已明确观察到连接，`DISCONNECTED` 仅表示已明确观察到断开，`UNKNOWN` 表示尚未观察、平台回调为 null、SDK 未就绪或运行时已停止；`UNKNOWN` 绝不能显示或处理成 `DISCONNECTED`。飞行器为 `CONNECTED` 时，飞控字段可独立为任一三态；飞行器为 `DISCONNECTED` 或 `UNKNOWN` 时，飞控必须分别为 `DISCONNECTED` 或 `UNKNOWN`。
+- 连接状态严格区分：`CONNECTED` 仅表示对应 Key 已明确观察到连接，`DISCONNECTED` 仅表示对应 Key 已明确观察到断开，`UNKNOWN` 表示尚未观察、平台回调为 null、SDK 未就绪或运行时已停止；`UNKNOWN` 绝不能显示或处理成 `DISCONNECTED`。产品、AirLink、主相机和飞控都是独立的原始 MSDK Key 事实，状态仓库必须允许任意组合，绝不从一个字段改写另一个字段。
 - 初始快照的版本为 `0`，SDK 状态为 `STOPPED`，其余连接状态为 `UNKNOWN`，配对状态为 `UNKNOWN`。
 - `apply` 对有效新来源版本原子合并快照，并返回替换后的同一不可变对象。
 - 同一来源的旧版本或相同版本返回 `IgnoredStale`，不改变快照，也不通知监听器。

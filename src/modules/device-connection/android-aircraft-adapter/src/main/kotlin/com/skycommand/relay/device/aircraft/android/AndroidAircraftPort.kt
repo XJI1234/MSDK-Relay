@@ -9,6 +9,8 @@ internal data class DjiAircraftFact(
     val aircraftConnected: Boolean?,
     val flightControllerConnected: Boolean?,
     val displayModel: String?,
+    val airLinkConnected: Boolean? = null,
+    val cameraConnected: Boolean? = null,
 )
 
 internal fun interface DjiAircraftListener {
@@ -66,17 +68,15 @@ class AndroidAircraftPort internal constructor(
                 null
             } else {
                 val aircraftConnected = fact.aircraftConnected
-                val flightControllerConnected = normalizedFlightControllerConnection(
-                    fact.aircraftConnected,
-                    fact.flightControllerConnected,
-                )
                 AircraftSignal(
                     sourceRevision = ++sourceRevision,
                     aircraftConnected = aircraftConnected,
-                    flightControllerConnected = flightControllerConnected,
+                    flightControllerConnected = fact.flightControllerConnected,
                     displayModel = fact.displayModel
                         ?.trim()
                         ?.takeIf { aircraftConnected == true && it.isNotEmpty() },
+                    airLinkConnected = fact.airLinkConnected,
+                    cameraConnected = fact.cameraConnected,
                 ) to operation.listener
             }
         }
@@ -110,13 +110,4 @@ class AndroidAircraftPort internal constructor(
 
         fun create(): AircraftPort = AndroidAircraftPort(MsdkV5AircraftApi())
     }
-}
-
-internal fun normalizedFlightControllerConnection(
-    productConnected: Boolean?,
-    flightControllerConnected: Boolean?,
-): Boolean? = when {
-    productConnected == true -> flightControllerConnected
-    productConnected == false -> false
-    else -> null
 }

@@ -23,6 +23,8 @@ class DeviceCapabilityReaderContractTest {
                 sdkAvailability = SdkAvailability.READY,
                 remoteController = LinkState.CONNECTED,
                 aircraft = LinkState.CONNECTED,
+                airLink = LinkState.CONNECTED,
+                camera = LinkState.CONNECTED,
                 flightController = LinkState.CONNECTED,
                 pairing = PairingState.PAIRED,
             ),
@@ -103,6 +105,8 @@ class DeviceCapabilityReaderContractTest {
             sdkAvailability = SdkAvailability.READY,
             remoteController = LinkState.CONNECTED,
             aircraft = LinkState.CONNECTED,
+            airLink = LinkState.CONNECTED,
+            camera = LinkState.CONNECTED,
             flightController = LinkState.CONNECTED,
             pairing = PairingState.IDLE,
         )
@@ -117,6 +121,21 @@ class DeviceCapabilityReaderContractTest {
             ),
             DeviceCapabilityReader.read(snapshot),
         )
+    }
+
+    @Test
+    fun videoCapabilityRequiresAirLinkAndPrimaryCameraButNotFlightController() {
+        val streamingFacts = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            aircraft = LinkState.CONNECTED,
+            airLink = LinkState.CONNECTED,
+            camera = LinkState.CONNECTED,
+            flightController = LinkState.DISCONNECTED,
+        )
+
+        assertEquals(true, DeviceCapabilityReader.read(streamingFacts).canStreamVideo)
+        assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(airLink = LinkState.UNKNOWN)).canStreamVideo)
+        assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(camera = LinkState.DISCONNECTED)).canStreamVideo)
     }
 
     @Test

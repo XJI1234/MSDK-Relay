@@ -28,8 +28,8 @@ class AndroidDjiStreamPortContractTest {
         val currentMetrics = mutableListOf<StreamMetrics>(); var failures = 0
         port.start(ValidatedStreamConfig("rtmp://host/live/three"), { currentMetrics += it }, { failures++ }, Completion())
         requireNotNull(platform.startCompletion).succeed()
-        requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(true, 1280, 720, 25, 2200, 35)); requireNotNull(platform.listener).onError()
-        assertEquals(listOf(StreamMetrics("1280x720", 25.0, 2200.0, 35)), currentMetrics); assertEquals(1, failures)
+        requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(true, 1280, 720, 25, 2200, 35, 12, 24)); requireNotNull(platform.listener).onError()
+        assertEquals(listOf(StreamMetrics("1280x720", 25.0, 2200.0, 35, 12, 24)), currentMetrics); assertEquals(1, failures)
         assertEquals(1, platform.stopCalls)
     }
 
@@ -87,6 +87,18 @@ class AndroidDjiStreamPortContractTest {
         port.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, { runtimeFailures++ }, Completion())
         requireNotNull(platform.startCompletion).succeed()
         requireNotNull(platform.listener).onError()
+
+        assertEquals(1, runtimeFailures)
+        assertEquals(1, platform.stopCalls)
+    }
+
+    @Test fun reportsDjiStoppedStatusAsRuntimeFailureAfterAConfirmedStart() {
+        val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
+        var runtimeFailures = 0
+
+        port.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, { runtimeFailures++ }, Completion())
+        requireNotNull(platform.startCompletion).succeed()
+        requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(false, 0, 0, 0, 0, 0))
 
         assertEquals(1, runtimeFailures)
         assertEquals(1, platform.stopCalls)

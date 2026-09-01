@@ -1,6 +1,7 @@
 package com.skycommand.relay.telemetry.flight.android
 
 import dji.sdk.keyvalue.key.BatteryKey
+import dji.sdk.keyvalue.key.DJIKey
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
 import dji.sdk.keyvalue.value.common.ComponentIndexType
@@ -8,6 +9,8 @@ import dji.sdk.keyvalue.value.common.LocationCoordinate2D
 import dji.sdk.keyvalue.value.flightcontroller.FCFlightMode
 import dji.sdk.keyvalue.value.flightcontroller.LowBatteryRTHInfo
 import dji.sdk.keyvalue.value.flightcontroller.LowBatteryRTHState
+import dji.v5.common.callback.CommonCallbacks
+import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
 import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 
@@ -38,23 +41,57 @@ private class KeyManagerFlightTelemetryObservation(
     private val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
     private val locationKey = KeyTools.createKey(FlightControllerKey.KeyAircraftLocation)
     private var active = true
-    private var initializing = true
     private var fact = FlightTelemetryFact()
-    private val pendingInitialUpdates = mutableListOf<FlightTelemetryFact.() -> FlightTelemetryFact>()
+    private val eventRevisions = mutableMapOf<ObservedKey, Long>()
 
     fun start() {
         try {
-            manager.listen(isFlyingKey, owner, false) { _, next -> update { copy(isFlying = next) } }
-            manager.listen(motorsOnKey, owner, false) { _, next -> update { copy(motorsOn = next) } }
-            manager.listen(flightModeKey, owner, false) { _, next -> update { copy(flightMode = next.toStableName()) } }
-            manager.listen(batteryKey, owner, false) { _, next -> update { copy(batteryPercent = next) } }
-            manager.listen(remainingFlightTimeKey, owner, false) { _, next ->
-                val rth = next.toRthFact()
-                update { copy(lowBatteryRthState = rth.state, remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds) }
+            manager.listen(isFlyingKey, owner) { _, next ->
+                publishEvent(ObservedKey.IS_FLYING) { copy(isFlying = next) }
             }
-            manager.listen(altitudeKey, owner, false) { _, next -> update { copy(altitudeMeters = next) } }
-            manager.listen(locationKey, owner, false) { _, next -> update { withLocation(next) } }
-            publishInitial()
+            manager.listen(motorsOnKey, owner) { _, next ->
+                publishEvent(ObservedKey.MOTORS_ON) { copy(motorsOn = next) }
+            }
+            manager.listen(flightModeKey, owner) { _, next ->
+                publishEvent(ObservedKey.FLIGHT_MODE) { copy(flightMode = next.toStableName()) }
+            }
+            manager.listen(batteryKey, owner) { _, next ->
+                publishEvent(ObservedKey.BATTERY) { copy(batteryPercent = next) }
+            }
+            manager.listen(remainingFlightTimeKey, owner) { _, next ->
+                val rth = next.toRthFact()
+                publishEvent(ObservedKey.LOW_BATTERY_RTH) {
+                    copy(lowBatteryRthState = rth.state, remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds)
+                }
+            }
+            manager.listen(altitudeKey, owner) { _, next ->
+                publishEvent(ObservedKey.ALTITUDE) { copy(altitudeMeters = next) }
+            }
+            manager.listen(locationKey, owner) { _, next ->
+                publishEvent(ObservedKey.LOCATION) { withLocation(next) }
+            }
+            requestInitialValue(isFlyingKey, ObservedKey.IS_FLYING) { current, value ->
+                current.copy(isFlying = value)
+            }
+            requestInitialValue(motorsOnKey, ObservedKey.MOTORS_ON) { current, value ->
+                current.copy(motorsOn = value)
+            }
+            requestInitialValue(flightModeKey, ObservedKey.FLIGHT_MODE) { current, value ->
+                current.copy(flightMode = value.toStableName())
+            }
+            requestInitialValue(batteryKey, ObservedKey.BATTERY) { current, value ->
+                current.copy(batteryPercent = value)
+            }
+            requestInitialValue(remainingFlightTimeKey, ObservedKey.LOW_BATTERY_RTH) { current, value ->
+                val rth = value.toRthFact()
+                current.copy(lowBatteryRthState = rth.state, remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds)
+            }
+            requestInitialValue(altitudeKey, ObservedKey.ALTITUDE) { current, value ->
+                current.copy(altitudeMeters = value)
+            }
+            requestInitialValue(locationKey, ObservedKey.LOCATION) { current, value ->
+                current.withLocation(value)
+            }
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(owner) }
             synchronized(lock) { active = false }
@@ -67,40 +104,44 @@ private class KeyManagerFlightTelemetryObservation(
         if (shouldClose) manager.cancelListen(owner)
     }
 
-    private fun publishInitial() {
-        val rth = manager.getValue<LowBatteryRTHInfo>(remainingFlightTimeKey).toRthFact()
-        val initial = FlightTelemetryFact(
-            isFlying = manager.getValue(isFlyingKey),
-            motorsOn = manager.getValue(motorsOnKey),
-            flightMode = manager.getValue<FCFlightMode>(flightModeKey).toStableName(),
-            batteryPercent = manager.getValue(batteryKey),
-            remainingFlightTimeSeconds = rth.remainingFlightTimeSeconds,
-            altitudeMeters = manager.getValue(altitudeKey),
-            lowBatteryRthState = rth.state,
-        ).withLocation(manager.getValue(locationKey))
+    private fun publishEvent(
+        observedKey: ObservedKey,
+        transform: FlightTelemetryFact.() -> FlightTelemetryFact,
+    ) {
         val next = synchronized(lock) {
-            if (!active) null else {
-                fact = pendingInitialUpdates.fold(initial) { current, transform -> current.transform() }
-                pendingInitialUpdates.clear()
-                initializing = false
-                fact
+            if (!active) {
+                null
+            } else {
+                eventRevisions[observedKey] = (eventRevisions[observedKey] ?: 0L) + 1L
+                fact.transform().also { fact = it }
             }
         }
         next?.let(listener::onChanged)
     }
 
-    private fun update(transform: FlightTelemetryFact.() -> FlightTelemetryFact) {
-        val next = synchronized(lock) {
-            when {
-                !active -> null
-                initializing -> {
-                    pendingInitialUpdates += transform
-                    null
-                }
-                else -> fact.transform().also { fact = it }
-            }
+    private fun <T> requestInitialValue(
+        key: DJIKey<T>,
+        observedKey: ObservedKey,
+        transform: (FlightTelemetryFact, T?) -> FlightTelemetryFact,
+    ) {
+        val initialEventRevision = synchronized(lock) {
+            if (!active) return
+            eventRevisions[observedKey] ?: 0L
         }
-        next?.let(listener::onChanged)
+        manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T> {
+            override fun onSuccess(value: T) {
+                val next = synchronized(lock) {
+                    if (!active || eventRevisions[observedKey] != initialEventRevision) {
+                        null
+                    } else {
+                        transform(fact, value).also { fact = it }
+                    }
+                }
+                next?.let(listener::onChanged)
+            }
+
+            override fun onFailure(error: IDJIError) = Unit
+        })
     }
 
     private fun FlightTelemetryFact.withLocation(location: LocationCoordinate2D?): FlightTelemetryFact = copy(
@@ -130,4 +171,14 @@ private class KeyManagerFlightTelemetryObservation(
         val state: LowBatteryRthState?,
         val remainingFlightTimeSeconds: Int?,
     )
+
+    private enum class ObservedKey {
+        IS_FLYING,
+        MOTORS_ON,
+        FLIGHT_MODE,
+        BATTERY,
+        LOW_BATTERY_RTH,
+        ALTITUDE,
+        LOCATION,
+    }
 }

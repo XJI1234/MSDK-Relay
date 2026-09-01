@@ -300,5 +300,6 @@ class SimulationDjiAdapterContractTest {
         assertEquals(LinkState.CONNECTED, snapshot.flightController)
         assertEquals(PairingState.PAIRED, snapshot.pairing)
         assertEquals(true, device.capabilities().canRunWayline)
+        assertEquals(true, device.capabilities().canStreamVideo)
     }
 }

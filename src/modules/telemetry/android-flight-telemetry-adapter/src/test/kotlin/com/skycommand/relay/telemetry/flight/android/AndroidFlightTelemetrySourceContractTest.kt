@@ -68,6 +68,31 @@ class AndroidFlightTelemetrySourceContractTest {
     }
 
     @Test
+    fun discardsPreDisconnectFactsAndReobservesHardwareBeforeAcceptingReconnectedFacts() {
+        val platform = FakePlatform()
+        val source = AndroidFlightTelemetrySource(platform)
+        source.onChanged { }
+        val stale = platform.listenerOrThrow()
+
+        stale.onChanged(FlightTelemetryFact(batteryPercent = 80, altitudeMeters = 12.0))
+        assertEquals(80, source.snapshot().batteryPercent)
+
+        source.invalidate()
+        assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+
+        source.refresh()
+        val current = platform.listenerOrThrow()
+        stale.onChanged(FlightTelemetryFact(batteryPercent = 1, altitudeMeters = 1.0))
+
+        assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+        current.onChanged(FlightTelemetryFact(batteryPercent = 79, altitudeMeters = 13.0))
+        assertEquals(79, source.snapshot().batteryPercent)
+        assertEquals(13.0, source.snapshot().altitudeMeters)
+        assertEquals(2, platform.observeCalls)
+        assertEquals(1, platform.closeCalls)
+    }
+
+    @Test
     fun startsANewGenerationAfterCloseAndContainsListenerAndReleaseFailures() {
         val platform = FakePlatform(FlightTelemetryFact(), throwOnClose = true)
         val source = AndroidFlightTelemetrySource(platform)

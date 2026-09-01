@@ -41,7 +41,18 @@ internal class MsdkV5LiveStreamApi(
     private fun DjiLiveStreamListener.toSdkListener() = object : LiveStreamStatusListener {
         override fun onLiveStreamStatusUpdate(status: LiveStreamStatus) {
             val resolution = status.resolution
-            onStatus(DjiLiveStreamFact(status.isStreaming, resolution.width, resolution.height, status.fps, status.vbps, status.rtt))
+            onStatus(
+                DjiLiveStreamFact(
+                    streaming = status.isStreaming,
+                    width = resolution.width,
+                    height = resolution.height,
+                    fps = status.fps,
+                    bitrateKbps = status.vbps,
+                    rttMillis = status.rtt,
+                    packetLoss = status.packetLoss,
+                    packetCacheLength = status.packetCacheLen,
+                ),
+            )
         }
         override fun onError(error: IDJIError) = this@toSdkListener.onError()
     }

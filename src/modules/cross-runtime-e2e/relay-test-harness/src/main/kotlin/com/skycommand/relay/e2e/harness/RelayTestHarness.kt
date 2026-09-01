@@ -64,6 +64,7 @@ import com.skycommand.relay.settings.DeviceSettings
 import com.skycommand.relay.settings.DeviceSettingsDependencies
 import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
+import com.skycommand.relay.stream.StreamStartGate
 import com.skycommand.relay.telemetry.Telemetry
 import com.skycommand.relay.telemetry.TelemetryRegistration
 import com.skycommand.relay.telemetry.TelemetryStateSource
@@ -301,7 +302,12 @@ class RelayTestHarness private constructor(
                 DeviceSettingsDependencies(ports.settings, device.operations(), timeoutMillis = 1_000),
             )
             val stream = LiveStream.create(
-                LiveStreamDependencies(ports.stream, device.operations(), timeoutMillis = 1_000),
+                LiveStreamDependencies(
+                    ports.stream,
+                    device.operations(),
+                    StreamStartGate { device.capabilities().canStreamVideo },
+                    timeoutMillis = 1_000,
+                ),
             )
             val relaySettings = RelaySettings.create(
                 HarnessRelaySettingsBackend(
@@ -493,8 +499,10 @@ private object HarnessTelemetryMapper {
         "deviceRevision" to JsonNumber(snapshot.deviceRevision.toString()),
         "sdkAvailability" to JsonString(snapshot.sdkAvailability.name),
         "remoteController" to JsonString(snapshot.remoteController.name),
-        "aircraft" to JsonString(snapshot.aircraft.name),
-        "flightController" to JsonString(snapshot.flightController.name),
+                "aircraft" to JsonString(snapshot.aircraft.name),
+                "flightController" to JsonString(snapshot.flightController.name),
+                "airLink" to JsonString(snapshot.airLink.name),
+                "camera" to JsonString(snapshot.camera.name),
         "pairing" to JsonString(snapshot.pairing.name),
         "remoteControllerModel" to snapshot.remoteControllerModel.json(),
         "aircraftModel" to snapshot.aircraftModel.json(),
