@@ -187,22 +187,23 @@
 | --- | --- | --- | --- | --- |
 | `FlightControllerKey.KeyIsFlying` | `Boolean`；`get/listen` | `true` 表示飞行器正在飞行。 | `isFlying` | `false` 不能单独证明电机关闭、航线未执行或可以安全开始另一动作。`null` 是未知。 |
 | `FlightControllerKey.KeyAreMotorsOn` | `Boolean`；`get/listen` | `true` 表示电机已启动。 | `motorsOn` | 电机关闭不代表飞控连接、起飞条件或飞行器健康。`null` 不能伪造成关闭。 |
-| `FlightControllerKey.KeyFCFlightMode` | `FCFlightMode`；`get/listen` | 当前 5.17 的飞控飞行模式枚举。 | `flightMode` 原枚举名；`UNKNOWN` 归一为未知。 | 飞行模式名称不能单独授权或否决动作，必须和具体 DJI 动作结果及其他事实一起判断。 |
+| `FlightControllerKey.KeyFCFlightMode` | `FCFlightMode`；`get/listen` | 当前 5.17 的飞控飞行模式枚举。 | `flightMode` 原枚举名；明确的 `UNKNOWN` 必须原样发布。 | 飞行模式名称不能单独授权或否决动作，必须和具体 DJI 动作结果及其他事实一起判断。 |
 
 ### 电池与智能低电量返航
 
 | Key | 类型、能力 | 官方原义 | 本项目字段 | 限制 |
 | --- | --- | --- | --- | --- |
-| `BatteryKey.KeyChargeRemainingInPercent`，索引 `ComponentIndexType.LEFT_OR_MAIN` | `Integer`；`get/listen` | 获取该电池的剩余电量百分比。官方说明：多电池总百分比需要按不同 `componentIndex` 获取容量和剩余量后计算。 | `batteryPercent` | 只能接受 `0..100`。它是主/左电池，不是多电池总量；空值不是 0%。 |
-| `FlightControllerKey.KeyLowBatteryRTHInfo` | `LowBatteryRTHInfo`；`get/listen` | 获取智能低电量相关信息；仅在低电量返航启用时有效。 | `lowBatteryRthState`、`remainingFlightTimeSeconds` | `remainingFlightTime` 不是通用“可飞剩余时间”，也不能单独进入安全门禁。 |
+| `BatteryKey.KeyConnection`，索引 `ComponentIndexType.LEFT_OR_MAIN` | `Boolean`；`get/listen` | `true` 表示飞行器上的该电池已连接。 | `battery` | 电池的独立连接事实；不得由飞控、产品或遥控器连接状态推断。`false` 或未取得值时，电量必须视为未知。 |
+| `BatteryKey.KeyChargeRemainingInPercent`，索引 `ComponentIndexType.LEFT_OR_MAIN` | `Integer`；`get/listen` | 获取该电池的剩余电量百分比。官方说明：多电池总百分比需要按不同 `componentIndex` 获取容量和剩余量后计算。 | `batteryPercent` | 只能接受 `0..100`，且只有同一索引的 `KeyConnection` 已确认 `true` 时才能显示。它是主/左电池，不是多电池总量；空值不是 0%。 |
+| `FlightControllerKey.KeyLowBatteryRTHInfo` | `LowBatteryRTHInfo`；`get/listen` | 获取智能低电量相关信息；仅在低电量返航启用时有效。 | `lowBatteryRthState`、`remainingFlightTimeSeconds` | `UNKNOWN` 是 MSDK 的明确返回状态，必须与未取得值区分显示；`remainingFlightTime` 不是通用“可飞剩余时间”，也不能单独进入安全门禁。 |
 
-`LowBatteryRTHState` 的原始成员为 `IDLE`、`COUNTING_DOWN`、`EXECUTED`、`CANCELLED`、`UNKNOWN`。本项目只显示/发布前四个已知状态；`UNKNOWN` 或对象为空一律为未知。`COUNTING_DOWN` 时，官方提供另一动作 Key `KeyLowBatteryRTHConfirm` 用于确认/取消返航，但本项目当前 **没有调用它**。
+`LowBatteryRTHState` 的原始成员为 `IDLE`、`COUNTING_DOWN`、`EXECUTED`、`CANCELLED`、`UNKNOWN`。本项目必须原样发布这五个状态；只有对象为空或未识别值才是“尚未取得”。当状态为 `UNKNOWN` 时，默认的 `remainingFlightTime = 0` 不代表零秒，必须保留状态、隐藏时间。`COUNTING_DOWN` 时，官方提供另一动作 Key `KeyLowBatteryRTHConfirm` 用于确认/取消返航，但本项目当前 **没有调用它**。
 
 ### 高度与位置
 
 | Key | 类型、能力 | 本项目字段 | 解释与边界 |
 | --- | --- | --- | --- |
-| `FlightControllerKey.KeyAltitude` | `Double`；`get/listen` | `altitudeMeters` | 这是 SDK 的 `Altitude` Key；不能在 UI 写成未经确认的“海拔高度”。值接近 0 可能是该参考高度的正常表现，不能仅据此判断 GPS、高度计或飞机故障。非有限值为未知。 |
+| `FlightControllerKey.KeyAltitude` | `Double`；`get/listen` | `altitudeMeters` | 相对起飞点高度。不能在 UI 写成海拔、下视测距高度或手动抬升高度。值接近 0 可能是该参考高度的正常表现，不能仅据此判断 GPS、高度计或飞机故障。非有限值为未知。 |
 | `FlightControllerKey.KeyAircraftLocation` | `LocationCoordinate2D`；`get/listen` | `latitude`、`longitude` | 只在经纬度同时存在、有限且位于纬度 `[-90, 90]`、经度 `[-180, 180]` 时显示。它是二维坐标，不携带高度。 |
 
 **官方来源**：[FlightControllerKey](https://developer.dji.com/api-reference-v5/android-api/Components/IKeyManager/Key_FlightController_FlightControllerKey.html)；[BatteryKey](https://developer.dji.com/api-reference-v5/android-api/Components/IKeyManager/Key_Battery_BatteryKey.html)。

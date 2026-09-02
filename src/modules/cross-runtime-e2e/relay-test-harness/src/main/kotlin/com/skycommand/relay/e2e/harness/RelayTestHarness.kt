@@ -2,6 +2,7 @@ package com.skycommand.relay.e2e.harness
 
 import com.skycommand.relay.device.DeviceConnection
 import com.skycommand.relay.device.DeviceConnectionDependencies
+import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.operation.OperationCancellation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
@@ -507,7 +508,8 @@ private object HarnessTelemetryMapper {
         "remoteControllerModel" to snapshot.remoteControllerModel.json(),
         "aircraftModel" to snapshot.aircraftModel.json(),
         "isFlying" to snapshot.isFlying.json(), "motorsOn" to snapshot.motorsOn.json(),
-        "flightMode" to snapshot.flightMode.json(), "batteryPercent" to snapshot.batteryPercent.json(),
+        "flightMode" to snapshot.flightMode.json(), "battery" to JsonString(snapshot.battery.name),
+        "batteryPercent" to snapshot.batteryPercent.takeIf { snapshot.battery == LinkState.CONNECTED }.json(),
         "lowBatteryRthState" to snapshot.lowBatteryRthState?.name.json(),
         "remainingFlightTimeSeconds" to snapshot.remainingFlightTimeSeconds.json(),
         "altitudeMeters" to snapshot.altitudeMeters.json(), "latitude" to snapshot.latitude.json(),

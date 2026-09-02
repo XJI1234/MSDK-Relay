@@ -36,6 +36,7 @@ private class KeyManagerObservation(
     private var type = RemoteControllerType.UNKNOWN
     private var connectionEventRevision = 0L
     private var typeEventRevision = 0L
+    private var typeReadGeneration = 0L
 
     fun start() {
         try {
@@ -64,21 +65,33 @@ private class KeyManagerObservation(
         previousRemoteController: Boolean?,
         nextRemoteController: Boolean?,
     ) {
-        val fact = update {
-            connectionEventRevision += 1L
-            remoteControllerConnected = nextRemoteController
+        val update = synchronized(lock) {
+            if (!active) {
+                null
+            } else {
+                val wasConnected = remoteControllerConnected
+                connectionEventRevision += 1L
+                remoteControllerConnected = nextRemoteController
+                val typeMustBeRefreshed = wasConnected != true && nextRemoteController == true
+                if (wasConnected != nextRemoteController) {
+                    typeReadGeneration += 1L
+                    type = RemoteControllerType.UNKNOWN
+                }
+                ConnectionUpdate(currentFact(), typeMustBeRefreshed)
+            }
         }
         recordLinkDiagnostic(
             "$LINK_DIAGNOSTIC_PREFIX event=key-change key=RemoteControllerKey.KeyConnection " +
                 "old=$previousRemoteController new=$nextRemoteController",
         )
-        fact?.let(listener::onChanged)
+        update?.fact?.let(listener::onChanged)
+        if (update?.typeMustBeRefreshed == true) requestInitialType()
     }
 
     private fun publishType(nextType: RemoteControllerType) {
         val fact = update {
             typeEventRevision += 1L
-            type = nextType
+            type = if (remoteControllerConnected == true) nextType else RemoteControllerType.UNKNOWN
         }
         fact?.let { listener.onChanged(it) }
     }
@@ -89,29 +102,45 @@ private class KeyManagerObservation(
             connectionEventRevision
         }
         requestInitialValue(connectionKey, "RemoteControllerKey.KeyConnection") { initialValue ->
-            val fact = synchronized(lock) {
+            val update = synchronized(lock) {
                 if (!active || connectionEventRevision != initialEventRevision) {
                     null
                 } else {
+                    val wasConnected = remoteControllerConnected
                     remoteControllerConnected = initialValue
-                    currentFact()
+                    val typeMustBeRefreshed = wasConnected != true && initialValue == true
+                    if (wasConnected != initialValue) {
+                        typeReadGeneration += 1L
+                        type = RemoteControllerType.UNKNOWN
+                    }
+                    ConnectionUpdate(currentFact(), typeMustBeRefreshed)
                 }
             }
-            fact?.let(listener::onChanged)
+            update?.fact?.let(listener::onChanged)
+            if (update?.typeMustBeRefreshed == true) requestInitialType()
         }
     }
 
     private fun requestInitialType() {
-        val initialEventRevision = synchronized(lock) {
+        val request = synchronized(lock) {
             if (!active) return
-            typeEventRevision
+            typeReadGeneration += 1L
+            TypeReadRequest(typeEventRevision, typeReadGeneration)
         }
         requestInitialValue(typeKey, "RemoteControllerKey.KeyRemoteControllerType") { initialValue ->
             val fact = synchronized(lock) {
-                if (!active || typeEventRevision != initialEventRevision) {
+                if (
+                    !active ||
+                    typeEventRevision != request.initialEventRevision ||
+                    typeReadGeneration != request.initialReadGeneration
+                ) {
                     null
                 } else {
-                    type = initialValue ?: RemoteControllerType.UNKNOWN
+                    type = if (remoteControllerConnected == true) {
+                        initialValue ?: RemoteControllerType.UNKNOWN
+                    } else {
+                        RemoteControllerType.UNKNOWN
+                    }
                     currentFact()
                 }
             }
@@ -162,6 +191,16 @@ private class KeyManagerObservation(
     private fun recordLinkDiagnostic(message: String) {
         runCatching { Log.i(LINK_DIAGNOSTIC_TAG, message) }
     }
+
+    private data class ConnectionUpdate(
+        val fact: DjiRemoteControllerFact,
+        val typeMustBeRefreshed: Boolean,
+    )
+
+    private data class TypeReadRequest(
+        val initialEventRevision: Long,
+        val initialReadGeneration: Long,
+    )
 
     private companion object {
         const val LINK_DIAGNOSTIC_TAG = "SCLinkDiag"

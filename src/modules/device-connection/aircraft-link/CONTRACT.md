@@ -34,7 +34,7 @@ AircraftSignal(sourceRevision, aircraftConnected, airLinkConnected, cameraConnec
 
 - 只创建一个端口监听；重复启动和重复停止幂等。
 - 停止使当前运行代次失效，旧代次回调必须丢弃。
-- `aircraftConnected` 只映射 `ProductKey.KeyConnection`，不得被称作飞机物理在线。`airLinkConnected` 只映射 `AirLinkKey.KeyConnection`，`cameraConnected` 只映射主相机 `CameraKey.KeyConnection(LEFT_OR_MAIN)`；三者必须独立保留，均不得由飞控状态推断或覆盖。
+- `aircraftConnected` 只映射 `ProductKey.KeyConnection`，不得被称作飞机物理在线；该保留字段只可用于原始遥测兼容和诊断，能力、操作门禁、UI 和链路摘要不得读取它。`airLinkConnected` 只映射 `AirLinkKey.KeyConnection`，`cameraConnected` 只映射主相机 `CameraKey.KeyConnection(LEFT_OR_MAIN)`；三者必须独立保留，均不得由飞控状态推断或覆盖。
 - 产品、飞控、AirLink 和相机始终保留各自当前 MSDK 原始三态，不能彼此推断、伪造或覆盖。能力门禁在消费快照时逐项检查所需状态，而不是由本模块合并状态。
 - 有效信号只提交飞行器补丁，不覆盖 SDK、遥控器或配对状态。
 - 同一来源旧版本和重复版本由状态仓库忽略。

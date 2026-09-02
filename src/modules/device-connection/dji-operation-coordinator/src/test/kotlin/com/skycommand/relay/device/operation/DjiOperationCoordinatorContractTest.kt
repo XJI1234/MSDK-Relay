@@ -29,23 +29,79 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
-    fun timesOutAndIgnoresTheLateCompletionBeforeStartingTheNextOperation() {
+    fun timesOutWithoutStartingQueuedWorkUntilTheLateDjiCompletionArrives() {
         val executor = ManualExecutor()
         val scheduler = ManualScheduler()
         val coordinator = DjiOperationCoordinator.create(executor, scheduler)
         val first = RecordingAction()
         val second = RecordingAction()
+        val afterRecovery = RecordingAction()
         val results = mutableListOf<OperationOutcome>()
 
         coordinator.submit(first, 1_000) { results += it }
         coordinator.submit(second, 1_000) { results += it }
         executor.runNext()
         scheduler.fireNext()
+
+        assertEquals(listOf(OperationOutcome.TIMED_OUT, OperationOutcome.CANCELLED), results)
+        assertEquals(0, second.starts)
+        assertEquals(0, executor.taskCount())
+        assertIs<SubmissionResult.Rejected>(coordinator.submit(RecordingAction(), 1_000) { })
+
         first.succeed()
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(afterRecovery, 1_000) { })
         executor.runNext()
 
+        assertEquals(1, afterRecovery.starts)
+    }
+
+    @Test
+    fun cancellingStartedWorkDoesNotReleaseTheDjiSlotBeforeItsLateCompletion() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val queued = RecordingAction()
+        val results = mutableListOf<OperationOutcome>()
+
+        val firstSubmission = assertIs<SubmissionResult.Accepted>(coordinator.submit(first, 1_000) { results += it })
+        coordinator.submit(queued, 1_000) { results += it }
+        executor.runNext()
+
+        assertEquals(CancellationResult.Cancelled, firstSubmission.cancellation.cancel())
+        assertEquals(listOf(OperationOutcome.CANCELLED, OperationOutcome.CANCELLED), results)
+        assertEquals(0, queued.starts)
+        assertIs<SubmissionResult.Rejected>(coordinator.submit(RecordingAction(), 1_000) { })
+
+        first.fail()
+        val afterRecovery = RecordingAction()
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(afterRecovery, 1_000) { })
+        executor.runNext()
+
+        assertEquals(1, afterRecovery.starts)
+    }
+
+    @Test
+    fun authoritativeStateConfirmationReleasesOnlyTheTimedOutOperationSlot() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val afterConfirmation = RecordingAction()
+        val results = mutableListOf<OperationOutcome>()
+
+        coordinator.submit(first, 1_000) { results += it }
+        executor.runNext()
+        scheduler.fireNext()
+
         assertEquals(listOf(OperationOutcome.TIMED_OUT), results)
-        assertEquals(1, second.starts)
+        assertEquals(true, first.confirmHardwareSettled())
+        assertEquals(false, first.confirmHardwareSettled())
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(afterConfirmation, 1_000) { })
+        executor.runNext()
+
+        assertEquals(1, afterConfirmation.starts)
     }
 
     @Test
@@ -69,6 +125,7 @@ class DjiOperationCoordinatorContractTest {
 
     private class RecordingAction : DjiOperation {
         var starts = 0
+        val lateOutcomes = mutableListOf<OperationOutcome>()
         private var completion: OperationCompletion? = null
 
         override fun run(completion: OperationCompletion) {
@@ -76,15 +133,20 @@ class DjiOperationCoordinatorContractTest {
             this.completion = completion
         }
 
+        override fun onLateDjiCompletion(outcome: OperationOutcome) { lateOutcomes += outcome }
+
         fun succeed() = checkNotNull(completion).succeed()
 
         fun fail() = checkNotNull(completion).fail()
+
+        fun confirmHardwareSettled() = checkNotNull(completion).confirmHardwareSettled()
     }
 
     private class ManualExecutor : OperationExecutor {
         private val tasks = ArrayDeque<() -> Unit>()
         override fun execute(task: () -> Unit) { tasks.addLast(task) }
         fun runNext() = tasks.removeFirst().invoke()
+        fun taskCount(): Int = tasks.size
     }
 
     private class ManualScheduler : OperationScheduler {

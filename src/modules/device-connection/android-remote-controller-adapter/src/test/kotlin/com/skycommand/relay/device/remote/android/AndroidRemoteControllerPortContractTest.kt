@@ -176,6 +176,20 @@ class AndroidRemoteControllerPortContractTest {
         assertFalse(source.contains("manager.listen(connectionKey, owner, true)"))
     }
 
+    @Test
+    fun rereadsRemoteControllerTypeWhenTheControllerFirstBecomesAvailable() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+            Path("src/modules/device-connection/android-remote-controller-adapter/src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+        ).first { it.exists() }.readText()
+
+        val connectionUpdate = source.substringAfter("private fun publishConnection(")
+            .substringBefore("private fun publishType")
+        assertTrue(connectionUpdate.contains("requestInitialType()"))
+        assertTrue(source.contains("private var typeReadGeneration = 0L"))
+        assertTrue(source.contains("typeReadGeneration != request.initialReadGeneration"))
+    }
+
     private data class Fact(
         val connected: Boolean,
         val displayModel: String? = null,

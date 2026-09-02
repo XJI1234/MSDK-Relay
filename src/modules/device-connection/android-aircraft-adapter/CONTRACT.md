@@ -34,10 +34,10 @@ AircraftSignal(sourceRevision, aircraftConnected, airLinkConnected, cameraConnec
 ```
 
 1. `sourceRevision` 必须严格为正，对每个已发布信号递增，且在进程存活期间不重置。
-2. `aircraftConnected`、`airLinkConnected`、`cameraConnected` 与 `flightControllerConnected` 都是三态观察事实：MSDK 的明确 true、明确 false、null 分别表示已连接、已断开、尚未观察。`aircraftConnected` 是既有端口字段名，只映射 `ProductKey.KeyConnection` 的“硬件产品连接”，不得由其他键推断或覆盖，也不得被称作飞机物理在线。`airLinkConnected` 只映射 `AirLinkKey.KeyConnection`；`cameraConnected` 只映射 `CameraKey.KeyConnection(LEFT_OR_MAIN)`；`flightControllerConnected` 只映射 `FlightControllerKey.KeyConnection`。四个 Key 互不改写，不得把 null 压成 false，也不得保留前一次连接值。
+2. `aircraftConnected`、`airLinkConnected`、`cameraConnected` 与 `flightControllerConnected` 都是三态观察事实：MSDK 的明确 true、明确 false、null 分别表示已连接、已断开、尚未观察。`aircraftConnected` 是既有端口字段名，只映射 `ProductKey.KeyConnection` 的“硬件产品连接”，不得由其他键推断或覆盖，也不得被称作飞机物理在线。该保留字段只可用于原始遥测兼容和诊断，不得被能力、操作门禁、UI 或链路摘要读取。`airLinkConnected` 只映射 `AirLinkKey.KeyConnection`；`cameraConnected` 只映射 `CameraKey.KeyConnection(LEFT_OR_MAIN)`；`flightControllerConnected` 只映射 `FlightControllerKey.KeyConnection`。四个 Key 互不改写，不得把 null 压成 false，也不得保留前一次连接值。
 3. DJI 硬件产品明确已连接可以合法地与飞控明确断开或未知同时出现；它只表示 DJI 报告硬件产品在线，不能证明飞机已开机或飞控可用。飞控明确断开不得使产品连接变为断开。
-4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`；产品不是明确已连接时必须为 `null`，不得由飞控状态清空。
-5. `start` 成功后必须先为 `ProductKey.KeyConnection`、`AirLinkKey.KeyConnection`、主相机 `CameraKey.KeyConnection(LEFT_OR_MAIN)`、`FlightControllerKey.KeyConnection` 和 `ProductKey.KeyProductType` 注册持续 `listen(key, holder, listener)`，再对每个 Key 调用 `getValue(key, callback)` 请求一次异步硬件值。不得用同步 `getValue(key)` 的 MSDK 缓存发布初始事实。在每个 Key 的首次硬件读取或监听回调前，该 Key 保持未知。初始硬件读取开始后收到的监听事件必须优先于较晚到达的初始结果；各有效回调按实际到达顺序原子替换对应事实并发布，不能因等待不支持或读取失败的其他 Key 而永久阻塞；回调值为 null 仍必须如实发布为未知。
+4. `displayModel` 仅可来自稳定且非敏感的 MSDK 产品类型值。不得从序列号、固件版本、遥控器类型、产品 ID 或异常中推导。不可用时为 `null`；产品不是明确已连接时必须为 `null`，不得由飞控状态清空。产品连接从未知或断开变为明确已连接时，适配器必须再次异步读取 `ProductKey.KeyProductType`；离开明确已连接时必须同步废弃此前型号。这样在 DJI 先报告产品连接、后准备好型号 Key 的时序下，旧设备或启动阶段的 `UNKNOWN` 不会被显示为当前型号。
+5. `start` 成功后必须先为 `ProductKey.KeyConnection`、`AirLinkKey.KeyConnection`、主相机 `CameraKey.KeyConnection(LEFT_OR_MAIN)`、`FlightControllerKey.KeyConnection` 和 `ProductKey.KeyProductType` 注册持续 `listen(key, holder, listener)`，再对每个 Key 调用 `getValue(key, callback)` 请求一次异步硬件值。不得用同步 `getValue(key)` 的 MSDK 缓存发布初始事实。在每个 Key 的首次硬件读取或监听回调前，该 Key 保持未知。初始硬件读取开始后收到的监听事件必须优先于较晚到达的初始结果；同一型号 Key 的较早异步读取不得覆盖较晚重读或监听事件；各有效回调按实际到达顺序原子替换对应事实并发布，不能因等待不支持或读取失败的其他 Key 而永久阻塞；回调值为 null 仍必须如实发布为未知。
 6. 相同的平台值可以带着更新的版本号再次发布。跨来源排序和去重由状态存储负责，而非本模块。
 
 ## 生命周期与失败规则

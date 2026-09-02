@@ -15,3 +15,5 @@ adapter.execute(action, listener) -> FlightSubmissionResult
 ```
 
 `timeoutMillis` 必须在 1,000 到 60,000 毫秒之间。端口只能调用 `succeed` 或 `fail`；异常、超时、取消和重复/迟到回调都归一化为最多一次终态。协调器拒绝提交时不调用端口。
+
+超时或已开始操作的取消并不证明飞控没有收到 DJI 调用。此时共享协调器保留唯一 DJI 操作槽位，适配器必须拒绝新的飞行写操作，直至原 DJI 回调或与该动作对应的权威状态观察确认硬件已稳定。

@@ -26,6 +26,7 @@ class TelemetryFrameMapperTest {
                 LinkState.CONNECTED, PairingState.PAIRED, null, "DJI Mini 4 Pro",
                 TelemetryCapabilities(true, true, WaypointMissionSupport.SUPPORTED, false),
                 batteryPercent = 73,
+                battery = LinkState.CONNECTED,
             ),
         )
 
@@ -53,6 +54,7 @@ class TelemetryFrameMapperTest {
                 motorsOn = true,
                 flightMode = "GPS_NORMAL",
                 batteryPercent = 73,
+                battery = LinkState.CONNECTED,
                 remainingFlightTimeSeconds = 840,
                 lowBatteryRthState = LowBatteryRthState.IDLE,
                 altitudeMeters = 52.25,
@@ -124,7 +126,7 @@ class TelemetryFrameMapperTest {
         )
 
         assertEquals(JsonString("PAIRED"), result["pairingState"])
-        assertEquals(JsonBoolean(true), result["aircraftConnected"])
+        assertEquals(null, result["aircraftConnected"])
         assertEquals(JsonBoolean(true), result["flightControllerConnected"])
         assertEquals(JsonString("DJI Mini 4 Pro"), result["aircraftModel"])
         assertEquals(JsonBoolean(false), result["motorsOn"])
@@ -141,7 +143,7 @@ class TelemetryFrameMapperTest {
         )
 
         assertEquals(JsonString("IDLE"), result["pairingState"])
-        assertEquals(JsonBoolean(false), result["aircraftConnected"])
+        assertEquals(null, result["aircraftConnected"])
         assertEquals(JsonBoolean(false), result["flightControllerConnected"])
         assertEquals(JsonString("UNKNOWN"), result["aircraftModel"])
         assertEquals(JsonNull, result["motorsOn"])
@@ -158,7 +160,7 @@ class TelemetryFrameMapperTest {
         )
 
         assertEquals(JsonString("PAIRING"), result["pairingState"])
-        assertEquals(JsonBoolean(false), result["aircraftConnected"])
+        assertEquals(null, result["aircraftConnected"])
         assertEquals(JsonString("UNKNOWN"), result["aircraftModel"])
         assertEquals(JsonBoolean(false), result["sdkRegistered"])
     }
@@ -192,5 +194,22 @@ class TelemetryFrameMapperTest {
 
         assertEquals(JsonString("UNKNOWN"), frame.payload["airLink"])
         assertEquals(JsonString("UNKNOWN"), frame.payload["camera"])
+        assertEquals(JsonString("UNKNOWN"), frame.payload["battery"])
+    }
+
+    @Test fun omitsBatteryPercentFromTelemetryFramesUntilTheBatteryKeyReportsConnected() {
+        val frame = TelemetryFrameMapper.map(
+            TelemetrySnapshot(
+                1, SdkAvailability.READY, LinkState.CONNECTED, LinkState.CONNECTED,
+                LinkState.DISCONNECTED, PairingState.UNKNOWN, null, null,
+                TelemetryCapabilities(false, false, WaypointMissionSupport.UNSUPPORTED, false),
+                batteryPercent = 73,
+                battery = LinkState.UNKNOWN,
+            ),
+            telemetrySequence = 1,
+        )
+
+        assertEquals(JsonString("UNKNOWN"), frame.payload["battery"])
+        assertEquals(JsonNull, frame.payload["batteryPercent"])
     }
 }

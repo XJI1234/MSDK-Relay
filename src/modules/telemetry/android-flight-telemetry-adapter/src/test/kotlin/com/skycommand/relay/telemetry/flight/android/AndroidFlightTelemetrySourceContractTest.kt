@@ -2,6 +2,7 @@ package com.skycommand.relay.telemetry.flight.android
 
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
+import com.skycommand.relay.device.state.LinkState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -10,7 +11,7 @@ class AndroidFlightTelemetrySourceContractTest {
     @Test
     fun publishesTheNormalizedInitialPlatformSnapshot() {
         val platform = FakePlatform(
-            FlightTelemetryFact(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE),
+            FlightTelemetryFact(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE, LinkState.CONNECTED),
         )
         val source = AndroidFlightTelemetrySource(platform)
         var changes = 0
@@ -19,7 +20,7 @@ class AndroidFlightTelemetrySourceContractTest {
 
         assertEquals(1, changes)
         assertEquals(
-            FlightTelemetrySnapshot(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE),
+            FlightTelemetrySnapshot(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE, LinkState.CONNECTED),
             source.snapshot(),
         )
     }
@@ -32,6 +33,15 @@ class AndroidFlightTelemetrySourceContractTest {
         source.onChanged { }
 
         assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+    }
+
+    @Test
+    fun preservesAnExplicitUnknownFlightModeFromMsdk() {
+        val source = AndroidFlightTelemetrySource(FakePlatform(FlightTelemetryFact(flightMode = "UNKNOWN")))
+
+        source.onChanged { }
+
+        assertEquals("UNKNOWN", source.snapshot().flightMode)
     }
 
     @Test
@@ -68,28 +78,26 @@ class AndroidFlightTelemetrySourceContractTest {
     }
 
     @Test
-    fun discardsPreDisconnectFactsAndReobservesHardwareBeforeAcceptingReconnectedFacts() {
+    fun preservesBatteryFactsWhileInvalidatingAndRefreshingFlightControllerFacts() {
         val platform = FakePlatform()
         val source = AndroidFlightTelemetrySource(platform)
         source.onChanged { }
-        val stale = platform.listenerOrThrow()
 
-        stale.onChanged(FlightTelemetryFact(batteryPercent = 80, altitudeMeters = 12.0))
+        platform.publish(FlightTelemetryFact(batteryPercent = 80, altitudeMeters = 12.0, battery = LinkState.CONNECTED))
         assertEquals(80, source.snapshot().batteryPercent)
 
-        source.invalidate()
-        assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+        source.invalidateFlightControllerFacts()
+        assertEquals(LinkState.CONNECTED, source.snapshot().battery)
+        assertEquals(80, source.snapshot().batteryPercent)
+        assertEquals(null, source.snapshot().altitudeMeters)
+        assertEquals(1, platform.flightControllerInvalidations)
 
-        source.refresh()
-        val current = platform.listenerOrThrow()
-        stale.onChanged(FlightTelemetryFact(batteryPercent = 1, altitudeMeters = 1.0))
-
-        assertEquals(FlightTelemetrySnapshot(), source.snapshot())
-        current.onChanged(FlightTelemetryFact(batteryPercent = 79, altitudeMeters = 13.0))
+        source.refreshFlightControllerFacts()
+        assertEquals(1, platform.flightControllerRefreshes)
+        platform.publish(FlightTelemetryFact(batteryPercent = 79, altitudeMeters = 13.0, battery = LinkState.CONNECTED))
         assertEquals(79, source.snapshot().batteryPercent)
         assertEquals(13.0, source.snapshot().altitudeMeters)
-        assertEquals(2, platform.observeCalls)
-        assertEquals(1, platform.closeCalls)
+        assertEquals(1, platform.observeCalls)
     }
 
     @Test
@@ -125,6 +133,8 @@ class AndroidFlightTelemetrySourceContractTest {
     ) : DjiFlightTelemetryApi {
         var observeCalls = 0
         var closeCalls = 0
+        var flightControllerInvalidations = 0
+        var flightControllerRefreshes = 0
         private var listener: DjiFlightTelemetryListener? = null
 
         override fun observe(listener: DjiFlightTelemetryListener): DjiFlightTelemetryObservation {
@@ -132,9 +142,19 @@ class AndroidFlightTelemetrySourceContractTest {
             observeCalls += 1
             this.listener = listener
             initial?.let(listener::onChanged)
-            return DjiFlightTelemetryObservation {
-                closeCalls += 1
-                if (throwOnClose) error("DJI close failed")
+            return object : DjiFlightTelemetryObservation {
+                override fun invalidateFlightControllerFacts() {
+                    flightControllerInvalidations += 1
+                }
+
+                override fun refreshFlightControllerFacts() {
+                    flightControllerRefreshes += 1
+                }
+
+                override fun close() {
+                    closeCalls += 1
+                    if (throwOnClose) error("DJI close failed")
+                }
             }
         }
 

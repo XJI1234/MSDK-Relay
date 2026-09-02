@@ -91,39 +91,11 @@ class AndroidDjiStreamPort internal constructor(
         }
     }
 
-    override fun abort() {
-        val operation = synchronized(lock) {
-            platformOperationInFlight = true
-            active.also { active = null }
-        }
-        operation?.let {
-            it.startCompleted(false)
-            detach(it)
-        }
-        val finish = {
-            synchronized(lock) { platformOperationInFlight = false }
-        }
-        try {
-            platform.stop(object : DjiLiveStreamCompletion {
-                override fun succeed() = finish()
-                override fun fail() = finish()
-            })
-        } catch (_: Throwable) {
-            finish()
-        }
-    }
-
     private fun listenerFor(operation: Active) = object : DjiLiveStreamListener {
         override fun onStatus(fact: DjiLiveStreamFact) {
             if (!isActive(operation)) return
             if (!fact.streaming) {
                 if (!operation.claimReportedStoppedStatus()) return
-                runCatching {
-                    stop(object : StreamDjiCompletion {
-                        override fun succeed() = Unit
-                        override fun fail() = Unit
-                    })
-                }
                 runCatching { operation.runtimeFailure() }
                 return
             }
@@ -144,12 +116,6 @@ class AndroidDjiStreamPort internal constructor(
 
         override fun onError() {
             if (isActive(operation)) {
-                runCatching {
-                    stop(object : StreamDjiCompletion {
-                        override fun succeed() = Unit
-                        override fun fail() = Unit
-                    })
-                }
                 runCatching { operation.runtimeFailure() }
             }
         }

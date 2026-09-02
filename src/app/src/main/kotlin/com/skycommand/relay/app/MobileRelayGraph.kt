@@ -93,6 +93,7 @@ data class MobileRelayStatus(
     val pairing: String,
     val flightController: String,
     val aircraft: String,
+    val battery: String,
     val stream: String,
     val mission: String,
     val canStartPairing: Boolean,
@@ -129,6 +130,7 @@ class MobileRelayGraph private constructor(
     private var hardwareRefreshedForSdkReady = false
     private val flightTelemetryLifecycleLock = Any()
     private var flightTelemetryInvalidated = false
+    private var lastFlightControllerLink = LinkState.UNKNOWN
 
     fun start(): RuntimeStartResult {
         val result = runtime.start(setOf(PermissionKind.RUNTIME))
@@ -139,7 +141,10 @@ class MobileRelayGraph private constructor(
     fun stop(): RuntimeStopResult {
         cancelUsbWatch()
         hardwareRefreshedForSdkReady = false
-        synchronized(flightTelemetryLifecycleLock) { flightTelemetryInvalidated = false }
+        synchronized(flightTelemetryLifecycleLock) {
+            flightTelemetryInvalidated = false
+            lastFlightControllerLink = LinkState.UNKNOWN
+        }
         startCancellation?.cancel()
         startCancellation = null
         return runtime.stop()
@@ -150,6 +155,7 @@ class MobileRelayGraph private constructor(
 
     fun status(): MobileRelayStatus {
         val deviceSnapshot = device.snapshot()
+        val flightSnapshot = flight.snapshot()
         val capabilities = device.capabilities()
         val missionSnapshot = wayline.snapshot()
         val running = runtime.snapshot() == RuntimeState.RUNNING
@@ -161,6 +167,7 @@ class MobileRelayGraph private constructor(
             pairing = deviceSnapshot.pairing.name,
             flightController = deviceSnapshot.flightController.name,
             aircraft = deviceSnapshot.aircraft.name,
+            battery = flightSnapshot.battery.name,
             stream = stream.snapshot().state.name,
             mission = missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
             canStartPairing = running && capabilities.canStartPairing,
@@ -290,7 +297,10 @@ class MobileRelayGraph private constructor(
 
     private fun synchronizeFlightTelemetryWithFlightController() {
         val action = synchronized(flightTelemetryLifecycleLock) {
-            when (device.snapshot().flightController) {
+            val current = device.snapshot().flightController
+            val previous = lastFlightControllerLink
+            lastFlightControllerLink = current
+            when (current) {
                 LinkState.DISCONNECTED -> {
                     if (flightTelemetryInvalidated) null else {
                         flightTelemetryInvalidated = true
@@ -299,18 +309,18 @@ class MobileRelayGraph private constructor(
                 }
 
                 LinkState.CONNECTED -> {
-                    if (!flightTelemetryInvalidated) null else {
+                    if (previous != LinkState.CONNECTED) {
                         flightTelemetryInvalidated = false
                         FlightTelemetryLinkAction.REFRESH
-                    }
+                    } else null
                 }
 
                 LinkState.UNKNOWN -> null
             }
         }
         when (action) {
-            FlightTelemetryLinkAction.INVALIDATE -> flight.invalidate()
-            FlightTelemetryLinkAction.REFRESH -> flight.refresh()
+            FlightTelemetryLinkAction.INVALIDATE -> flight.invalidateFlightControllerFacts()
+            FlightTelemetryLinkAction.REFRESH -> flight.refreshFlightControllerFacts()
             null -> Unit
         }
     }

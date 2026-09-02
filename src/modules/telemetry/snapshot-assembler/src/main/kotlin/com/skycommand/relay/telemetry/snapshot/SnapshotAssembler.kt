@@ -18,6 +18,7 @@ enum class LowBatteryRthState {
     COUNTING_DOWN,
     EXECUTED,
     CANCELLED,
+    UNKNOWN,
 }
 
 data class FlightTelemetrySnapshot(
@@ -30,6 +31,7 @@ data class FlightTelemetrySnapshot(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
+    val battery: LinkState = LinkState.UNKNOWN,
 ) {
     init {
         flightMode?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
@@ -84,6 +86,7 @@ data class TelemetrySnapshot(
     val lowBatteryRthState: LowBatteryRthState? = null,
     val airLink: LinkState = LinkState.UNKNOWN,
     val camera: LinkState = LinkState.UNKNOWN,
+    val battery: LinkState = LinkState.UNKNOWN,
 ) {
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
@@ -93,11 +96,12 @@ data class TelemetrySnapshot(
 
 object SnapshotAssembler {
     fun assemble(inputs: TelemetryInputs): TelemetrySnapshot {
-        val flight = if (inputs.device.flightController == LinkState.CONNECTED) {
+        val flightControllerFacts = if (inputs.device.flightController == LinkState.CONNECTED) {
             inputs.flight
         } else {
             FlightTelemetrySnapshot()
         }
+        val batteryPercent = if (inputs.flight.battery == LinkState.CONNECTED) inputs.flight.batteryPercent else null
         return TelemetrySnapshot(
         deviceRevision = inputs.device.revision,
         sdkAvailability = inputs.device.sdkAvailability,
@@ -110,15 +114,16 @@ object SnapshotAssembler {
         airLink = inputs.device.airLink,
         camera = inputs.device.camera,
         capabilities = CapabilityCalculator.calculate(DeviceCapabilityReader.read(inputs.device)),
-        isFlying = flight.isFlying,
-        motorsOn = flight.motorsOn,
-        flightMode = flight.flightMode,
-        batteryPercent = flight.batteryPercent,
-        remainingFlightTimeSeconds = flight.remainingFlightTimeSeconds,
-        lowBatteryRthState = flight.lowBatteryRthState,
-        altitudeMeters = flight.altitudeMeters,
-        latitude = flight.latitude,
-        longitude = flight.longitude,
+        isFlying = flightControllerFacts.isFlying,
+        motorsOn = flightControllerFacts.motorsOn,
+        flightMode = flightControllerFacts.flightMode,
+        battery = inputs.flight.battery,
+        batteryPercent = batteryPercent,
+        remainingFlightTimeSeconds = flightControllerFacts.remainingFlightTimeSeconds,
+        lowBatteryRthState = flightControllerFacts.lowBatteryRthState,
+        altitudeMeters = flightControllerFacts.altitudeMeters,
+        latitude = flightControllerFacts.latitude,
+        longitude = flightControllerFacts.longitude,
         liveStreaming = inputs.stream.state == StreamLifecycleState.STREAMING,
         liveStreamNotice = inputs.stream.notice,
         liveResolution = inputs.stream.metrics?.resolution,

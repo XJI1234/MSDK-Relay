@@ -85,16 +85,17 @@ class DeviceCapabilityReaderContractTest {
     }
 
     @Test
-    fun refusesPairingWhenAircraftIsAlreadyConnected() {
+    fun refusesPairingWhenFlightControllerIsAlreadyConnected() {
         val snapshot = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.READY,
             remoteController = LinkState.CONNECTED,
-            aircraft = LinkState.CONNECTED,
+            aircraft = LinkState.DISCONNECTED,
+            flightController = LinkState.CONNECTED,
             pairing = PairingState.IDLE,
         )
 
         assertEquals(
-            DeviceCapabilities(false, false, false, false, false),
+            DeviceCapabilities(false, false, true, false, true),
             DeviceCapabilityReader.read(snapshot),
         )
     }
@@ -127,7 +128,7 @@ class DeviceCapabilityReaderContractTest {
     fun videoCapabilityRequiresAirLinkAndPrimaryCameraButNotFlightController() {
         val streamingFacts = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.READY,
-            aircraft = LinkState.CONNECTED,
+            aircraft = LinkState.DISCONNECTED,
             airLink = LinkState.CONNECTED,
             camera = LinkState.CONNECTED,
             flightController = LinkState.DISCONNECTED,
@@ -136,6 +137,30 @@ class DeviceCapabilityReaderContractTest {
         assertEquals(true, DeviceCapabilityReader.read(streamingFacts).canStreamVideo)
         assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(airLink = LinkState.UNKNOWN)).canStreamVideo)
         assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(camera = LinkState.DISCONNECTED)).canStreamVideo)
+    }
+
+    @Test
+    fun ignoresProductKeyConnectionForEveryCapability() {
+        val ready = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            aircraft = LinkState.DISCONNECTED,
+            airLink = LinkState.CONNECTED,
+            camera = LinkState.CONNECTED,
+            flightController = LinkState.CONNECTED,
+            pairing = PairingState.IDLE,
+        )
+
+        assertEquals(
+            DeviceCapabilities(
+                canStartPairing = false,
+                canStopPairing = false,
+                canReadTelemetry = true,
+                canStreamVideo = true,
+                canRunWayline = true,
+            ),
+            DeviceCapabilityReader.read(ready),
+        )
     }
 
     @Test

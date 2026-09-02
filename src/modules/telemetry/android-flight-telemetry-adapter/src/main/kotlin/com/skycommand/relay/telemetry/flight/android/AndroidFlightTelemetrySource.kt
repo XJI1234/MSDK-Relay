@@ -4,6 +4,7 @@ import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import com.skycommand.relay.telemetry.flight.FlightTelemetryRegistration
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
+import com.skycommand.relay.device.state.LinkState
 
 internal data class FlightTelemetryFact(
     val isFlying: Boolean? = null,
@@ -15,13 +16,16 @@ internal data class FlightTelemetryFact(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
+    val battery: LinkState = LinkState.UNKNOWN,
 )
 
 internal fun interface DjiFlightTelemetryListener {
     fun onChanged(fact: FlightTelemetryFact)
 }
 
-internal fun interface DjiFlightTelemetryObservation {
+internal interface DjiFlightTelemetryObservation {
+    fun invalidateFlightControllerFacts()
+    fun refreshFlightControllerFacts()
     fun close()
 }
 
@@ -53,30 +57,22 @@ class AndroidFlightTelemetrySource internal constructor(
         return FlightTelemetryRegistration { cancel(operation) }
     }
 
-    override fun invalidate() {
-        val listener = synchronized(lock) {
-            val operation = active
-            if (operation != null) operation.observationGeneration += 1L
-            current = FlightTelemetrySnapshot()
-            operation?.listener
+    override fun invalidateFlightControllerFacts() {
+        val (observation, listener) = synchronized(lock) {
+            current = current.withoutFlightControllerFacts()
+            active?.let { it.observation to it.listener } ?: (null to null)
         }
+        runCatching { observation?.invalidateFlightControllerFacts() }
         listener?.let { callback -> runCatching { callback() } }
     }
 
-    override fun refresh() {
-        val refresh = synchronized(lock) {
-            val operation = active
-            if (operation == null) {
-                current = FlightTelemetrySnapshot()
-                null
-            } else {
-                current = FlightTelemetrySnapshot()
-                operation.observationGeneration += 1L
-                Reobservation(operation, operation.observationGeneration)
-            }
-        } ?: return
-        runCatching { refresh.operation.listener() }
-        startObservation(refresh.operation, refresh.observationGeneration)
+    override fun refreshFlightControllerFacts() {
+        val (observation, listener) = synchronized(lock) {
+            current = current.withoutFlightControllerFacts()
+            active?.let { it.observation to it.listener } ?: (null to null)
+        }
+        runCatching { observation?.refreshFlightControllerFacts() }
+        listener?.let { callback -> runCatching { callback() } }
     }
 
     override fun close() {
@@ -157,13 +153,13 @@ class AndroidFlightTelemetrySource internal constructor(
         val normalizedMode = flightMode
             ?.trim()
             ?.takeIf { it.isNotEmpty() && it.none(Char::isISOControl) && it.codePointCount(0, it.length) <= 128 }
-            ?.takeUnless { it.equals("UNKNOWN", ignoreCase = true) || it.equals("UNRECOGNIZED", ignoreCase = true) }
         val rthState = lowBatteryRthState
         return FlightTelemetrySnapshot(
             isFlying = isFlying,
             motorsOn = motorsOn,
             flightMode = normalizedMode,
-            batteryPercent = batteryPercent?.takeIf { it in 0..100 },
+            battery = battery,
+            batteryPercent = batteryPercent?.takeIf { battery == LinkState.CONNECTED && it in 0..100 },
             remainingFlightTimeSeconds = remainingFlightTimeSeconds?.takeIf { rthState != null && it in 1..86_400 },
             altitudeMeters = altitudeMeters?.takeIf(Double::isFinite),
             latitude = latitude?.takeIf { validCoordinates },
@@ -172,16 +168,22 @@ class AndroidFlightTelemetrySource internal constructor(
         )
     }
 
+    private fun FlightTelemetrySnapshot.withoutFlightControllerFacts(): FlightTelemetrySnapshot = copy(
+        isFlying = null,
+        motorsOn = null,
+        flightMode = null,
+        remainingFlightTimeSeconds = null,
+        altitudeMeters = null,
+        latitude = null,
+        longitude = null,
+        lowBatteryRthState = null,
+    )
+
     private data class Active(
         val generation: Long,
         val listener: () -> Unit,
         var observation: DjiFlightTelemetryObservation? = null,
         var observationGeneration: Long = 0L,
-    )
-
-    private data class Reobservation(
-        val operation: Active,
-        val observationGeneration: Long,
     )
 
     companion object {

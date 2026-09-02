@@ -87,7 +87,7 @@ class LiveStreamContractTest {
     }
 
     @Test
-    fun deviceUnavailabilityCancelsAnActiveStartAndDropsItsLateSuccess() {
+    fun deviceUnavailabilityDoesNotIssueStopBesideAnUnconfirmedStart() {
         val fixture = Fixture()
         val completion = Completion()
         fixture.liveStream.commandHandler().handle(start(), completion)
@@ -96,10 +96,11 @@ class LiveStreamContractTest {
 
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
         assertEquals(listOf("reject:Stream operation failed"), completion.events)
-        assertEquals(1, fixture.port.stopCalls)
+        assertEquals(0, fixture.port.stopCalls)
         fixture.port.startCompletion!!.succeed()
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
         assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        assertEquals(1, fixture.port.stopCalls)
     }
 
     @Test

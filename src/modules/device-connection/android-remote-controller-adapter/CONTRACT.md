@@ -35,8 +35,8 @@ RemoteControllerSignal(sourceRevision, connected, displayModel?)
 
 1. `sourceRevision` 必须严格为正，对每个已发布信号递增，且在进程存活期间不重置。
 2. `connected` 只表示手机到遥控器这一段是否已由 MSDK 确认，唯一事实来源是 `RemoteControllerKey.KeyConnection`：true 报告已连接，false 报告已断开，尚未观察为未知。每次该键的监听回调都必须原子替换当前连接事实；回调值为 null 时必须从先前状态转为未知，不能保留旧的已连接。`ProductKey.KeyConnection` 是 DJI 硬件产品 Key，不是手机到遥控器 Key，也不能作为遥控器在线或飞机物理在线的兜底或覆盖值；它只能由 `android-aircraft-adapter` 消费。不得把 null 压成 false，不得用飞控连接键推断遥控器，也不得从历史值或产品标识字符串推断。
-3. `displayModel` 仅可在 MSDK 提供稳定且非敏感的遥控器展示名称时出现。不得从序列号、固件版本、飞行器型号、产品 ID 或异常中推导。不可用时为 `null`，非明确已连接时始终为 `null`。
-4. `start` 成功后必须为 `RemoteControllerKey.KeyConnection` 和 `RemoteControllerKey.KeyRemoteControllerType` 注册持续 `listen(key, holder, listener)`，再对每个 Key 调用 `getValue(key, callback)` 请求一次异步硬件值。不得用同步 `getValue(key)` 的 MSDK 缓存发布初始事实。首次硬件读取或监听回调前连接和型号保持未知；初始硬件读取开始后收到的监听事件必须优先于较晚到达的初始结果。每次有效回调按实际到达顺序原子替换对应事实并发布，回调值为 null 时必须如实发布为未知，不能沿用旧值或压成断开。
+3. `displayModel` 仅可在 MSDK 提供稳定且非敏感的遥控器展示名称时出现。不得从序列号、固件版本、飞行器型号、产品 ID 或异常中推导。不可用时为 `null`，非明确已连接时始终为 `null`。遥控器连接从未知或断开变为明确已连接时，适配器必须再次异步读取 `RemoteControllerKey.KeyRemoteControllerType`；离开明确已连接时必须同步废弃此前型号，不能在下一次连接前暂存并复用。
+4. `start` 成功后必须为 `RemoteControllerKey.KeyConnection` 和 `RemoteControllerKey.KeyRemoteControllerType` 注册持续 `listen(key, holder, listener)`，再对每个 Key 调用 `getValue(key, callback)` 请求一次异步硬件值。不得用同步 `getValue(key)` 的 MSDK 缓存发布初始事实。首次硬件读取或监听回调前连接和型号保持未知；初始硬件读取开始后收到的监听事件必须优先于较晚到达的初始结果。同一型号 Key 的较早异步读取不得覆盖较晚重读或监听事件。每次有效回调按实际到达顺序原子替换对应事实并发布，回调值为 null 时必须如实发布为未知，不能沿用旧值或压成断开。
 5. 相同的平台值可以带着更新的版本号再次发布。跨来源排序和去重由状态存储负责，而非本适配器。
 
 ## 生命周期与失败规则

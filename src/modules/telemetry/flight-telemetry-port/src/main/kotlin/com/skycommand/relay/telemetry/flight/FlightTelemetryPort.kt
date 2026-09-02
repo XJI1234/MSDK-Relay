@@ -9,9 +9,9 @@ fun interface FlightTelemetryRegistration {
 interface FlightTelemetrySource {
     fun snapshot(): FlightTelemetrySnapshot
     fun onChanged(listener: () -> Unit): FlightTelemetryRegistration
-    /** Drops facts captured before a confirmed flight-controller disconnect. */
-    fun invalidate()
-    /** Starts a fresh hardware observation generation after the controller reconnects. */
-    fun refresh()
+    /** Drops only facts owned by FlightControllerKey after a confirmed controller disconnect. */
+    fun invalidateFlightControllerFacts()
+    /** Starts a fresh FlightControllerKey observation generation after the controller reconnects. */
+    fun refreshFlightControllerFacts()
     fun close()
 }

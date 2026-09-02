@@ -1,6 +1,8 @@
 package com.skycommand.relay.stream.dji
 
 import com.skycommand.relay.device.operation.DjiOperationCoordinator
+import com.skycommand.relay.device.operation.DjiOperation
+import com.skycommand.relay.device.operation.OperationCompletion
 import com.skycommand.relay.device.operation.OperationCancellation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
@@ -97,17 +99,35 @@ class DjiStreamAdapterContractTest {
         assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
 
         fixture.adapter.start(config())
+        assertEquals(StreamLifecycleState.STARTING, fixture.store.snapshot().state)
+        staleFailure()
+        assertEquals(StreamLifecycleState.STARTING, fixture.store.snapshot().state)
+        fixture.port.stopCompletion!!.succeed()
         fixture.port.startCompletion!!.succeed()
         assertEquals(StreamLifecycleState.STREAMING, fixture.store.snapshot().state)
-        staleFailure()
-        assertEquals(StreamLifecycleState.STREAMING, fixture.store.snapshot().state)
+    }
+
+    @Test
+    fun queuesRuntimeFailureCleanupBehindAnotherDjiOperation() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+        fixture.port.startCompletion!!.succeed()
+        val other = BlockingOperation()
+        fixture.coordinator.submit(other, 1_000) { }
+
+        fixture.port.runtimeFailure!!.invoke()
+
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+        assertEquals(0, fixture.port.stopCalls)
+        other.succeed()
+        assertEquals(1, fixture.port.stopCalls)
     }
 
     private class Fixture(val timeoutMillis: Long = 30_000) {
         val store = StreamStateStore.create()
         val port = Port()
         val scheduler = Scheduler()
-        private val coordinator = DjiOperationCoordinator.create(
+        val coordinator = DjiOperationCoordinator.create(
             executor = OperationExecutor { it() },
             scheduler = scheduler,
         )
@@ -119,6 +139,7 @@ class DjiStreamAdapterContractTest {
         var runtimeFailure: (() -> Unit)? = null
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
+        var stopCalls = 0
         var throwOnStart = false
         override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             if (throwOnStart) error("dji failure")
@@ -126,7 +147,13 @@ class DjiStreamAdapterContractTest {
             this.runtimeFailure = runtimeFailure
             this.startCompletion = completion
         }
-        override fun stop(completion: StreamDjiCompletion) { stopCompletion = completion }
+        override fun stop(completion: StreamDjiCompletion) { stopCalls += 1; stopCompletion = completion }
+    }
+
+    private class BlockingOperation : DjiOperation {
+        private var completion: OperationCompletion? = null
+        override fun run(completion: OperationCompletion) { this.completion = completion }
+        fun succeed() = requireNotNull(completion).succeed()
     }
 
     private class Scheduler : OperationScheduler {

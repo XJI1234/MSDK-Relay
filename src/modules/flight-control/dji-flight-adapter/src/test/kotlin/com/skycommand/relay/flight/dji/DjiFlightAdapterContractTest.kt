@@ -30,7 +30,7 @@ class DjiFlightAdapterContractTest {
     }
 
     @Test
-    fun mapsTimeoutCancellationAndPortExceptionToSafeTerminalFailures() {
+    fun blocksFurtherDjiWritesUntilTimedOutFlightActionIsResolved() {
         val scheduler = Scheduler()
         val executor = ManualExecutor()
         val port = Port()
@@ -41,9 +41,10 @@ class DjiFlightAdapterContractTest {
         scheduler.fire()
         assertEquals(listOf(FlightDjiTerminalOutcome.TIMED_OUT), outcomes)
 
-        val cancelled = assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND) { outcomes += it })
-        assertEquals(com.skycommand.relay.device.operation.CancellationResult.Cancelled, cancelled.cancellation.cancel())
-        assertEquals(listOf(FlightDjiTerminalOutcome.TIMED_OUT, FlightDjiTerminalOutcome.CANCELLED), outcomes)
+        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.LAND) { outcomes += it })
+        assertEquals(listOf(FlightDjiTerminalOutcome.TIMED_OUT), outcomes)
+        port.succeed()
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND) { outcomes += it })
         accepted.cancellation.cancel()
     }
 

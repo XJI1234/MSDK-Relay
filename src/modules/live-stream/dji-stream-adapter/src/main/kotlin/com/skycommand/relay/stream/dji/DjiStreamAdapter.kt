@@ -12,6 +12,9 @@ import com.skycommand.relay.stream.state.StreamMetrics
 import com.skycommand.relay.stream.state.StreamStartResult
 import com.skycommand.relay.stream.state.StreamStateStore
 import com.skycommand.relay.stream.state.StreamStopResult
+import com.skycommand.relay.stream.state.StreamUpdateResult
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 interface StreamDjiCompletion {
     fun succeed()
@@ -28,9 +31,6 @@ interface DjiStreamPort {
     )
 
     fun stop(completion: StreamDjiCompletion)
-
-    /** Clear stuck in-flight start/stop and best-effort stop DJI so the next start can run. */
-    fun abort() = Unit
 
     fun close() = Unit
 }
@@ -71,6 +71,9 @@ class DjiStreamAdapter private constructor(
     private val coordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
 ) {
+    private val recoveryLock = ReentrantLock()
+    private var recoveryQueued = false
+
     fun start(
         config: ValidatedStreamConfig,
         listener: StreamDjiTerminalListener = StreamDjiTerminalListener { },
@@ -79,13 +82,23 @@ class DjiStreamAdapter private constructor(
         val operationId = (state as? StreamStartResult.Accepted)?.operationId
             ?: return DjiStreamStartResult.Rejected(DjiStreamRejection.ALREADY_ACTIVE)
         val submission = coordinator.submit(
-            action = DjiOperation { completion ->
-                djiPort.start(
-                    config = config,
-                    metrics = { metrics -> stateStore.updateMetrics(operationId, metrics) },
-                    runtimeFailure = { stateStore.markFailed(operationId, "Stream runtime failed") },
-                    completion = completion.asDjiCompletion(),
-                )
+            action = object : DjiOperation {
+                override fun run(completion: OperationCompletion) {
+                    djiPort.start(
+                        config = config,
+                        metrics = { metrics -> stateStore.updateMetrics(operationId, metrics) },
+                        runtimeFailure = {
+                            if (stateStore.markFailed(operationId, "Stream runtime failed") is StreamUpdateResult.Applied) {
+                                requestRecoveryStop()
+                            }
+                        },
+                        completion = completion.asDjiCompletion(),
+                    )
+                }
+
+                override fun onLateDjiCompletion(outcome: OperationOutcome) {
+                    if (outcome == OperationOutcome.SUCCEEDED) requestRecoveryStop()
+                }
             },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome ->
@@ -111,7 +124,15 @@ class DjiStreamAdapter private constructor(
                 },
             )
         val submission = coordinator.submit(
-            action = DjiOperation { completion -> djiPort.stop(completion.asDjiCompletion()) },
+            action = object : DjiOperation {
+                override fun run(completion: OperationCompletion) {
+                    djiPort.stop(completion.asDjiCompletion())
+                }
+
+                override fun onLateDjiCompletion(outcome: OperationOutcome) {
+                    if (outcome == OperationOutcome.FAILED) requestRecoveryStop()
+                }
+            },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome ->
                 completeStop(operationId, outcome)
@@ -131,7 +152,6 @@ class DjiStreamAdapter private constructor(
             stateStore.markStarted(operationId)
         } else {
             stateStore.markFailed(operationId, "Stream start failed")
-            runCatching { djiPort.abort() }
         }
     }
 
@@ -139,8 +159,30 @@ class DjiStreamAdapter private constructor(
         if (outcome == OperationOutcome.SUCCEEDED) {
             stateStore.markStopped(operationId)
         } else {
-            stateStore.markFailed(operationId, "Stream stop failed")
-            runCatching { djiPort.abort() }
+            if (stateStore.markFailed(operationId, "Stream stop failed") is StreamUpdateResult.Applied) {
+                requestRecoveryStop()
+            }
+        }
+    }
+
+    /** Schedules best-effort stream cleanup through the shared DJI operation queue. */
+    fun requestRecoveryStop() {
+        val shouldSubmit = recoveryLock.withLock {
+            if (recoveryQueued) false else {
+                recoveryQueued = true
+                true
+            }
+        }
+        if (!shouldSubmit) return
+        val submission = coordinator.submit(
+            action = DjiOperation { completion -> djiPort.stop(completion.asDjiCompletion()) },
+            timeoutMillis = timeoutMillis,
+            listener = OperationResultListener {
+                recoveryLock.withLock { recoveryQueued = false }
+            },
+        )
+        if (submission !is SubmissionResult.Accepted) {
+            recoveryLock.withLock { recoveryQueued = false }
         }
     }
 

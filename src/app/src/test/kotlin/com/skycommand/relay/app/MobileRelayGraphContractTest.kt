@@ -43,25 +43,29 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
-    fun flightControllerDisconnectInvalidatesFlightFactsAndReconnectReobservesThem() {
+    fun flightControllerConnectionTransitionsReobserveFlightFactsAfterUnknownOrDisconnect() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("flight.invalidate()"))
-        assertTrue(source.contains("flight.refresh()"))
-        assertTrue(source.contains("flightTelemetryInvalidated"))
+        assertTrue(source.contains("flight.invalidateFlightControllerFacts()"))
+        assertTrue(source.contains("flight.refreshFlightControllerFacts()"))
+        val synchronization = source.substringAfter("private fun synchronizeFlightTelemetryWithFlightController()")
+            .substringBefore("private fun cancelUsbWatch()")
+        assertTrue(synchronization.contains("lastFlightControllerLink"))
+        assertTrue(synchronization.contains("previous != LinkState.CONNECTED"))
+        assertTrue(synchronization.contains("FlightTelemetryLinkAction.REFRESH"))
     }
 
     @Test
-    fun productConnectionIsNeverLabelledAsAircraftConnection() {
+    fun productConnectionIsNotShownAsAnAircraftConnectionFact() {
         val strings = listOf(
             Path("src/main/res/values/strings.xml"),
             Path("src/app/src/main/res/values/strings.xml"),
         ).first { it.exists() }.readText()
 
-        assertTrue(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
+        assertFalse(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
         assertFalse(strings.contains("飞机连接 [ProductKey.KeyConnection]"))
     }
 }
@@ -98,6 +102,7 @@ class MainActivityMsdkFactContractTest {
         assertTrue(strings.contains("遥控器连接 [RemoteControllerKey.KeyConnection]"))
         assertTrue(strings.contains("对频状态 [RemoteControllerKey.KeyPairingStatus]"))
         assertTrue(strings.contains("飞控连接 [FlightControllerKey.KeyConnection]"))
-        assertTrue(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
+        assertTrue(strings.contains("主电池连接 [BatteryKey.KeyConnection, LEFT_OR_MAIN]"))
+        assertFalse(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
     }
 }

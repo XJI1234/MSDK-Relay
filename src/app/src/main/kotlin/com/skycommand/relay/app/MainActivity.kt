@@ -256,7 +256,7 @@ class MainActivity : ComponentActivity() {
                 getString(R.string.status_remote_controller, StatusLabels.link(status.remoteController)),
                 getString(R.string.status_pairing, StatusLabels.pairing(status.pairing)),
                 getString(R.string.status_flight_controller, StatusLabels.link(status.flightController)),
-                getString(R.string.status_aircraft, StatusLabels.link(status.aircraft)),
+                getString(R.string.status_battery, StatusLabels.link(status.battery)),
                 getString(R.string.status_stream, status.stream),
                 getString(R.string.status_mission, status.mission),
             ).joinToString("\n")
@@ -283,6 +283,7 @@ class MainActivity : ComponentActivity() {
         pairing = "UNKNOWN",
         flightController = "UNKNOWN",
         aircraft = "UNKNOWN",
+        battery = "UNKNOWN",
         stream = "IDLE",
         mission = "-",
         canStartPairing = false,

@@ -81,15 +81,24 @@ class MissionExecutor private constructor(
         missionRevision: Long,
         deviceGeneration: Long,
     ) {
-        lock.withLock {
+        val confirmation = lock.withLock {
             val unresolved = unconfirmedControl ?: return
             if (
                 unresolved.missionRevision == missionRevision &&
                 unresolved.deviceGeneration == deviceGeneration &&
                 unresolved.command.observedState == state
             ) {
-                unconfirmedControl = null
-            }
+                unresolved.hardwareConfirmation
+            } else null
+        } ?: return
+        if (!confirmation()) return
+        lock.withLock {
+            val unresolved = unconfirmedControl ?: return
+            if (
+                unresolved.missionRevision == missionRevision &&
+                unresolved.deviceGeneration == deviceGeneration &&
+                unresolved.command.observedState == state
+            ) unconfirmedControl = null
         }
     }
 
@@ -133,6 +142,7 @@ class MissionExecutor private constructor(
 
         val submission = coordinator.submit(
             action = DjiOperation { operationCompletion ->
+                operation.installHardwareConfirmation(operationCompletion::confirmHardwareSettled)
                 try {
                     val completion = object : ControlCompletion {
                         override fun succeed() = operationCompletion.succeed()
@@ -160,20 +170,29 @@ class MissionExecutor private constructor(
     }
 
     private fun finish(operation: ActiveCommand, outcome: OperationOutcome) {
+        var hardwareConfirmation: (() -> Boolean)? = null
         val completed = lock.withLock {
             if (active !== operation) false else {
                 active = null
-                if (
-                    outcome != OperationOutcome.SUCCEEDED &&
-                    operation.command.requiresReceiptConfirmation &&
-                    !matchingExecutionStateAlreadyObserved(operation)
-                ) {
-                    unconfirmedControl = operation
+                if (outcome != OperationOutcome.SUCCEEDED && operation.command.requiresReceiptConfirmation) {
+                    if (matchingExecutionStateAlreadyObserved(operation)) {
+                        if (outcome == OperationOutcome.TIMED_OUT || outcome == OperationOutcome.CANCELLED) {
+                            hardwareConfirmation = operation.hardwareConfirmation
+                        }
+                    } else {
+                        unconfirmedControl = operation
+                    }
                 }
                 true
             }
         }
         if (!completed) return
+        val confirmedByObservation = hardwareConfirmation?.invoke()
+        if (hardwareConfirmation != null && confirmedByObservation != true) {
+            lock.withLock {
+                if (unconfirmedControl == null) unconfirmedControl = operation
+            }
+        }
         nextState(operation, outcome)?.let { applyState(operation, it) }
         runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome()) }
     }
@@ -243,7 +262,12 @@ class MissionExecutor private constructor(
         val previousState: ExecutionState,
         val command: Command,
         val listener: ExecutionTerminalListener,
-    )
+        var hardwareConfirmation: (() -> Boolean)? = null,
+    ) {
+        fun installHardwareConfirmation(confirmation: () -> Boolean) {
+            hardwareConfirmation = confirmation
+        }
+    }
 
     companion object {
         fun create(

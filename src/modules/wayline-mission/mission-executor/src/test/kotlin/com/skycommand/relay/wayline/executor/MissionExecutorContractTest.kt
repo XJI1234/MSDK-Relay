@@ -105,7 +105,20 @@ class MissionExecutorContractTest {
             ExecutionRejection.OPERATION_UNCONFIRMED,
             assertIs<ExecutionRequestResult.Rejected>(fixture.executor.pause()).reason,
         )
-        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                4,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.PAUSED,
+            ),
+        )
+        fixture.executor.observeExecutionState(
+            ExecutionState.PAUSED,
+            fixture.store.snapshot().missionRevision!!,
+            fixture.store.snapshot().deviceGeneration,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
     }
 
     @Test
@@ -152,7 +165,20 @@ class MissionExecutorContractTest {
             ExecutionRejection.OPERATION_UNCONFIRMED,
             assertIs<ExecutionRequestResult.Rejected>(fixture.executor.resume()).reason,
         )
-        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                5,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.EXECUTING,
+            ),
+        )
+        fixture.executor.observeExecutionState(
+            ExecutionState.EXECUTING,
+            fixture.store.snapshot().missionRevision!!,
+            fixture.store.snapshot().deviceGeneration,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
     }
 
     @Test

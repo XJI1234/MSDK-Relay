@@ -17,7 +17,6 @@ object DeviceCapabilityReader {
     fun read(snapshot: DeviceSnapshot): DeviceCapabilities {
         val sdkReady = snapshot.sdkAvailability == SdkAvailability.READY
         val remoteConnected = snapshot.remoteController == LinkState.CONNECTED
-        val aircraftConnected = snapshot.aircraft == LinkState.CONNECTED
         val airLinkConnected = snapshot.airLink == LinkState.CONNECTED
         val cameraConnected = snapshot.camera == LinkState.CONNECTED
         val flightControllerConnected = snapshot.flightController == LinkState.CONNECTED
@@ -32,13 +31,13 @@ object DeviceCapabilityReader {
             PairingState.PAIRED,
             PairingState.STOPPING,
         )
-        val flightReady = sdkReady && aircraftConnected && flightControllerConnected
+        val flightReady = sdkReady && flightControllerConnected
 
         return DeviceCapabilities(
-            canStartPairing = sdkReady && remoteConnected && !aircraftConnected && pairingCanStart,
+            canStartPairing = sdkReady && remoteConnected && snapshot.flightController == LinkState.DISCONNECTED && pairingCanStart,
             canStopPairing = pairingActive,
             canReadTelemetry = flightReady,
-            canStreamVideo = sdkReady && aircraftConnected && airLinkConnected && cameraConnected,
+            canStreamVideo = sdkReady && airLinkConnected && cameraConnected,
             canRunWayline = flightReady && remoteConnected,
         )
     }

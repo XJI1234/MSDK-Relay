@@ -41,6 +41,7 @@ import com.skycommand.relay.device.pairing.status.PairingStatusPort
 import com.skycommand.relay.device.pairing.status.PairingStatusSignal
 import com.skycommand.relay.device.pairing.status.PairingStatusSubscription
 import com.skycommand.relay.device.state.PairingState
+import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.operation.DjiOperation
 import com.skycommand.relay.telemetry.flight.FlightTelemetryRegistration
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
@@ -564,14 +565,23 @@ class SimulationDjiAdapter private constructor(
             lock.withLock { if (!closed) telemetryListeners += listener }
             return FlightTelemetryRegistration { lock.withLock { telemetryListeners.remove(listener) } }
         }
-        override fun invalidate() {
+        override fun invalidateFlightControllerFacts() {
             val listeners = lock.withLock {
-                snapshot = FlightTelemetrySnapshot()
+                snapshot = snapshot.copy(
+                    isFlying = null,
+                    motorsOn = null,
+                    flightMode = null,
+                    remainingFlightTimeSeconds = null,
+                    altitudeMeters = null,
+                    latitude = null,
+                    longitude = null,
+                    lowBatteryRthState = null,
+                )
                 telemetryListeners.toList()
             }
             listeners.forEach { listener -> listener() }
         }
-        override fun refresh() {
+        override fun refreshFlightControllerFacts() {
             val listeners = lock.withLock {
                 snapshot = initialSnapshot()
                 telemetryListeners.toList()
@@ -585,6 +595,7 @@ class SimulationDjiAdapter private constructor(
             motorsOn = false,
             flightMode = "GPS_NORMAL",
             batteryPercent = 80,
+            battery = LinkState.CONNECTED,
         )
     }
 

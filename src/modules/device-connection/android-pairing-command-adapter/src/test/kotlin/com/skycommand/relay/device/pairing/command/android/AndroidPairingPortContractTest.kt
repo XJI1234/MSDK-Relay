@@ -11,6 +11,7 @@ class AndroidPairingPortContractTest {
         operation.run(object : com.skycommand.relay.device.operation.OperationCompletion {
             override fun succeed() { success += 1 }
             override fun fail() = Unit
+            override fun confirmHardwareSettled() = false
         })
         api.completeSuccess(); api.completeSuccess()
         assertEquals(listOf(PairingCommand.START), api.calls); assertEquals(1, success)
@@ -30,5 +31,6 @@ class AndroidPairingPortContractTest {
     }
     private class FakeCompletion(private val onSuccess: () -> Unit = {}, private val onFail: () -> Unit = {}) : com.skycommand.relay.device.operation.OperationCompletion {
         override fun succeed() = onSuccess(); override fun fail() = onFail()
+        override fun confirmHardwareSettled() = false
     }
 }

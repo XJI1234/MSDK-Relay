@@ -30,28 +30,7 @@ class AndroidDjiStreamPortContractTest {
         requireNotNull(platform.startCompletion).succeed()
         requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(true, 1280, 720, 25, 2200, 35, 12, 24)); requireNotNull(platform.listener).onError()
         assertEquals(listOf(StreamMetrics("1280x720", 25.0, 2200.0, 35, 12, 24)), currentMetrics); assertEquals(1, failures)
-        assertEquals(1, platform.stopCalls)
-    }
-
-    @Test fun abortClearsStuckInFlightSoStartCanRetry() {
-        val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
-        port.start(ValidatedStreamConfig("rtmp://host/live/stuck"), {}, {}, Completion())
-        // Simulate coordinator timeout: start never completes, in-flight stays true.
-        val rejected = Completion()
-        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, rejected)
-        assertEquals(listOf("failure"), rejected.events)
-
-        port.abort()
-        val pendingStop = requireNotNull(platform.stopCompletion)
-        val retry = Completion()
-        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, retry)
-        assertEquals(listOf("failure"), retry.events)
-
-        pendingStop.succeed()
-        val recovered = Completion()
-        port.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, recovered)
-        requireNotNull(platform.startCompletion).succeed()
-        assertEquals(listOf("success"), recovered.events)
+        assertEquals(0, platform.stopCalls)
     }
 
     @Test fun detachesAfterSuccessfulStopAndMapsStopException() {
@@ -80,7 +59,7 @@ class AndroidDjiStreamPortContractTest {
         assertEquals(2, platform.startCalls)
     }
 
-    @Test fun runtimeFailureRequestsPlatformStop() {
+    @Test fun runtimeFailureDoesNotIssueASecondPlatformOperation() {
         val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
         var runtimeFailures = 0
 
@@ -89,10 +68,10 @@ class AndroidDjiStreamPortContractTest {
         requireNotNull(platform.listener).onError()
 
         assertEquals(1, runtimeFailures)
-        assertEquals(1, platform.stopCalls)
+        assertEquals(0, platform.stopCalls)
     }
 
-    @Test fun reportsDjiStoppedStatusAsRuntimeFailureAfterAConfirmedStart() {
+    @Test fun reportsDjiStoppedStatusWithoutIssuingASecondPlatformOperation() {
         val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
         var runtimeFailures = 0
 
@@ -101,7 +80,7 @@ class AndroidDjiStreamPortContractTest {
         requireNotNull(platform.listener).onStatus(DjiLiveStreamFact(false, 0, 0, 0, 0, 0))
 
         assertEquals(1, runtimeFailures)
-        assertEquals(1, platform.stopCalls)
+        assertEquals(0, platform.stopCalls)
     }
 
     @Test fun closeStopsActiveStreamAndInvalidatesCallbacks() {

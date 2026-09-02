@@ -84,6 +84,7 @@ class SnapshotAssemblerContractTest {
                     altitudeMeters = 80.5,
                     latitude = 30.123,
                     longitude = 120.456,
+                    battery = LinkState.CONNECTED,
                 ),
                 stream = StreamSnapshot(
                     revision = 3,
@@ -167,7 +168,7 @@ class SnapshotAssemblerContractTest {
     }
 
     @Test
-    fun clearsFlightFactsWhenTheFlightControllerIsDisconnected() {
+    fun clearsOnlyFlightControllerFactsWhenTheFlightControllerIsDisconnected() {
         val result = SnapshotAssembler.assemble(
             inputs(
                 device = DeviceSnapshot(
@@ -190,6 +191,7 @@ class SnapshotAssemblerContractTest {
                     altitudeMeters = 80.5,
                     latitude = 30.123,
                     longitude = 120.456,
+                    battery = LinkState.CONNECTED,
                 ),
             ),
         )
@@ -197,7 +199,7 @@ class SnapshotAssemblerContractTest {
         assertEquals(null, result.isFlying)
         assertEquals(null, result.motorsOn)
         assertEquals(null, result.flightMode)
-        assertEquals(null, result.batteryPercent)
+        assertEquals(86, result.batteryPercent)
         assertEquals(null, result.lowBatteryRthState)
         assertEquals(null, result.remainingFlightTimeSeconds)
         assertEquals(null, result.altitudeMeters)

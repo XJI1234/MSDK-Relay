@@ -224,6 +224,20 @@ class AndroidAircraftPortContractTest {
     }
 
     @Test
+    fun rereadsProductTypeWhenTheProductConnectionFirstBecomesAvailable() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+
+        val connectionUpdate = source.substringAfter("private fun publishConnection(")
+            .substringBefore("private fun publishProductType")
+        assertTrue(connectionUpdate.contains("requestInitialProductType()"))
+        assertTrue(source.contains("private var productTypeReadGeneration = 0L"))
+        assertTrue(source.contains("productTypeReadGeneration != request.initialReadGeneration"))
+    }
+
+    @Test
     fun keepsUnknownUntilTheOneTimeHardwareReadsReportTheirFacts() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
