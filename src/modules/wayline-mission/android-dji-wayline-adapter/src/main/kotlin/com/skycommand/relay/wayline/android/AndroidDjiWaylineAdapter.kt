@@ -59,7 +59,7 @@ class AndroidDjiWaylineAdapter internal constructor(
     private var startSignalsEnabled = false
 
     override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
-        if (!metadata.fileName.isSafeKmzName()) return safeFail(completion)
+        if (!metadata.fileName.isSafeKmzName() || !SingleWaylineKmzGuard.allows(bytes)) return safeFail(completion)
         val file = runCatching { files.write(metadata.fileName, bytes) }.getOrElse { return safeFail(completion) }
         val once = OnceUpload(completion)
         val operationGeneration = synchronized(lock) {

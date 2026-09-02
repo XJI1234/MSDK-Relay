@@ -4,6 +4,9 @@ import com.skycommand.relay.wayline.executor.ControlCompletion
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -20,7 +23,7 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(0, dji.executionListenerRegistrations)
 
         adapter.beginStartAttempt()
-        adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
         requireNotNull(dji.uploadCompletion).succeed()
         adapter.start(ControlDone())
         assertEquals(1, dji.executionListenerRegistrations)
@@ -40,10 +43,49 @@ class AndroidDjiWaylineAdapterContractTest {
 
     @Test fun uploadsTemporaryFileAndControlsTheSuccessfulName() {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji); val progress=mutableListOf<Int>(); val done=UploadDone()
-        adapter.upload(metadata("one.kmz"), byteArrayOf(1,2), { progress+=it }, done)
+        adapter.upload(metadata("one.kmz"), singleWaylineKmz(), { progress+=it }, done)
         assertEquals(files.paths.single(),dji.uploadPath); requireNotNull(dji.uploadCompletion).progress(45.4); requireNotNull(dji.uploadCompletion).succeed(); requireNotNull(dji.uploadCompletion).succeed()
         assertEquals(listOf(45),progress); assertEquals(listOf("success"),done.events); assertEquals(1,files.deletes)
         val start=ControlDone(); adapter.start(start); assertEquals("one.kmz",dji.controlName); requireNotNull(dji.controlCompletion).succeed(); assertEquals(listOf("success"),start.events)
+    }
+
+    @Test fun rejectsMultipleWaylinesBeforeWritingOrCallingDji() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+        val done = UploadDone()
+
+        adapter.upload(metadata("two-routes.kmz"), wpmlMission(0, 1), {}, done)
+
+        assertEquals(listOf("failure"), done.events)
+        assertEquals(0, files.writes)
+        assertTrue(dji.uploadCompletions.isEmpty())
+    }
+
+    @Test fun rejectsKmzWithoutAWaylineBeforeWritingOrCallingDji() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+        val done = UploadDone()
+
+        adapter.upload(metadata("empty-route.kmz"), wpmlMission(), {}, done)
+
+        assertEquals(listOf("failure"), done.events)
+        assertEquals(0, files.writes)
+        assertTrue(dji.uploadCompletions.isEmpty())
+    }
+
+    @Test fun rejectsWpmlWithADoctypeBeforeWritingOrCallingDji() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+        val done = UploadDone()
+
+        adapter.upload(metadata("unsafe-xml.kmz"), wpmlMissionWithDoctype(), {}, done)
+
+        assertEquals(listOf("failure"), done.events)
+        assertEquals(0, files.writes)
+        assertTrue(dji.uploadCompletions.isEmpty())
     }
 
     @Test fun doesNotDeliverExecutionStateUntilTheCurrentStartReceiptIsConfirmed() {
@@ -54,7 +96,7 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.onSignal { signals += it }
         adapter.beginStartAttempt()
 
-        adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
         requireNotNull(dji.uploadCompletion).succeed()
         adapter.start(ControlDone())
         dji.emit(DjiMissionExecutionState.EXECUTING)
@@ -70,8 +112,8 @@ class AndroidDjiWaylineAdapterContractTest {
 
     @Test fun failedUploadDoesNotReplacePriorSuccessfulMission() {
         val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(FakeFiles(),dji)
-        adapter.upload(metadata("good.kmz"), byteArrayOf(1), {}, UploadDone()); requireNotNull(dji.uploadCompletion).succeed()
-        adapter.upload(metadata("bad.kmz"), byteArrayOf(2), {}, UploadDone()); requireNotNull(dji.uploadCompletion).fail()
+        adapter.upload(metadata("good.kmz"), singleWaylineKmz(), {}, UploadDone()); requireNotNull(dji.uploadCompletion).succeed()
+        adapter.upload(metadata("bad.kmz"), singleWaylineKmz(), {}, UploadDone()); requireNotNull(dji.uploadCompletion).fail()
         adapter.stop(ControlDone()); assertEquals("good.kmz",dji.controlName)
     }
 
@@ -88,9 +130,9 @@ class AndroidDjiWaylineAdapterContractTest {
 
     @Test fun retryKeepsPreviousUploadInputUntilItsOwnTerminalCallback() {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji)
-        adapter.upload(metadata("first.kmz"), byteArrayOf(1), {}, UploadDone())
+        adapter.upload(metadata("first.kmz"), singleWaylineKmz(), {}, UploadDone())
         val first = dji.uploadCompletions.single()
-        adapter.upload(metadata("second.kmz"), byteArrayOf(2), {}, UploadDone())
+        adapter.upload(metadata("second.kmz"), singleWaylineKmz(), {}, UploadDone())
 
         assertEquals(0, files.deleteCounts[0])
         assertEquals(0, files.deleteCounts[1])
@@ -105,8 +147,8 @@ class AndroidDjiWaylineAdapterContractTest {
 
     @Test fun closeInvalidatesSubmittedControlAndCleansEveryUploadInput() {
         val files=FakeFiles(); val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(files,dji)
-        adapter.upload(metadata("one.kmz"), byteArrayOf(1), {}, UploadDone())
-        adapter.upload(metadata("two.kmz"), byteArrayOf(2), {}, UploadDone())
+        adapter.upload(metadata("one.kmz"), singleWaylineKmz(), {}, UploadDone())
+        adapter.upload(metadata("two.kmz"), singleWaylineKmz(), {}, UploadDone())
         dji.uploadCompletions.last().succeed()
         val control=ControlDone(); adapter.start(control)
         val late = requireNotNull(dji.controlCompletion)
@@ -139,6 +181,28 @@ class AndroidDjiWaylineAdapterContractTest {
     }
 
     private fun metadata(name:String)=MissionMetadata(name,1,"a".repeat(64))
+    private fun singleWaylineKmz(): ByteArray = wpmlMission(0)
+    private fun wpmlMission(vararg ids: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("wpmz/waylines.wpml"))
+            val folders = ids.joinToString("") { id -> "<Folder><wpml:waylineId>$id</wpml:waylineId></Folder>" }
+            zip.write(("<kml xmlns=\"http://www.opengis.net/kml/2.2\" xmlns:wpml=\"http://www.dji.com/wpmz/1.0.6\"><Document>$folders</Document></kml>").encodeToByteArray())
+            zip.closeEntry()
+        }
+        return output.toByteArray()
+    }
+    private fun wpmlMissionWithDoctype(): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("wpmz/waylines.wpml"))
+            zip.write(("<!DOCTYPE kml [<!ENTITY ignored \"ignored\">]>" +
+                "<kml xmlns=\"http://www.opengis.net/kml/2.2\" xmlns:wpml=\"http://www.dji.com/wpmz/1.0.6\">" +
+                "<Document><Folder><wpml:waylineId>0</wpml:waylineId></Folder></Document></kml>").encodeToByteArray())
+            zip.closeEntry()
+        }
+        return output.toByteArray()
+    }
     private class UploadDone:UploadCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
     private class ControlDone:ControlCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
     private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>()

@@ -1,7 +1,7 @@
 # wayline-mission 一级模块契约
 
 状态：航线入场阶段已实现并通过 JVM、Android 单元测试与全仓回归验证
-版本：2.0.0
+版本：2.1.0
 所属程序：MSDK Relay Android
 Gradle 路径：`:wayline-mission`
 
@@ -19,7 +19,7 @@ Gradle 路径：`:wayline-mission`
 | `mission-executor` | 只提交开始、暂停、恢复和停止任务命令，并管理命令终态 |
 | `mission-flight-phase` | 将 DJI 航线状态转换为可信的入场与执行阶段事实 |
 | `wayline-command-handler` | 解释 wayline 命令并调用对应能力 |
-| `android-dji-wayline-adapter` | 将 KMZ 字节、上传进度、任务控制及原始任务状态转换为 DJI MSDK v5 操作 |
+| `android-dji-wayline-adapter` | 在上传前拒绝非单航线 WPML，再将 KMZ 字节、上传进度、任务控制及原始任务状态转换为 DJI MSDK v5 操作 |
 | `android-mission-staging-adapter` | 在应用私有目录原子暂存并读取当前 KMZ 文件 |
 
 所有 DJI 操作必须通过 `device-connection` 的统一操作调度入口；文件字节只由 `mission-staging` 拥有。
@@ -27,6 +27,7 @@ Gradle 路径：`:wayline-mission`
 ## 3. 不变量
 
 - 文件暂存成功不代表已上传，上传成功不代表任务已开始。
+- 当前生产业务一份 KMZ 任务只能包含一条 DJI WPML `wayline`。设备侧上传边界必须在写缓存和触达 DJI 前拒绝缺少、重复或包含零条/多条 `waylineId` 的归档；不得依赖 `startMission` 的未选择航线重载或空 `waylineIds` 列表来决定执行对象。该基数检查只消除执行对象歧义，不替代 DJI 对 WPML、机型适配或飞行条件的完整校验。
 - `wayline.start` 只有一个 DJI 飞控命令：DJI 负责起飞、按 KMZ 的入场策略飞往首航点并连续执行航线。手机端不得把它拆成二次起飞、虚拟摇杆导航或第二次 `startMission` 调用。
 - `startMission` 的成功回调只表示 DJI 接受了启动请求，绝不表示飞行器已到达首航点或已开始飞行航线。
 - 仅 DJI 的 `ENTER_WAYLINE` 原始状态可确认飞行器已进入首航点。收到该状态时只产生 `START_POINT_REACHED`，任务执行状态必须保持 `STARTING`，不得把入场当成已经开始执行航线。
