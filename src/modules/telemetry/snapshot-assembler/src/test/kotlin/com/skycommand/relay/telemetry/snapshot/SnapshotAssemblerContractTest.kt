@@ -115,15 +115,36 @@ class SnapshotAssemblerContractTest {
         assertEquals(86, result.batteryPercent)
         assertEquals(LowBatteryRthState.IDLE, result.lowBatteryRthState)
         assertEquals(30.123, result.latitude)
-        assertEquals(true, result.liveStreaming)
-        assertEquals("1920x1080", result.liveResolution)
-        assertEquals(7, result.livePacketLoss)
-        assertEquals(96, result.livePacketCacheLength)
+        assertEquals<Boolean?>(null, result.liveStreaming)
+        assertEquals(null, result.liveResolution)
+        assertEquals(null, result.livePacketLoss)
+        assertEquals(null, result.livePacketCacheLength)
         assertEquals(1, result.missionRevision)
         assertEquals(0, result.missionDeviceGeneration)
         assertEquals(ExecutionState.EXECUTING, result.missionExecution)
         assertEquals(65, result.missionUploadProgress)
         assertEquals("survey.kmz", result.missionFileName)
+    }
+
+    @Test
+    fun publishesLiveMetricsOnlyWhenDjiReportsStreaming() {
+        val result = SnapshotAssembler.assemble(
+            inputs(
+                stream = StreamSnapshot(
+                    revision = 1,
+                    state = StreamLifecycleState.STREAMING,
+                    targetConfigured = true,
+                    notice = "Streaming",
+                    metrics = StreamMetrics("1920x1080", 30.0, 4_000.0, 42, 7, 96),
+                    djiStreaming = true,
+                ),
+            ),
+        )
+
+        assertEquals(true, result.liveStreaming)
+        assertEquals("1920x1080", result.liveResolution)
+        assertEquals(7, result.livePacketLoss)
+        assertEquals(96, result.livePacketCacheLength)
     }
 
     @Test

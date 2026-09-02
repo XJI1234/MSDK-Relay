@@ -7,7 +7,7 @@
 
 ## 唯一职责
 
-本模块是 DJI MSDK v5 飞行与主电池事实到 `FlightTelemetrySnapshot` 的唯一 Android 适配器。它只观察飞行状态、电机状态、飞行模式、主电池连接与电量、低电量返航状态与预估时间、相对高度和飞行器经纬度，并向组合根提供一个原子只读快照和变化通知。
+本模块是 DJI MSDK v5 飞行、主电池、GPS、视觉和起降诊断事实到 `FlightTelemetrySnapshot` 的唯一 Android 适配器。它只观察飞行状态、电机状态、飞行模式、主电池连接与电量、低电量返航状态与预估时间、相对高度、飞行器经纬度、GPS 信号/卫星数、视觉传感器使用、视觉系统告警、视觉定位开关、降落保护、降落确认请求、起飞失败原因和电机启动失败原因，并向组合根提供一个原子只读快照和变化通知。
 
 它不判断设备连接，不拥有业务遥测，不发布网络消息，不控制飞行，不管理直播或航线，不注册 DJI SDK，不请求权限，也不渲染界面。
 
@@ -26,7 +26,7 @@ source.close() -> Unit
 
 `snapshot()` 始终返回最近一次完整、不可变且经过校验的快照。`onChanged` 最多建立一个 DJI 观察代次；重复订阅不得替换原监听器，并返回空操作注册。每个 Key 必须先注册持续监听，再通过 `KeyManager.getValue(key, callback)` 对同一 Key 向硬件异步读取一次初值；不得调用同步 `getValue(key)`，因为其只读取 MSDK 缓存。初读成功前对应字段保持未知，初读失败或硬件返回 null 也保持未知，绝不能以缓存或其他字段填充。每个初读记录该 Key 的事件版本，请求之后先到达的监听事件优先，较晚返回的初读结果必须丢弃。每次被接受的平台回调都产生一份完整快照，尚未知的字段如实为 `null`；不得用缓存拼装伪完整首帧。`unregister` 和 `close` 均幂等，并使该代次的全部迟到回调失效。
 
-组合根在飞控 Key 明确断开时调用 `invalidateFlightControllerFacts()`：适配器必须同步清空仅属于飞控的字段并增加飞控观察代次，旧飞控监听和旧异步首读从此无权恢复飞控字段。该方法不读取 MSDK 缓存，也不发起飞行操作，且不得清空或停止电池观察。该 Key 从非连接状态转为明确连接时，组合根调用 `refreshFlightControllerFacts()`；适配器先维持飞控字段为空，再建立新代次的飞控 `listen + 异步 getValue(callback)` 观察，并在新值到达后逐项发布。重建期间或失败后飞控字段保持未知，不能重新公开断开前坐标、飞行状态或模式。该调用还必须在不取消电池监听、不清空既有电池事实的前提下，对 `BatteryKey.KeyConnection(LEFT_OR_MAIN)` 发起一次新的异步硬件读取；只有该 Key 明确连接后才能再读取电量。这样电池 Key 初读早于机载硬件就绪时可恢复，但飞控状态绝不被用来推断电池状态。
+组合根在飞控 Key 明确断开时调用 `invalidateFlightControllerFacts()`：适配器必须同步清空仅属于飞控或飞控辅助的字段并增加飞控观察代次，旧飞控监听和旧异步首读从此无权恢复这些字段。该方法不读取 MSDK 缓存，也不发起飞行操作，且不得清空或停止电池观察。该 Key 从非连接状态转为明确连接时，组合根调用 `refreshFlightControllerFacts()`；适配器先维持飞控事实为空，再建立新代次的飞控 `listen + 异步 getValue(callback)` 观察，并在新值到达后逐项发布。重建期间或失败后飞控字段保持未知，不能重新公开断开前坐标、飞行状态、GPS、视觉或起降诊断。该调用还必须在不取消电池监听、不清空既有电池事实的前提下，对 `BatteryKey.KeyConnection(LEFT_OR_MAIN)` 发起一次新的异步硬件读取；只有该 Key 明确连接后才能再读取电量。这样电池 Key 初读早于机载硬件就绪时可恢复，但飞控状态绝不被用来推断电池状态。
 
 ## 字段规则
 
@@ -38,7 +38,9 @@ source.close() -> Unit
 6. `remainingFlightTimeSeconds` 仅来自同一对象的 `remainingFlightTime`，表示 DJI 低电量返航策略下的预估时间，不能表示通用“预计可飞时间”，也绝不参与任何安全门禁。只有返航状态不是 `UNKNOWN` 且值为正秒数时才保留；DJI 默认组合 `UNKNOWN + 0` 必须保留状态 `UNKNOWN`，但预估时间为未知，不能显示为“0 分 0 秒”。
 7. `altitudeMeters` 仅来自 `FlightControllerKey.KeyAltitude` 的有限原始数值，表示相对起飞点高度；本模块不得换算为海拔、下视测距高度或手动抬升高度。其他值为 `null`。
 8. 纬度和经度必须同时有限且分别位于 `-90..90`、`-180..180`；任一无效时两者同时为 `null`。
-9. 一次平台回调必须先生成新的完整快照，再在锁外通知调用方。监听器异常不得破坏后续更新或清理。
+9. `gpsSignalLevel`、`visionSystemWarning`、`landingProtectionState`、`takeoffFailureError` 与 `motorStartFailureError` 仅透传各自 MSDK 枚举的 `.name`。MSDK 明确返回的 `UNKNOWN`、`NONE`、`INVALID` 或其他枚举值必须原样保留；空值为 `null`，不得被翻译成安全、故障或其他派生判断。
+10. `gpsSatelliteCount` 仅来自 `FlightControllerKey.KeyGPSSatelliteCount` 的非负整数原值；`visionSensorUsed`、`visionPositioningEnabled` 和 `landingConfirmationNeeded` 分别仅来自 `FlightControllerKey.KeyIsVisionSensorUsed`、`FlightAssistantKey.KeyVisionPositioningEnabled` 与 `FlightControllerKey.KeyIsLandingConfirmationNeeded` 的布尔原值。空值保持 `null`。视觉定位开关不等于视觉系统正在工作，也不等于起飞或降落安全。
+11. 一次平台回调必须先生成新的完整快照，再在锁外通知调用方。监听器异常不得破坏后续更新或清理。
 
 ## 生命周期与失败
 

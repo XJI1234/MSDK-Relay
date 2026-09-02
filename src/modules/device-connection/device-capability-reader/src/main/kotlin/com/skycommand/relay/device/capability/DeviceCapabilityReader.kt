@@ -23,6 +23,7 @@ object DeviceCapabilityReader {
         val pairingCanStart = snapshot.pairing in setOf(
             PairingState.UNKNOWN,
             PairingState.IDLE,
+            PairingState.PAIRED,
             PairingState.FAILED,
             PairingState.STOPPING,
         )

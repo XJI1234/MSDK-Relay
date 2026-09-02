@@ -71,6 +71,19 @@ class MsdkV5ManagerBridgeContractTest {
     }
 
     @Test
+    fun restoresReadyWhenANewBridgeFindsTheProcessSdkAlreadyRegistered() {
+        val manager = FakeManager(registered = true)
+        val bridge = MsdkV5ManagerBridge(ContextWrapper(null), manager)
+        var registrations = 0
+
+        assertIs<BridgeStartResult.Accepted>(bridge.initialize(listener(onRegistered = { registrations += 1 })))
+
+        assertEquals(1, registrations)
+        assertEquals(0, manager.initCalls)
+        assertEquals(0, manager.registerCalls)
+    }
+
+    @Test
     fun turnsAnSdkInitThrowIntoARejectedStart() {
         val manager = FakeManager(throwOnInit = true)
         val bridge = MsdkV5ManagerBridge(ContextWrapper(null), manager)
@@ -148,10 +161,13 @@ class MsdkV5ManagerBridgeContractTest {
     private class FakeManager(
         private val throwOnInit: Boolean = false,
         private val throwOnRegister: Boolean = false,
+        private val registered: Boolean = false,
     ) : DjiSdkManagerApi {
         var initCalls = 0
         var registerCalls = 0
         var callback: DjiSdkManagerCallback? = null
+
+        override fun isRegistered(): Boolean = registered
 
         override fun init(context: android.content.Context, callback: DjiSdkManagerCallback) {
             if (throwOnInit) error("SDK init failed")

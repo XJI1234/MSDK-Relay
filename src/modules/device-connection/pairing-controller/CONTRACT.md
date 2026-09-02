@@ -1,13 +1,13 @@
 # pairing-controller 二级模块契约
 
 状态：已实施
-版本：1.0.0
+版本：1.1.0
 所属一级模块：`device-connection`
 Gradle 路径：`:device-connection:pairing-controller`
 
 ## 1. 唯一职责
 
-本模块负责配对开始/停止请求的前置条件、状态过渡和结果转换。它不创建线程、不直接调用 DJI SDK、不管理 WebSocket，也不生成遥测 JSON。
+本模块负责配对开始/停止请求的状态过渡和结果转换。它通过 `device-capability-reader` 取得唯一的开始前置条件，不复制连接 Key 判断。它不创建线程、不直接调用 DJI SDK、不管理 WebSocket，也不生成遥测 JSON。
 
 ## 2. 接口
 
@@ -21,7 +21,7 @@ PairingController.state() -> PairingState
 
 ## 3. 规则
 
-- 配对是新飞机或更换遥控器时的低频维护操作，不是常规连接、图传、航线或飞行控制前置条件。开始配对要求 SDK `READY`、遥控器明确 `CONNECTED`、飞行器明确 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`PAIRED`、`FAILED` 或 `STOPPING`。连接状态 `UNKNOWN` 时不得开始；已连接飞行器时不得开始。`PAIRED` 允许重新开始，以支持更换飞机。
+- 配对是新飞机或更换遥控器时的低频维护操作，不是常规连接、图传、航线或飞行控制前置条件。开始配对必须且只能使用 `DeviceCapabilityReader.read(snapshot).canStartPairing`：SDK `READY`、遥控器明确 `CONNECTED`、飞控明确 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`PAIRED`、`FAILED` 或 `STOPPING`。飞控 `CONNECTED` 或 `UNKNOWN` 时不得开始。`ProductKey.KeyConnection` 仅为诊断，绝不参与此门禁。`PAIRED` 允许重新开始，以支持更换飞机。
 - 停止配对要求当前状态为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - 开始/停止请求被接受只表示请求进入 DJI 调度队列，不表示设备已经配对或已经停止配对。
 - 接受开始请求后进入 `PAIRING`；接受停止请求后进入 `STOPPING`。

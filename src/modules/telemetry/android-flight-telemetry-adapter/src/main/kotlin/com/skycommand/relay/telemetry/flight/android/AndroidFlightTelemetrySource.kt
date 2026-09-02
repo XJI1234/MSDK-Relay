@@ -17,6 +17,15 @@ internal data class FlightTelemetryFact(
     val longitude: Double? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
     val battery: LinkState = LinkState.UNKNOWN,
+    val gpsSignalLevel: String? = null,
+    val gpsSatelliteCount: Int? = null,
+    val visionSensorUsed: Boolean? = null,
+    val visionSystemWarning: String? = null,
+    val visionPositioningEnabled: Boolean? = null,
+    val landingProtectionState: String? = null,
+    val landingConfirmationNeeded: Boolean? = null,
+    val takeoffFailureError: String? = null,
+    val motorStartFailureError: String? = null,
 )
 
 internal fun interface DjiFlightTelemetryListener {
@@ -165,8 +174,20 @@ class AndroidFlightTelemetrySource internal constructor(
             latitude = latitude?.takeIf { validCoordinates },
             longitude = longitude?.takeIf { validCoordinates },
             lowBatteryRthState = rthState,
+            gpsSignalLevel = gpsSignalLevel?.takeIf(::validEnumName),
+            gpsSatelliteCount = gpsSatelliteCount?.takeIf { it >= 0 },
+            visionSensorUsed = visionSensorUsed,
+            visionSystemWarning = visionSystemWarning?.takeIf(::validEnumName),
+            visionPositioningEnabled = visionPositioningEnabled,
+            landingProtectionState = landingProtectionState?.takeIf(::validEnumName),
+            landingConfirmationNeeded = landingConfirmationNeeded,
+            takeoffFailureError = takeoffFailureError?.takeIf(::validEnumName),
+            motorStartFailureError = motorStartFailureError?.takeIf(::validEnumName),
         )
     }
+
+    private fun validEnumName(value: String): Boolean =
+        value.isNotBlank() && value.none(Char::isISOControl) && value.codePointCount(0, value.length) <= 128
 
     private fun FlightTelemetrySnapshot.withoutFlightControllerFacts(): FlightTelemetrySnapshot = copy(
         isFlying = null,
@@ -177,6 +198,15 @@ class AndroidFlightTelemetrySource internal constructor(
         latitude = null,
         longitude = null,
         lowBatteryRthState = null,
+        gpsSignalLevel = null,
+        gpsSatelliteCount = null,
+        visionSensorUsed = null,
+        visionSystemWarning = null,
+        visionPositioningEnabled = null,
+        landingProtectionState = null,
+        landingConfirmationNeeded = null,
+        takeoffFailureError = null,
+        motorStartFailureError = null,
     )
 
     private data class Active(

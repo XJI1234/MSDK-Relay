@@ -85,6 +85,19 @@ class DeviceCapabilityReaderContractTest {
     }
 
     @Test
+    fun allowsReplacingAnAlreadyPairedAircraftWhenTheFlightControllerIsDisconnected() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            aircraft = LinkState.CONNECTED,
+            flightController = LinkState.DISCONNECTED,
+            pairing = PairingState.PAIRED,
+        )
+
+        assertEquals(true, DeviceCapabilityReader.read(snapshot).canStartPairing)
+    }
+
+    @Test
     fun refusesPairingWhenFlightControllerIsAlreadyConnected() {
         val snapshot = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.READY,

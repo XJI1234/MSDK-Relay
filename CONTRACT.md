@@ -578,19 +578,22 @@ wayline.stop
 
 手机端停止直播并返回结果。重复停止应返回稳定结果，不得使连接断开。
 
-### 7.9 起飞、降落和返航
+### 7.9 直接飞行与确认继续降落
 
 命令分别为：
 
 ```text
 flight.takeoff
 flight.land
+flight.confirm-landing
 flight.return-home
+flight.stop-takeoff
+flight.stop-auto-landing
 ```
 
-三个命令均只接受字段 `{ "confirm": true }`。`confirm` 是电脑端针对本次高风险飞行动作的明确确认，手机端不得默认补全、缓存或复用。缺少确认、额外字段、字段类型错误、设备不可用、超时、取消或 DJI 拒绝都必须返回 `ok: false`。
+六个命令均只接受字段 `{ "confirm": true }`。`confirm` 是电脑端针对本次高风险飞行动作的明确确认，手机端不得默认补全、缓存或复用。`flight.land` 只调用 `FlightControllerKey.KeyStartAutoLanding`；当 DJI 通过 `KeyIsLandingConfirmationNeeded=true` 要求继续降落时，操作者必须再次明确确认 `flight.confirm-landing`，它才调用 `FlightControllerKey.KeyConfirmLanding`。不得自动发送、重试或把 `flight.land` 与 `flight.confirm-landing` 合并。缺少确认、额外字段、字段类型错误、设备不可用、超时、取消或 DJI 拒绝都必须返回 `ok: false`。
 
-`ok: true` 仅表示 DJI 已确认对应动作调用的终态，不表示飞行器已经起飞、已经着陆或已经到家；电脑端必须继续以遥测中的飞行状态作为事实来源。手机端实现已完成，真实 DJI 设备上的机型支持、前置条件和回调语义仍待实机验证。虚拟摇杆和任意连续手动飞行控制仍不属于本契约。
+`ok: true` 仅表示 DJI 已确认对应动作调用的终态，不表示飞行器已经起飞、已经着陆或已经到家；电脑端必须继续以遥测中的 `isFlying=false` 和 `motorsOn=false` 作为“已确认落地”的事实来源。手机端实现已完成，真实 DJI 设备上的机型支持、前置条件和回调语义仍待实机验证。虚拟摇杆和任意连续手动飞行控制仍不属于本契约。
 
 ### 7.10 读取和修改设备设置
 

@@ -43,6 +43,28 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
+    fun registersEveryDesktopFlightCommandWithTheFlightControlHandler() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("\"flight.stop-takeoff\", \"flight.stop-auto-landing\""))
+        assertTrue(source.contains("register(gateway, journal, it, flightControl.commandHandler())"))
+    }
+
+    @Test
+    fun sdkStartupTimeoutIsLoggedAsAMissingTerminalCallbackRatherThanAnSdkFailureCallback() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("DJI SDK lifecycle did not reach a terminal callback before the startup timeout"))
+        assertFalse(source.contains("DJI SDK lifecycle callback reported a failure"))
+    }
+
+    @Test
     fun flightControllerConnectionTransitionsReobserveFlightFactsAfterUnknownOrDisconnect() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),

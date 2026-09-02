@@ -84,27 +84,27 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     )
 
     init {
-        lifecycle.onChanged { store.applySdk(it) }
+        lifecycle.onChanged { availability ->
+            lifecycleLock.withLock {
+                store.applySdk(availability)
+                when (availability) {
+                    SdkAvailability.READY -> startHardwareLinks()
+                    SdkAvailability.FAILED -> {
+                        stopHardwareLinks()
+                        store.markHardwareObservationsUnknown()
+                    }
+
+                    SdkAvailability.STARTING,
+                    SdkAvailability.STOPPED,
+                    -> Unit
+                }
+            }
+        }
     }
 
     fun start(): DeviceConnectionStartResult = lifecycleLock.withLock {
         when (val result = lifecycle.start()) {
-            StartResult.StartAccepted -> {
-                val remote = remoteControllerLink.start()
-                if (remote is com.skycommand.relay.device.remote.RemoteControllerStartResult.Rejected) {
-                    rejectFailedStart()
-                } else {
-                    val aircraft = aircraftLink.start()
-                    if (aircraft is com.skycommand.relay.device.aircraft.AircraftStartResult.Rejected) {
-                        rejectFailedStart()
-                    } else {
-                        when (pairingStatusLink.start()) {
-                            is com.skycommand.relay.device.pairing.status.PairingStatusStartResult.Rejected -> rejectFailedStart()
-                            else -> DeviceConnectionStartResult.StartAccepted
-                        }
-                    }
-                }
-            }
+            StartResult.StartAccepted -> DeviceConnectionStartResult.StartAccepted
 
             is StartResult.AlreadyRunning -> DeviceConnectionStartResult.AlreadyRunning
             is StartResult.StartRejected -> DeviceConnectionStartResult.StartRejected(result.safeReason)
@@ -112,9 +112,7 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     }
 
     fun stop(): DeviceConnectionStopResult = lifecycleLock.withLock {
-        pairingStatusLink.stop()
-        aircraftLink.stop()
-        remoteControllerLink.stop()
+        stopHardwareLinks()
         val lifecycleResult = lifecycle.stop()
         store.markRuntimeUnavailable()
         return if (lifecycleResult is StopResult.AlreadyStopped) {
@@ -132,14 +130,10 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
 
     fun refreshHardwareLinks() {
         lifecycleLock.withLock {
-            if (store.snapshot().sdkAvailability == SdkAvailability.STOPPED) return@withLock
-            pairingStatusLink.stop()
-            aircraftLink.stop()
-            remoteControllerLink.stop()
+            if (lifecycle.state() != SdkAvailability.READY) return@withLock
+            stopHardwareLinks()
             store.markHardwareObservationsUnknown()
-            remoteControllerLink.start()
-            aircraftLink.start()
-            pairingStatusLink.start()
+            startHardwareLinks()
         }
     }
 
@@ -155,13 +149,16 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
         listener: (PairingOperationResult) -> Unit,
     ): PairingRequestResult = pairing.stop(timeoutMillis, listener)
 
-    private fun rejectFailedStart(): DeviceConnectionStartResult {
+    private fun startHardwareLinks() {
+        remoteControllerLink.start()
+        aircraftLink.start()
+        pairingStatusLink.start()
+    }
+
+    private fun stopHardwareLinks() {
         pairingStatusLink.stop()
         aircraftLink.stop()
         remoteControllerLink.stop()
-        lifecycle.stop()
-        store.markRuntimeUnavailable()
-        return DeviceConnectionStartResult.StartRejected("device listener unavailable")
     }
 
     companion object {

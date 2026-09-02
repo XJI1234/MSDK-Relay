@@ -65,9 +65,10 @@ class DeviceConnectionContractTest {
     fun forwardsRemoteControllerObservationFailuresToConfiguredDiagnosticSink() {
         val events = mutableListOf<String>()
         val diagnostics = mutableListOf<RemoteControllerDiagnosticKind>()
+        val sdk = FakeSdk(events)
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
+                sdkPort = sdk,
                 remoteControllerPort = FakeRemote(events, failStart = true),
                 aircraftPort = FakeAircraft(events),
                 pairingPort = successfulPairingPort(),
@@ -79,6 +80,7 @@ class DeviceConnectionContractTest {
         )
 
         connection.start()
+        sdk.ready()
 
         assertEquals(listOf(RemoteControllerDiagnosticKind.PORT_FAILURE), diagnostics)
     }
@@ -87,9 +89,10 @@ class DeviceConnectionContractTest {
     fun forwardsPairingObservationFailuresToConfiguredDiagnosticSink() {
         val events = mutableListOf<String>()
         val diagnostics = mutableListOf<PairingStatusDiagnosticKind>()
+        val sdk = FakeSdk(events)
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
+                sdkPort = sdk,
                 remoteControllerPort = FakeRemote(events),
                 aircraftPort = FakeAircraft(events),
                 pairingPort = successfulPairingPort(),
@@ -101,6 +104,7 @@ class DeviceConnectionContractTest {
         )
 
         connection.start()
+        sdk.ready()
 
         assertEquals(listOf(PairingStatusDiagnosticKind.PORT_FAILURE), diagnostics)
     }
@@ -109,9 +113,10 @@ class DeviceConnectionContractTest {
     fun forwardsAircraftObservationFailuresToConfiguredDiagnosticSink() {
         val events = mutableListOf<String>()
         val diagnostics = mutableListOf<AircraftDiagnosticKind>()
+        val sdk = FakeSdk(events)
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
+                sdkPort = sdk,
                 remoteControllerPort = FakeRemote(events),
                 aircraftPort = FakeAircraft(events, failStart = true),
                 pairingPort = successfulPairingPort(),
@@ -123,6 +128,7 @@ class DeviceConnectionContractTest {
         )
 
         connection.start()
+        sdk.ready()
 
         assertEquals(listOf(AircraftDiagnosticKind.PORT_FAILURE), diagnostics)
     }
@@ -130,9 +136,10 @@ class DeviceConnectionContractTest {
     @Test
     fun refreshHardwareLinksRestartsObserversWithoutStoppingSdk() {
         val events = mutableListOf<String>()
+        val sdk = FakeSdk(events)
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
+                sdkPort = sdk,
                 remoteControllerPort = FakeRemote(events),
                 aircraftPort = FakeAircraft(events),
                 pairingPort = successfulPairingPort(),
@@ -143,6 +150,7 @@ class DeviceConnectionContractTest {
         )
 
         connection.start()
+        sdk.ready()
         connection.refreshHardwareLinks()
 
         assertEquals(1, events.count { it == "sdk.start" })
@@ -176,6 +184,105 @@ class DeviceConnectionContractTest {
     }
 
     @Test
+    fun startsOnlySdkUntilItReportsReady() {
+        val events = mutableListOf<String>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        assertIs<DeviceConnectionStartResult.StartAccepted>(connection.start())
+
+        assertEquals(listOf("sdk.start"), events)
+        assertEquals(SdkAvailability.STARTING, connection.snapshot().sdkAvailability)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().remoteController)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().aircraft)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().flightController)
+        assertEquals(PairingState.UNKNOWN, connection.snapshot().pairing)
+    }
+
+    @Test
+    fun startsEveryHardwareObservationAfterSdkReportsReady() {
+        val events = mutableListOf<String>()
+        val sdk = FakeSdk(events)
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = sdk,
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        connection.start()
+        sdk.ready()
+
+        assertEquals(
+            listOf("sdk.start", "remote.start", "aircraft.start", "pairing-status.start"),
+            events,
+        )
+        assertEquals(SdkAvailability.READY, connection.snapshot().sdkAvailability)
+    }
+
+    @Test
+    fun refreshHardwareLinksBeforeSdkIsReadyDoesNotTouchHardwareObservers() {
+        val events = mutableListOf<String>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        connection.start()
+        connection.refreshHardwareLinks()
+
+        assertEquals(listOf("sdk.start"), events)
+    }
+
+    @Test
+    fun keepsSdkAndOtherHardwareObservationsRunningWhenOneObservationFailsAfterReady() {
+        val events = mutableListOf<String>()
+        val sdk = FakeSdk(events)
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = sdk,
+                remoteControllerPort = FakeRemote(events, failStart = true),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        assertIs<DeviceConnectionStartResult.StartAccepted>(connection.start())
+        sdk.ready()
+
+        assertEquals(
+            listOf("sdk.start", "remote.start", "aircraft.start", "pairing-status.start"),
+            events,
+        )
+        assertEquals(SdkAvailability.READY, connection.snapshot().sdkAvailability)
+        assertEquals(LinkState.UNKNOWN, connection.snapshot().remoteController)
+    }
+
+    @Test
     fun startsPairingStatusObservationAndDropsItsLateCallbackAfterStop() {
         val events = mutableListOf<String>()
         val sdk = FakeSdk(events)
@@ -199,11 +306,15 @@ class DeviceConnectionContractTest {
 
         assertIs<DeviceConnectionStartResult.StartAccepted>(connection.start())
         assertEquals(
-            listOf("sdk.start", "remote.start", "aircraft.start", "pairing-status.start"),
+            listOf("sdk.start"),
             events,
         )
         assertEquals(SdkAvailability.STARTING, connection.snapshot().sdkAvailability)
         sdk.ready()
+        assertEquals(
+            listOf("sdk.start", "remote.start", "aircraft.start", "pairing-status.start"),
+            events,
+        )
         remote.emit(RemoteControllerSignal(1, true, "RC"))
         aircraft.emit(AircraftSignal(1, true, true, "Matrice"))
         pairingStatus.emit(PairingStatusSignal(1, PairingState.PAIRED))
@@ -249,60 +360,6 @@ class DeviceConnectionContractTest {
     }
 
     @Test
-    fun doesNotStartLaterLinksWhenRemoteObservationCannotStart() {
-        val events = mutableListOf<String>()
-        val connection = DeviceConnection.create(
-            DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
-                remoteControllerPort = FakeRemote(events, failStart = true),
-                aircraftPort = FakeAircraft(events),
-                pairingPort = successfulPairingPort(),
-                pairingStatusPort = FakePairingStatus(events),
-                executor = OperationExecutor { it() },
-                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
-            ),
-        )
-
-        assertIs<DeviceConnectionStartResult.StartRejected>(connection.start())
-
-        assertEquals(
-            listOf("sdk.start", "remote.start", "sdk.stop"),
-            events,
-        )
-        assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
-    }
-
-    @Test
-    fun doesNotStartPairingObservationWhenAircraftObservationCannotStart() {
-        val events = mutableListOf<String>()
-        val connection = DeviceConnection.create(
-            DeviceConnectionDependencies(
-                sdkPort = FakeSdk(events),
-                remoteControllerPort = FakeRemote(events),
-                aircraftPort = FakeAircraft(events, failStart = true),
-                pairingPort = successfulPairingPort(),
-                pairingStatusPort = FakePairingStatus(events),
-                executor = OperationExecutor { it() },
-                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
-            ),
-        )
-
-        assertIs<DeviceConnectionStartResult.StartRejected>(connection.start())
-
-        assertEquals(
-            listOf(
-                "sdk.start",
-                "remote.start",
-                "aircraft.start",
-                "remote.stop",
-                "sdk.stop",
-            ),
-            events,
-        )
-        assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
-    }
-
-    @Test
     fun serializesStopAgainstAnInProgressStart() {
         val events = mutableListOf<String>()
         val sdkStopped = CountDownLatch(1)
@@ -322,14 +379,15 @@ class DeviceConnectionContractTest {
         val workers = Executors.newFixedThreadPool(2)
 
         try {
-            val start = workers.submit<DeviceConnectionStartResult> { connection.start() }
+            assertIs<DeviceConnectionStartResult.StartAccepted>(connection.start())
+            val ready = workers.submit { sdk.ready() }
             assertTrue(remote.awaitStart())
             val stop = workers.submit<DeviceConnectionStopResult> { connection.stop() }
 
             assertFalse(sdkStopped.await(250, TimeUnit.MILLISECONDS))
             remote.releaseStart()
 
-            assertIs<DeviceConnectionStartResult.StartAccepted>(start.get(5, TimeUnit.SECONDS))
+            ready.get(5, TimeUnit.SECONDS)
             assertIs<DeviceConnectionStopResult.Stopped>(stop.get(5, TimeUnit.SECONDS))
             assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
             assertEquals(
@@ -348,45 +406,6 @@ class DeviceConnectionContractTest {
         } finally {
             workers.shutdownNow()
         }
-    }
-
-    @Test
-    fun rollsBackStartedLinksWhenPairingStatusObservationCannotStart() {
-        val events = mutableListOf<String>()
-        val sdk = FakeSdk(events)
-        val remote = FakeRemote(events)
-        val aircraft = FakeAircraft(events)
-        val connection = DeviceConnection.create(
-            DeviceConnectionDependencies(
-                sdkPort = sdk,
-                remoteControllerPort = remote,
-                aircraftPort = aircraft,
-                pairingPort = successfulPairingPort(),
-                pairingStatusPort = FakePairingStatus(events, failStart = true),
-                executor = OperationExecutor { it() },
-                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
-            ),
-        )
-
-        val result = assertIs<DeviceConnectionStartResult.StartRejected>(connection.start())
-
-        assertEquals("device listener unavailable", result.safeReason)
-        assertEquals(
-            listOf(
-                "sdk.start",
-                "remote.start",
-                "aircraft.start",
-                "pairing-status.start",
-                "aircraft.stop",
-                "remote.stop",
-                "sdk.stop",
-            ),
-            events,
-        )
-        assertEquals(SdkAvailability.STOPPED, connection.snapshot().sdkAvailability)
-        assertEquals(LinkState.UNKNOWN, connection.snapshot().remoteController)
-        assertEquals(LinkState.UNKNOWN, connection.snapshot().aircraft)
-        assertEquals(PairingState.UNKNOWN, connection.snapshot().pairing)
     }
 
     private class FakeSdk(

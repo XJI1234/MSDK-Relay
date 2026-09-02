@@ -9,6 +9,36 @@ import kotlin.test.assertFailsWith
 
 class AndroidFlightTelemetrySourceContractTest {
     @Test
+    fun exposesSeparateRawGpsVisionAndTakeoffDiagnosticFacts() {
+        val names = FlightTelemetrySnapshot::class.java.declaredFields.map { it.name }.toSet()
+
+        assertEquals(
+            setOf(
+                "gpsSignalLevel",
+                "gpsSatelliteCount",
+                "visionSensorUsed",
+                "visionSystemWarning",
+                "visionPositioningEnabled",
+                "landingProtectionState",
+                "landingConfirmationNeeded",
+                "takeoffFailureError",
+                "motorStartFailureError",
+            ),
+            setOf(
+                "gpsSignalLevel",
+                "gpsSatelliteCount",
+                "visionSensorUsed",
+                "visionSystemWarning",
+                "visionPositioningEnabled",
+                "landingProtectionState",
+                "landingConfirmationNeeded",
+                "takeoffFailureError",
+                "motorStartFailureError",
+            ).intersect(names),
+        )
+    }
+
+    @Test
     fun publishesTheNormalizedInitialPlatformSnapshot() {
         val platform = FakePlatform(
             FlightTelemetryFact(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE, LinkState.CONNECTED),

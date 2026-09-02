@@ -30,6 +30,8 @@ data class StreamSnapshot(
     val targetConfigured: Boolean,
     val notice: String,
     val metrics: StreamMetrics?,
+    /** Raw Android MSDK LiveStreamStatus.isStreaming; null means not observed for the active stream. */
+    val djiStreaming: Boolean? = null,
 )
 
 sealed interface StreamStartResult {
@@ -107,6 +109,7 @@ class StreamStateStore private constructor(
                 targetConfigured = true,
                 notice = "Starting",
                 metrics = null,
+                djiStreaming = null,
             )
             shouldDrain = enqueue(previous, current)
             StreamStartResult.Accepted(operationId)
@@ -129,6 +132,8 @@ class StreamStateStore private constructor(
                         revision = current.revision + 1,
                         state = StreamLifecycleState.STOPPING,
                         notice = "Stopping",
+                        metrics = null,
+                        djiStreaming = null,
                     )
                     shouldDrain = enqueue(previous, current)
                     StreamStopResult.Accepted(operationId)
@@ -144,13 +149,13 @@ class StreamStateStore private constructor(
         return result
     }
 
-    fun markStarted(operationId: Long, metrics: StreamMetrics? = null): StreamUpdateResult {
-        validateMetrics(metrics)
+    fun markStarted(operationId: Long): StreamUpdateResult {
         return complete(operationId, StreamLifecycleState.STARTING) {
             copy(
                 state = StreamLifecycleState.STREAMING,
                 notice = "Streaming",
-                metrics = metrics,
+                metrics = null,
+                djiStreaming = null,
             )
         }
     }
@@ -163,6 +168,7 @@ class StreamStateStore private constructor(
                 targetConfigured = false,
                 notice = notice,
                 metrics = null,
+                djiStreaming = null,
             )
         }
     }
@@ -175,6 +181,7 @@ class StreamStateStore private constructor(
                 targetConfigured = false,
                 notice = notice,
                 metrics = null,
+                djiStreaming = null,
             )
         }
     }
@@ -191,6 +198,7 @@ class StreamStateStore private constructor(
                 targetConfigured = false,
                 notice = notice,
                 metrics = null,
+                djiStreaming = null,
             )
             shouldDrain = enqueue(previous, current)
             StreamUpdateResult.Applied(current)
@@ -199,7 +207,7 @@ class StreamStateStore private constructor(
         return result
     }
 
-    fun updateMetrics(operationId: Long, metrics: StreamMetrics): StreamUpdateResult {
+    fun reportDjiStreaming(operationId: Long, metrics: StreamMetrics?): StreamUpdateResult {
         validateMetrics(metrics)
         var shouldDrain = false
         val result = lock.withLock {
@@ -207,13 +215,29 @@ class StreamStateStore private constructor(
                 StreamUpdateResult.IgnoredStale(operationId)
             } else {
                 val previous = current
-                current = current.copy(revision = current.revision + 1, metrics = metrics)
+                current = current.copy(
+                    revision = current.revision + 1,
+                    djiStreaming = true,
+                    metrics = metrics,
+                )
                 shouldDrain = enqueue(previous, current)
                 StreamUpdateResult.Applied(current)
             }
         }
         if (shouldDrain) drain()
         return result
+    }
+
+    fun reportDjiStopped(operationId: Long): StreamUpdateResult {
+        return complete(operationId, StreamLifecycleState.STREAMING) {
+            copy(
+                state = StreamLifecycleState.FAILED,
+                targetConfigured = false,
+                notice = "DJI reported stream stopped",
+                metrics = null,
+                djiStreaming = false,
+            )
+        }
     }
 
     fun snapshot(): StreamSnapshot = lock.withLock { current }

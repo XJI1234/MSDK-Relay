@@ -45,12 +45,26 @@ class DjiStreamAdapterContractTest {
     fun forwardsMetricsAndIgnoresDuplicateCompletion() {
         val fixture = Fixture()
         fixture.adapter.start(config())
-        fixture.port.metrics!!.invoke(StreamMetrics("720p", 30.0, 800.0, 20))
-        assertEquals(null, fixture.store.snapshot().metrics)
+        fixture.port.status!!.invoke(DjiStreamStatus(true, StreamMetrics("720p", 30.0, 800.0, 20)))
+        assertEquals(null, fixture.store.snapshot().djiStreaming)
         fixture.port.startCompletion!!.succeed()
-        fixture.port.metrics!!.invoke(StreamMetrics("720p", 30.0, 800.0, 20))
+        fixture.port.status!!.invoke(DjiStreamStatus(true, StreamMetrics("720p", 30.0, 800.0, 20)))
         fixture.port.startCompletion!!.succeed()
+        assertEquals(true, fixture.store.snapshot().djiStreaming)
         assertEquals(StreamMetrics("720p", 30.0, 800.0, 20), fixture.store.snapshot().metrics)
+    }
+
+    @Test
+    fun turnsRawDjiStoppedStatusIntoFailureAndQueuesRecovery() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+        fixture.port.startCompletion!!.succeed()
+
+        fixture.port.status!!.invoke(DjiStreamStatus(false))
+
+        assertEquals(false, fixture.store.snapshot().djiStreaming)
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+        assertEquals(1, fixture.port.stopCalls)
     }
 
     @Test
@@ -135,15 +149,15 @@ class DjiStreamAdapterContractTest {
     }
 
     private class Port : DjiStreamPort {
-        var metrics: ((StreamMetrics) -> Unit)? = null
+        var status: ((DjiStreamStatus) -> Unit)? = null
         var runtimeFailure: (() -> Unit)? = null
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
         var stopCalls = 0
         var throwOnStart = false
-        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             if (throwOnStart) error("dji failure")
-            this.metrics = metrics
+            this.status = status
             this.runtimeFailure = runtimeFailure
             this.startCompletion = completion
         }

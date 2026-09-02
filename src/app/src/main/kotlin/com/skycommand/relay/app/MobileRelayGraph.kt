@@ -15,6 +15,7 @@ import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.pairing.command.android.AndroidPairingPort
 import com.skycommand.relay.device.pairing.status.android.AndroidPairingStatusPort
 import com.skycommand.relay.device.remote.android.AndroidRemoteControllerPort
+import com.skycommand.relay.device.sdk.SdkLifecycleDiagnosticKind
 import com.skycommand.relay.device.sdk.android.AndroidDjiSdkPort
 import com.skycommand.relay.gateway.RelayGateway
 import com.skycommand.relay.gateway.RelayGatewayConfig
@@ -127,7 +128,6 @@ class MobileRelayGraph private constructor(
     private var startCancellation: RuntimeCancellation? = null
     private var usbWatchStarted = false
     private var usbCancellation: PermissionCancellation? = null
-    private var hardwareRefreshedForSdkReady = false
     private val flightTelemetryLifecycleLock = Any()
     private var flightTelemetryInvalidated = false
     private var lastFlightControllerLink = LinkState.UNKNOWN
@@ -140,7 +140,6 @@ class MobileRelayGraph private constructor(
 
     fun stop(): RuntimeStopResult {
         cancelUsbWatch()
-        hardwareRefreshedForSdkReady = false
         synchronized(flightTelemetryLifecycleLock) {
             flightTelemetryInvalidated = false
             lastFlightControllerLink = LinkState.UNKNOWN
@@ -191,7 +190,6 @@ class MobileRelayGraph private constructor(
         registrations += device.onChanged {
             synchronizeFlightTelemetryWithFlightController()
             notifyStatus()
-            refreshHardwareIfSdkReady()
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
@@ -282,17 +280,6 @@ class MobileRelayGraph private constructor(
             watchUsbAccessory()
         }
         notifyStatus()
-    }
-
-    private fun refreshHardwareIfSdkReady() {
-        val sdk = runCatching { device.snapshot().sdkAvailability }.getOrNull() ?: return
-        if (sdk == SdkAvailability.READY) {
-            if (hardwareRefreshedForSdkReady) return
-            hardwareRefreshedForSdkReady = true
-            device.refreshHardwareLinks()
-        } else {
-            hardwareRefreshedForSdkReady = false
-        }
     }
 
     private fun synchronizeFlightTelemetryWithFlightController() {
@@ -400,7 +387,7 @@ class MobileRelayGraph private constructor(
                             "device-connection",
                             diagnostic.kind.name,
                             null,
-                            "DJI SDK lifecycle callback reported a failure",
+                            sdkLifecycleDiagnosticDetail(diagnostic.kind),
                         )
                     },
                     deviceStateDiagnosticSink = { diagnostic ->
@@ -709,7 +696,7 @@ class MobileRelayGraph private constructor(
             listOf("live-stream-webrtc.start", "live-stream-webrtc.stop").forEach {
                 register(gateway, journal, it, videoTransports.handlerFor(it))
             }
-            listOf("flight.takeoff", "flight.land", "flight.return-home").forEach {
+            listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing").forEach {
                 register(gateway, journal, it, flightControl.commandHandler())
             }
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
@@ -794,6 +781,14 @@ private fun commandModule(name: String): String = when {
 private fun commandEventCode(name: String, ok: Boolean): String {
     val stem = name.uppercase().replace('.', '_').replace('-', '_')
     return if (ok) "${stem}_OK" else "${stem}_REJECTED"
+}
+
+private fun sdkLifecycleDiagnosticDetail(kind: SdkLifecycleDiagnosticKind): String = when (kind) {
+    SdkLifecycleDiagnosticKind.PORT_FAILURE -> "DJI SDK adapter or registration reported a failure"
+    SdkLifecycleDiagnosticKind.START_TIMEOUT ->
+        "DJI SDK lifecycle did not reach a terminal callback before the startup timeout"
+    SdkLifecycleDiagnosticKind.LISTENER_FAILURE -> "A DJI SDK lifecycle state listener failed"
+    SdkLifecycleDiagnosticKind.STALE_CALLBACK -> "Ignored a stale DJI SDK lifecycle callback"
 }
 
 private fun recorded(journal: DiagnosticJournal, handler: CommandHandler): CommandHandler =

@@ -223,7 +223,7 @@ class SimulationDjiAdapterContractTest {
 
         adapter.ports().stream.start(
             ValidatedStreamConfig("rtmp://127.0.0.1/live/relay"),
-            metrics = {},
+            status = {},
             runtimeFailure = {},
             completion = object : StreamDjiCompletion {
                 override fun succeed() { completed += 1 }
@@ -248,7 +248,7 @@ class SimulationDjiAdapterContractTest {
 
         adapter.ports().stream.start(
             ValidatedStreamConfig("rtmp://127.0.0.1/live/relay"),
-            metrics = {},
+            status = {},
             runtimeFailure = {},
             completion = object : StreamDjiCompletion {
                 override fun succeed() { completed += 1 }

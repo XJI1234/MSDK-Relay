@@ -47,13 +47,14 @@ DjiSdkApplication.attachBaseContext(baseContext) -> 安装 DJI 运行时
 ## 生命周期规则
 
 1. 每次 `initialize` 创建一个回调代际，并且只向 MSDK 管理器桥接层委托一次。
-2. MSDK 初始化完成会触发 `registerApp`；只有 MSDK 注册成功才能调用 `DjiSdkCallbacks.onReady`。
-3. 任一 MSDK 初始化或注册失败，对有效代际最多调用一次 `DjiSdkCallbacks.onFailure`。
-4. 桥接层拒绝或同步异常必须成为带稳定安全原因的 `PortStartResult.Rejected`。原始 DJI 错误、异常消息和堆栈不得越过 `DjiSdkPort`。
-5. 重复 MSDK 回调、旧代际回调和 `close` 后回调必须忽略。
-6. `close` 是幂等操作。它使有效回调代际失效并释放适配器本地监听器引用。它不得尝试全局关闭 DJI MSDK，因为 MSDK 是进程级资源，可能被后续应用工作共享。
-7. `close` 后的下一次 `initialize` 使用新代际，且不得接受旧代际捕获的注册结果。
-8. 用户回调在适配器锁外运行。用户回调异常必须被隔离，不能阻止清理或影响其他代际。
+2. 桥接层每次开始本地代际前必须查询 `SDKManager.isRegistered()`。若它为 `true`，说明同一 Android 进程中的 DJI SDK 已注册；适配器必须直接调用 `DjiSdkCallbacks.onReady`，不得再次调用 `init` 或 `registerApp`，也不得等待新的 `onInitProcess` 回调。
+3. 只有 `isRegistered()` 为 `false` 的首次进程初始化路径才调用 `init`；MSDK 初始化完成会触发 `registerApp`，只有 MSDK 注册成功才能调用 `DjiSdkCallbacks.onReady`。
+4. 任一 MSDK 初始化或注册失败，对有效代际最多调用一次 `DjiSdkCallbacks.onFailure`。
+5. 桥接层拒绝或同步异常必须成为带稳定安全原因的 `PortStartResult.Rejected`。原始 DJI 错误、异常消息和堆栈不得越过 `DjiSdkPort`。
+6. 重复 MSDK 回调、旧代际回调和 `close` 后回调必须忽略。
+7. `close` 是幂等操作。它只使本地回调代际失效并释放适配器本地监听器引用；它不得尝试全局关闭 DJI MSDK，因为 MSDK 是进程级资源，可能被后续应用工作共享。
+8. `close` 后的下一次 `initialize` 使用新代际，必须先重新查询进程级注册事实，且不得接受旧代际捕获的注册结果。
+9. 用户回调在适配器锁外运行。用户回调异常必须被隔离，不能阻止清理或影响其他代际。
 
 ## 安全与依赖规则
 

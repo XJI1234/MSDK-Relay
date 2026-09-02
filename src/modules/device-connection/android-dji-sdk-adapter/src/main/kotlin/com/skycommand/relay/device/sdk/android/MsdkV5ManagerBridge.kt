@@ -15,6 +15,8 @@ internal interface DjiSdkManagerCallback {
 }
 
 internal interface DjiSdkManagerApi {
+    fun isRegistered(): Boolean
+
     fun init(context: Context, callback: DjiSdkManagerCallback)
 
     fun registerApp()
@@ -30,6 +32,7 @@ internal class MsdkV5ManagerBridge(
     private var activeGeneration = 0L
 
     override fun initialize(listener: DjiSdkManagerListener): BridgeStartResult {
+        val processSdkRegistered = runCatching { manager.isRegistered() }.getOrDefault(false)
         val action = synchronized(lock) {
             when (state) {
                 State.REGISTERED -> Action.ReportRegistered(listener)
@@ -40,16 +43,9 @@ internal class MsdkV5ManagerBridge(
                     Action.Wait
                 }
 
-                State.NEW -> {
-                    this.listener = listener
-                    activeGeneration += 1
-                    state = State.INITIALIZING
-                    Action.Initialize(activeGeneration)
-                }
+                State.NEW -> startForNewListener(listener, processSdkRegistered)
 
-                State.FAILED -> {
-                    Action.Reject
-                }
+                State.FAILED -> startForNewListener(listener, processSdkRegistered)
             }
         }
         return when (action) {
@@ -74,6 +70,21 @@ internal class MsdkV5ManagerBridge(
                 initializeManager(action.generation)
             }
         }
+    }
+
+    private fun startForNewListener(
+        listener: DjiSdkManagerListener,
+        processSdkRegistered: Boolean,
+    ): Action = if (processSdkRegistered) {
+        state = State.REGISTERED
+        Action.ReportRegistered(listener)
+    } else if (state == State.FAILED) {
+        Action.Reject
+    } else {
+        this.listener = listener
+        activeGeneration += 1
+        state = State.INITIALIZING
+        Action.Initialize(activeGeneration)
     }
 
     override fun close() {
@@ -176,6 +187,8 @@ internal class MsdkV5ManagerBridge(
 
 private class AndroidDjiSdkManagerApi : DjiSdkManagerApi {
     private val manager = SDKManager.getInstance()
+
+    override fun isRegistered(): Boolean = manager.isRegistered
 
     override fun init(context: Context, callback: DjiSdkManagerCallback) {
         manager.init(context, object : SDKManagerCallback {

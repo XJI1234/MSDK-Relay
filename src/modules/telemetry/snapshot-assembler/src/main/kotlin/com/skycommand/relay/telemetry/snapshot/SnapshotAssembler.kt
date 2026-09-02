@@ -7,7 +7,6 @@ import com.skycommand.relay.device.state.PairingState
 import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.telemetry.capability.CapabilityCalculator
 import com.skycommand.relay.telemetry.capability.TelemetryCapabilities
-import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
@@ -32,6 +31,15 @@ data class FlightTelemetrySnapshot(
     val longitude: Double? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
     val battery: LinkState = LinkState.UNKNOWN,
+    val gpsSignalLevel: String? = null,
+    val gpsSatelliteCount: Int? = null,
+    val visionSensorUsed: Boolean? = null,
+    val visionSystemWarning: String? = null,
+    val visionPositioningEnabled: Boolean? = null,
+    val landingProtectionState: String? = null,
+    val landingConfirmationNeeded: Boolean? = null,
+    val takeoffFailureError: String? = null,
+    val motorStartFailureError: String? = null,
 ) {
     init {
         flightMode?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
@@ -42,6 +50,12 @@ data class FlightTelemetrySnapshot(
         require((latitude == null) == (longitude == null)) { "Latitude and longitude must be provided together" }
         latitude?.let { require(it.isFinite() && it in -90.0..90.0) }
         longitude?.let { require(it.isFinite() && it in -180.0..180.0) }
+        gpsSignalLevel?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
+        gpsSatelliteCount?.let { require(it >= 0) }
+        visionSystemWarning?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
+        landingProtectionState?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
+        takeoffFailureError?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
+        motorStartFailureError?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
     }
 }
 
@@ -70,7 +84,7 @@ data class TelemetrySnapshot(
     val altitudeMeters: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val liveStreaming: Boolean = false,
+    val liveStreaming: Boolean? = null,
     val liveStreamNotice: String? = null,
     val liveResolution: String? = null,
     val liveFps: Double? = null,
@@ -87,6 +101,15 @@ data class TelemetrySnapshot(
     val airLink: LinkState = LinkState.UNKNOWN,
     val camera: LinkState = LinkState.UNKNOWN,
     val battery: LinkState = LinkState.UNKNOWN,
+    val gpsSignalLevel: String? = null,
+    val gpsSatelliteCount: Int? = null,
+    val visionSensorUsed: Boolean? = null,
+    val visionSystemWarning: String? = null,
+    val visionPositioningEnabled: Boolean? = null,
+    val landingProtectionState: String? = null,
+    val landingConfirmationNeeded: Boolean? = null,
+    val takeoffFailureError: String? = null,
+    val motorStartFailureError: String? = null,
 ) {
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
@@ -102,6 +125,7 @@ object SnapshotAssembler {
             FlightTelemetrySnapshot()
         }
         val batteryPercent = if (inputs.flight.battery == LinkState.CONNECTED) inputs.flight.batteryPercent else null
+        val liveMetrics = inputs.stream.metrics.takeIf { inputs.stream.djiStreaming == true }
         return TelemetrySnapshot(
         deviceRevision = inputs.device.revision,
         sdkAvailability = inputs.device.sdkAvailability,
@@ -124,14 +148,23 @@ object SnapshotAssembler {
         altitudeMeters = flightControllerFacts.altitudeMeters,
         latitude = flightControllerFacts.latitude,
         longitude = flightControllerFacts.longitude,
-        liveStreaming = inputs.stream.state == StreamLifecycleState.STREAMING,
+        gpsSignalLevel = flightControllerFacts.gpsSignalLevel,
+        gpsSatelliteCount = flightControllerFacts.gpsSatelliteCount,
+        visionSensorUsed = flightControllerFacts.visionSensorUsed,
+        visionSystemWarning = flightControllerFacts.visionSystemWarning,
+        visionPositioningEnabled = flightControllerFacts.visionPositioningEnabled,
+        landingProtectionState = flightControllerFacts.landingProtectionState,
+        landingConfirmationNeeded = flightControllerFacts.landingConfirmationNeeded,
+        takeoffFailureError = flightControllerFacts.takeoffFailureError,
+        motorStartFailureError = flightControllerFacts.motorStartFailureError,
+        liveStreaming = inputs.stream.djiStreaming,
         liveStreamNotice = inputs.stream.notice,
-        liveResolution = inputs.stream.metrics?.resolution,
-        liveFps = inputs.stream.metrics?.fps,
-        liveVideoBitrateKbps = inputs.stream.metrics?.videoBitrateKbps,
-        liveRttMillis = inputs.stream.metrics?.rttMillis,
-        livePacketLoss = inputs.stream.metrics?.packetLoss,
-        livePacketCacheLength = inputs.stream.metrics?.packetCacheLength,
+        liveResolution = liveMetrics?.resolution,
+        liveFps = liveMetrics?.fps,
+        liveVideoBitrateKbps = liveMetrics?.videoBitrateKbps,
+        liveRttMillis = liveMetrics?.rttMillis,
+        livePacketLoss = liveMetrics?.packetLoss,
+        livePacketCacheLength = liveMetrics?.packetCacheLength,
         missionRevision = inputs.mission.missionRevision,
         missionDeviceGeneration = inputs.mission.missionRevision?.let { inputs.mission.deviceGeneration },
         missionExecution = inputs.mission.execution,

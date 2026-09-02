@@ -9,10 +9,10 @@ import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.stream.dji.DjiStreamPort
+import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.state.StreamLifecycleState
-import com.skycommand.relay.stream.state.StreamMetrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -137,7 +137,7 @@ class LiveStreamContractTest {
         var stopCalls = 0
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
-        override fun start(config: ValidatedStreamConfig, metrics: (StreamMetrics) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
             startCalls += 1
             startCompletion = completion
         }

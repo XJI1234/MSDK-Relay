@@ -17,7 +17,7 @@ Gradle 路径：`:telemetry`
 | `capability-calculator` | 将内部设备能力转换为电脑端稳定能力字段 |
 | `telemetry-command-handler` | 提供一次性 `telemetry.read` 结果 |
 | `telemetry-publisher` | 去重、失败重试和发送顺序 |
-| `android-flight-telemetry-adapter` | 观察 DJI 飞行、电量与位置键，并提供原子只读飞行遥测快照 |
+| `android-flight-telemetry-adapter` | 观察 DJI 飞行、电量、定位、视觉与起降诊断 Key，并提供原子只读飞行遥测快照 |
 
 ## 3. 对外接口
 

@@ -397,7 +397,7 @@ class RelayTestHarness private constructor(
             val pairing = pairingHandler(device, telemetry)
             listOf("pairing.start", "pairing.stop", "pairing.status").forEach { handlers[it] = pairing }
             listOf("live-stream.start", "live-stream.stop").forEach { handlers[it] = stream.commandHandler() }
-            listOf("flight.takeoff", "flight.land", "flight.return-home").forEach { handlers[it] = flightControl.commandHandler() }
+            listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing").forEach { handlers[it] = flightControl.commandHandler() }
             listOf(
                 "device.settings.camera.read", "device.settings.camera.write",
                 "device.settings.transmission.read", "device.settings.transmission.write",
@@ -513,7 +513,7 @@ private object HarnessTelemetryMapper {
         "lowBatteryRthState" to snapshot.lowBatteryRthState?.name.json(),
         "remainingFlightTimeSeconds" to snapshot.remainingFlightTimeSeconds.json(),
         "altitudeMeters" to snapshot.altitudeMeters.json(), "latitude" to snapshot.latitude.json(),
-        "longitude" to snapshot.longitude.json(), "liveStreaming" to JsonBoolean(snapshot.liveStreaming),
+        "longitude" to snapshot.longitude.json(), "liveStreaming" to snapshot.liveStreaming.json(),
         "liveStreamNotice" to snapshot.liveStreamNotice.json(), "liveResolution" to snapshot.liveResolution.json(),
         "liveFps" to snapshot.liveFps.json(), "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),
         "liveRttMillis" to snapshot.liveRttMillis.json(), "missionRevision" to snapshot.missionRevision.json(),

@@ -75,7 +75,7 @@
 | RTMP 开始、停止、码率、清晰度、推流状态 | [RTMP 图传](#rtmp-图传) | `src/modules/live-stream/android-dji-stream-adapter/.../MsdkV5LiveStreamApi.kt` |
 | 原始 H.264/H.265 帧 | [原始相机码流](#原始相机码流封存路径) | `src/modules/live-stream/android-camera-stream-adapter/.../AndroidCameraStreamApi.kt` |
 | KMZ 上传、启动、暂停、继续、停止航线 | [DJI Wayline 航线](#dji-wayline-航线) | `src/modules/wayline-mission/android-dji-wayline-adapter/.../MsdkV5WaypointMissionApi.kt` |
-| 自动起飞、降落、返航 | [直接飞行控制](#直接飞行控制) | `src/modules/flight-control/android-dji-flight-adapter/.../MsdkV5FlightApi.kt` |
+| 自动起飞、降落、返航、停止自动起飞、停止自动降落 | [直接飞行控制](#直接飞行控制) | `src/modules/flight-control/android-dji-flight-adapter/.../MsdkV5FlightApi.kt` |
 | 对频 | [对频状态与动作](#对频状态与动作) | `android-pairing-status-adapter`、`android-pairing-command-adapter` |
 | 相机曝光/焦点、链路频段/带宽 | [相机与链路设置](#相机与链路设置) | `src/modules/device-settings/android-dji-settings-adapter/.../MsdkV5SettingsApi.kt` |
 
@@ -100,7 +100,7 @@
 | `onRegisterSuccess()` | MSDK 注册成功。 | 映射为 `SdkAvailability.READY`。 | 只代表 SDK 生命周期可用；不能代替遥控器、飞机或飞控 Key。 |
 | `onRegisterFailure(IDJIError)` | 注册完成但发生错误。 | 安全映射为初始化失败，不泄露原始错误文本到业务协议。 | 不能重标为“飞机断开”。 |
 | `onProductConnect(int)` / `onProductDisconnect(int)` | 官方定义为硬件产品连接/断开回调。 | 仅记诊断，不作为 UI 或门禁的唯一事实源。 | `productId` 不是飞控健康、图传播放或航线状态。 |
-| `isRegistered()` | `true` 表示 MSDK 已成功注册。 | 仅可用于诊断或生命周期交叉检查。 | 不是“当前飞机已连接”。 |
+| `isRegistered()` | `true` 表示 MSDK 已成功注册。 | 每次本地中继会话启动时先读取；为 `true` 时直接恢复本地 `READY`，不重复 `init/registerApp`。 | 不是“当前飞机已连接”。 |
 
 **生命周期顺序**：`Helper.install` -> `SDKManager.init` -> `onInitProcess(INITIALIZE_COMPLETE)` -> `registerApp` -> `onRegisterSuccess` -> 才允许调用需要 MSDK 的业务 API。收到失败、关闭或旧代次回调时，当前适配器必须丢弃过期回调。
 
@@ -285,13 +285,16 @@ removeReceiveStreamListener(theSameListenerInstance)
 
 ## 直接飞行控制
 
-**项目位置**：`src/modules/flight-control/android-dji-flight-adapter/src/main/kotlin/com/skycommand/relay/flight/dji/android/MsdkV5FlightApi.kt`。所有三个调用都是 `KeyManager.performAction(KeyTools.createKey(...), callback)`；类型为 `DJIActionKeyInfo<EmptyMsg, EmptyMsg>`，只允许执行动作，不能读写订阅。
+**项目位置**：`src/modules/flight-control/android-dji-flight-adapter/src/main/kotlin/com/skycommand/relay/flight/dji/android/MsdkV5FlightApi.kt`。所有六个调用都是 `KeyManager.performAction(KeyTools.createKey(...), callback)`；类型为 `DJIActionKeyInfo<EmptyMsg, EmptyMsg>`，只允许执行动作，不能读写订阅。
 
 | 动作 Key | 官方原义 | 当前项目方法 | 不可省略的理解 |
 | --- | --- | --- | --- |
 | `FlightControllerKey.KeyStartTakeoff` | 开始自动起飞；当飞机悬停在离地约 1.2 m（4 ft）时官方视为起飞完成。电机已开时不可执行。 | `takeoff(...)` | 成功回调不取代 `KeyAreMotorsOn`、`KeyIsFlying` 和飞行模式的后续观察。 |
 | `KeyStartAutoLanding` | 开始自动降落。 | `land(...)` | 成功回调不是已经落地；必须观察后续状态。 |
+| `KeyConfirmLanding` | 在 DJI 已要求确认继续降落时，确认继续自动降落。 | `confirmLanding(...)` | 只在 `KeyIsLandingConfirmationNeeded=true` 且仍确认在飞行时，经操作者第二次确认调用；绝不因 `flight.land` 成功、计时器或重试自动调用。 |
 | `KeyStartGoHome` | 开始智能返航；GPS 信号不好时不能启动。返航期间可用遥控器杆量避障，官方支持由 `KeyStopGoHome` 或遥控器退出。 | `returnHome(...)` | 航线起飞阶段不能用它替代 `stopMission`。 |
+| `KeyStopTakeoff` | 请求停止自动起飞。 | `stopTakeoff(...)` | 只在 `KeyFCFlightMode == AUTO_TAKE_OFF` 时由桌面端允许；成功不代表电机停止或已落地。 |
+| `KeyStopAutoLanding` | 请求停止自动降落。 | `stopAutoLanding(...)` | 只在 `KeyFCFlightMode == AUTO_LANDING` 或 `CONFIRM_LANDING` 时由桌面端允许；成功不代表已经着陆。 |
 
 此适配器本身不做飞行授权判断。起飞/返航/降落的业务门禁在 `flight-control` 与组合根处理，仍必须满足完整 MSDK/设备事实、对应操作的官方约束和人工安全程序。任何未知、断开或操作失败都必须安全拒绝新的开始型命令。
 
@@ -362,7 +365,7 @@ MSDK 提供的是各组件/Manager 的原始事实。Sky Command 的“手机中
 | RTMP 图传 | `live-stream/android-dji-stream-adapter/.../MsdkV5LiveStreamApi.kt` | `MediaDataCenter.liveStreamManager`、`ILiveStreamManager` |
 | 原始码流（封存） | `live-stream/android-camera-stream-adapter/.../AndroidCameraStreamApi.kt` | `MediaDataCenter.cameraStreamManager`、`ICameraStreamManager` |
 | 航线 | `wayline-mission/android-dji-wayline-adapter/.../MsdkV5WaypointMissionApi.kt` | `WaypointMissionManager` |
-| 直接飞行 | `flight-control/android-dji-flight-adapter/.../MsdkV5FlightApi.kt` | 三个 `FlightControllerKey` 动作 Key |
+| 直接飞行 | `flight-control/android-dji-flight-adapter/.../MsdkV5FlightApi.kt` | 五个 `FlightControllerKey` 动作 Key |
 | 设置 | `device-settings/android-dji-settings-adapter/.../MsdkV5SettingsApi.kt` | `CameraKey`、`AirLinkKey` |
 
 ### 变更前检查表

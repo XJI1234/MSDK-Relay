@@ -12,7 +12,10 @@ internal class MsdkV5FlightApi(
 ) : DjiFlightApi {
     override fun takeoff(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStartTakeoff, completion)
     override fun land(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStartAutoLanding, completion)
+    override fun confirmLanding(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyConfirmLanding, completion)
     override fun returnHome(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStartGoHome, completion)
+    override fun stopTakeoff(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStopTakeoff, completion)
+    override fun stopAutoLanding(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStopAutoLanding, completion)
 
     private fun perform(
         key: dji.sdk.keyvalue.key.DJIActionKeyInfo<*, EmptyMsg>,

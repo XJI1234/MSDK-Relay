@@ -22,8 +22,8 @@ import com.skycommand.relay.settings.executor.DjiSettingsPort
 import com.skycommand.relay.settings.executor.SettingsDjiCompletion
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.dji.DjiStreamPort
+import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
-import com.skycommand.relay.stream.state.StreamMetrics
 import com.skycommand.relay.device.sdk.DjiSdkCallbacks
 import com.skycommand.relay.device.sdk.DjiSdkPort
 import com.skycommand.relay.device.sdk.PortStartResult
@@ -493,7 +493,7 @@ class SimulationDjiAdapter private constructor(
     private inner class SimulatedStreamPort : DjiStreamPort {
         override fun start(
             config: ValidatedStreamConfig,
-            metrics: (StreamMetrics) -> Unit,
+            status: (DjiStreamStatus) -> Unit,
             runtimeFailure: () -> Unit,
             completion: StreamDjiCompletion,
         ) {

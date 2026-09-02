@@ -22,10 +22,19 @@ interface StreamDjiCompletion {
     fun fail()
 }
 
+data class DjiStreamStatus(
+    val isStreaming: Boolean,
+    val metrics: StreamMetrics? = null,
+) {
+    init {
+        require(isStreaming || metrics == null) { "A stopped DJI stream cannot carry current metrics" }
+    }
+}
+
 interface DjiStreamPort {
     fun start(
         config: ValidatedStreamConfig,
-        metrics: (StreamMetrics) -> Unit,
+        status: (DjiStreamStatus) -> Unit,
         runtimeFailure: () -> Unit,
         completion: StreamDjiCompletion,
     )
@@ -86,7 +95,14 @@ class DjiStreamAdapter private constructor(
                 override fun run(completion: OperationCompletion) {
                     djiPort.start(
                         config = config,
-                        metrics = { metrics -> stateStore.updateMetrics(operationId, metrics) },
+                        status = { status ->
+                            val result = if (status.isStreaming) {
+                                stateStore.reportDjiStreaming(operationId, status.metrics)
+                            } else {
+                                stateStore.reportDjiStopped(operationId)
+                            }
+                            if (!status.isStreaming && result is StreamUpdateResult.Applied) requestRecoveryStop()
+                        },
                         runtimeFailure = {
                             if (stateStore.markFailed(operationId, "Stream runtime failed") is StreamUpdateResult.Applied) {
                                 requestRecoveryStop()

@@ -114,4 +114,40 @@ class MsdkV5FlightTelemetryKeyMappingTest {
         assertFalse(source.contains("manager.getValue(locationKey)"))
         assertFalse(source.contains("manager.listen(isFlyingKey, owner, false)"))
     }
+
+    @Test
+    fun observesRawGpsVisionAndTakeoffDiagnosticKeysWithoutInventingSafetyStates() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
+            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
+        ).first { it.exists() }.readText()
+
+        listOf(
+            "FlightControllerKey.KeyGPSSignalLevel",
+            "FlightControllerKey.KeyGPSSatelliteCount",
+            "FlightControllerKey.KeyIsVisionSensorUsed",
+            "FlightAssistantKey.KeyVisionSystemWarning",
+            "FlightAssistantKey.KeyVisionPositioningEnabled",
+            "FlightAssistantKey.KeyLandingProtectionState",
+            "FlightControllerKey.KeyIsLandingConfirmationNeeded",
+            "FlightControllerKey.KeyTakeoffFailureError",
+            "FlightControllerKey.KeyMotorStartFailureError",
+        ).forEach { key -> assertTrue(source.contains(key), "Missing observation for $key") }
+        listOf(
+            "GPS_SIGNAL_LEVEL",
+            "GPS_SATELLITE_COUNT",
+            "VISION_SENSOR_USED",
+            "VISION_SYSTEM_WARNING",
+            "VISION_POSITIONING_ENABLED",
+            "LANDING_PROTECTION_STATE",
+            "LANDING_CONFIRMATION_NEEDED",
+            "TAKEOFF_FAILURE_ERROR",
+            "MOTOR_START_FAILURE_ERROR",
+        ).forEach { fact -> assertTrue(source.contains("ObservedKey.$fact"), "Missing raw fact mapping for $fact") }
+        assertTrue(source.contains("manager.listen(gpsSignalLevelKey, flightControllerOwner)"))
+        assertTrue(source.contains("manager.listen(visionSystemWarningKey, flightControllerOwner)"))
+        assertTrue(source.contains("requestInitialValue(gpsSignalLevelKey, ObservedKey.GPS_SIGNAL_LEVEL,"))
+        assertTrue(source.contains("requestInitialValue(visionSystemWarningKey, ObservedKey.VISION_SYSTEM_WARNING,"))
+        assertTrue(source.contains("next?.name"))
+    }
 }

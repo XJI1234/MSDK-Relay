@@ -13,7 +13,10 @@ internal interface DjiFlightCompletion {
 internal interface DjiFlightApi {
     fun takeoff(completion: DjiFlightCompletion)
     fun land(completion: DjiFlightCompletion)
+    fun confirmLanding(completion: DjiFlightCompletion)
     fun returnHome(completion: DjiFlightCompletion)
+    fun stopTakeoff(completion: DjiFlightCompletion)
+    fun stopAutoLanding(completion: DjiFlightCompletion)
 }
 
 class AndroidDjiFlightPort internal constructor(
@@ -35,7 +38,10 @@ class AndroidDjiFlightPort internal constructor(
             when (action) {
                 FlightAction.TAKEOFF -> platform.takeoff(callbackFor(operation))
                 FlightAction.LAND -> platform.land(callbackFor(operation))
+                FlightAction.CONFIRM_LANDING -> platform.confirmLanding(callbackFor(operation))
                 FlightAction.RETURN_HOME -> platform.returnHome(callbackFor(operation))
+                FlightAction.STOP_TAKEOFF -> platform.stopTakeoff(callbackFor(operation))
+                FlightAction.STOP_AUTO_LANDING -> platform.stopAutoLanding(callbackFor(operation))
             }
         } catch (_: Throwable) {
             finish(operation, succeeded = false)

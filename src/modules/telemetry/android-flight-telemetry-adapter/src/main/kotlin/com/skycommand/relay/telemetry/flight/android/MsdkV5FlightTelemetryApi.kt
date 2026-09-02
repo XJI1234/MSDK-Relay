@@ -2,6 +2,7 @@ package com.skycommand.relay.telemetry.flight.android
 
 import dji.sdk.keyvalue.key.BatteryKey
 import dji.sdk.keyvalue.key.DJIKey
+import dji.sdk.keyvalue.key.FlightAssistantKey
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
 import dji.sdk.keyvalue.value.common.ComponentIndexType
@@ -46,6 +47,15 @@ private class KeyManagerFlightTelemetryObservation(
     private val remainingFlightTimeKey = KeyTools.createKey(FlightControllerKey.KeyLowBatteryRTHInfo)
     private val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
     private val locationKey = KeyTools.createKey(FlightControllerKey.KeyAircraftLocation)
+    private val gpsSignalLevelKey = KeyTools.createKey(FlightControllerKey.KeyGPSSignalLevel)
+    private val gpsSatelliteCountKey = KeyTools.createKey(FlightControllerKey.KeyGPSSatelliteCount)
+    private val visionSensorUsedKey = KeyTools.createKey(FlightControllerKey.KeyIsVisionSensorUsed)
+    private val visionSystemWarningKey = KeyTools.createKey(FlightAssistantKey.KeyVisionSystemWarning)
+    private val visionPositioningEnabledKey = KeyTools.createKey(FlightAssistantKey.KeyVisionPositioningEnabled)
+    private val landingProtectionStateKey = KeyTools.createKey(FlightAssistantKey.KeyLandingProtectionState)
+    private val landingConfirmationNeededKey = KeyTools.createKey(FlightControllerKey.KeyIsLandingConfirmationNeeded)
+    private val takeoffFailureErrorKey = KeyTools.createKey(FlightControllerKey.KeyTakeoffFailureError)
+    private val motorStartFailureErrorKey = KeyTools.createKey(FlightControllerKey.KeyMotorStartFailureError)
     private var active = true
     private var fact = FlightTelemetryFact()
     private var flightControllerGeneration = 0L
@@ -167,6 +177,33 @@ private class KeyManagerFlightTelemetryObservation(
             manager.listen(locationKey, flightControllerOwner) { _, next ->
                 publishEvent(ObservedKey.LOCATION, generation) { withLocation(next) }
             }
+            manager.listen(gpsSignalLevelKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.GPS_SIGNAL_LEVEL, generation) { copy(gpsSignalLevel = next?.name) }
+            }
+            manager.listen(gpsSatelliteCountKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.GPS_SATELLITE_COUNT, generation) { copy(gpsSatelliteCount = next) }
+            }
+            manager.listen(visionSensorUsedKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.VISION_SENSOR_USED, generation) { copy(visionSensorUsed = next) }
+            }
+            manager.listen(visionSystemWarningKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.VISION_SYSTEM_WARNING, generation) { copy(visionSystemWarning = next?.name) }
+            }
+            manager.listen(visionPositioningEnabledKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.VISION_POSITIONING_ENABLED, generation) { copy(visionPositioningEnabled = next) }
+            }
+            manager.listen(landingProtectionStateKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.LANDING_PROTECTION_STATE, generation) { copy(landingProtectionState = next?.name) }
+            }
+            manager.listen(landingConfirmationNeededKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.LANDING_CONFIRMATION_NEEDED, generation) { copy(landingConfirmationNeeded = next) }
+            }
+            manager.listen(takeoffFailureErrorKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.TAKEOFF_FAILURE_ERROR, generation) { copy(takeoffFailureError = next?.name) }
+            }
+            manager.listen(motorStartFailureErrorKey, flightControllerOwner) { _, next ->
+                publishEvent(ObservedKey.MOTOR_START_FAILURE_ERROR, generation) { copy(motorStartFailureError = next?.name) }
+            }
             requestInitialValue(isFlyingKey, ObservedKey.IS_FLYING, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.copy(isFlying = value)
             }
@@ -185,6 +222,33 @@ private class KeyManagerFlightTelemetryObservation(
             }
             requestInitialValue(locationKey, ObservedKey.LOCATION, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.withLocation(value)
+            }
+            requestInitialValue(gpsSignalLevelKey, ObservedKey.GPS_SIGNAL_LEVEL, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(gpsSignalLevel = value?.name)
+            }
+            requestInitialValue(gpsSatelliteCountKey, ObservedKey.GPS_SATELLITE_COUNT, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(gpsSatelliteCount = value)
+            }
+            requestInitialValue(visionSensorUsedKey, ObservedKey.VISION_SENSOR_USED, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(visionSensorUsed = value)
+            }
+            requestInitialValue(visionSystemWarningKey, ObservedKey.VISION_SYSTEM_WARNING, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(visionSystemWarning = value?.name)
+            }
+            requestInitialValue(visionPositioningEnabledKey, ObservedKey.VISION_POSITIONING_ENABLED, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(visionPositioningEnabled = value)
+            }
+            requestInitialValue(landingProtectionStateKey, ObservedKey.LANDING_PROTECTION_STATE, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(landingProtectionState = value?.name)
+            }
+            requestInitialValue(landingConfirmationNeededKey, ObservedKey.LANDING_CONFIRMATION_NEEDED, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(landingConfirmationNeeded = value)
+            }
+            requestInitialValue(takeoffFailureErrorKey, ObservedKey.TAKEOFF_FAILURE_ERROR, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(takeoffFailureError = value?.name)
+            }
+            requestInitialValue(motorStartFailureErrorKey, ObservedKey.MOTOR_START_FAILURE_ERROR, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.copy(motorStartFailureError = value?.name)
             }
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(flightControllerOwner) }
@@ -250,6 +314,15 @@ private class KeyManagerFlightTelemetryObservation(
         latitude = null,
         longitude = null,
         lowBatteryRthState = null,
+        gpsSignalLevel = null,
+        gpsSatelliteCount = null,
+        visionSensorUsed = null,
+        visionSystemWarning = null,
+        visionPositioningEnabled = null,
+        landingProtectionState = null,
+        landingConfirmationNeeded = null,
+        takeoffFailureError = null,
+        motorStartFailureError = null,
     )
 
     private fun Boolean?.toLinkState(): LinkState = when (this) {
@@ -293,6 +366,15 @@ private class KeyManagerFlightTelemetryObservation(
         LOW_BATTERY_RTH,
         ALTITUDE,
         LOCATION,
+        GPS_SIGNAL_LEVEL,
+        GPS_SATELLITE_COUNT,
+        VISION_SENSOR_USED,
+        VISION_SYSTEM_WARNING,
+        VISION_POSITIONING_ENABLED,
+        LANDING_PROTECTION_STATE,
+        LANDING_CONFIRMATION_NEEDED,
+        TAKEOFF_FAILURE_ERROR,
+        MOTOR_START_FAILURE_ERROR,
     }
 
 }

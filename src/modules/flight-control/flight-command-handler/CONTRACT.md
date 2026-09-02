@@ -14,7 +14,10 @@ Gradle 路径：`:flight-control:flight-command-handler`
 ```json
 { "name": "flight.takeoff", "fields": { "confirm": true } }
 { "name": "flight.land", "fields": { "confirm": true } }
+{ "name": "flight.confirm-landing", "fields": { "confirm": true } }
 { "name": "flight.return-home", "fields": { "confirm": true } }
+{ "name": "flight.stop-takeoff", "fields": { "confirm": true } }
+{ "name": "flight.stop-auto-landing", "fields": { "confirm": true } }
 ```
 
 返回 `Accepted` 只表示动作已被下层接收，不表示飞行已发生或完成。字段、确认、未知命令和下层拒绝均返回稳定、无 SDK 细节的拒绝类型。该模块不保留状态，不创建线程，不调用 DJI。

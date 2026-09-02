@@ -117,7 +117,10 @@ class FlightControl private constructor(
         private fun successDetail(commandName: String): String = when (commandName) {
             "flight.takeoff" -> "Takeoff command completed"
             "flight.land" -> "Landing command completed"
+            "flight.confirm-landing" -> "Landing confirmation command completed"
             "flight.return-home" -> "Return-home command completed"
+            "flight.stop-takeoff" -> "Stop automatic takeoff command completed"
+            "flight.stop-auto-landing" -> "Stop automatic landing command completed"
             else -> "Flight command completed"
         }
     }

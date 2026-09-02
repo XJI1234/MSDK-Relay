@@ -16,9 +16,22 @@ class FlightCommandHandlerContractTest {
 
         assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.takeoff")))
         assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.land")))
+        assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.confirm-landing")))
         assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.return-home")))
+        assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.stop-takeoff")))
+        assertIs<FlightCommandResult.Accepted>(handler.handle(command("flight.stop-auto-landing")))
 
-        assertEquals(listOf(FlightAction.TAKEOFF, FlightAction.LAND, FlightAction.RETURN_HOME), actions.actions)
+        assertEquals(
+            listOf(
+                FlightAction.TAKEOFF,
+                FlightAction.LAND,
+                FlightAction.CONFIRM_LANDING,
+                FlightAction.RETURN_HOME,
+                FlightAction.STOP_TAKEOFF,
+                FlightAction.STOP_AUTO_LANDING,
+            ),
+            actions.actions,
+        )
     }
 
     @Test

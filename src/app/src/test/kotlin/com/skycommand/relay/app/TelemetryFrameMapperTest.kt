@@ -177,7 +177,7 @@ class TelemetryFrameMapperTest {
         listOf(
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
             "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
-            "liveStreamNotice", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
+            "liveStreaming", "liveStreamNotice", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
             "missionRevision", "missionDeviceGeneration", "missionUploadProgress", "missionFileName",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
     }

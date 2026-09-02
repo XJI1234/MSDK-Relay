@@ -1,5 +1,6 @@
 package com.skycommand.relay.device.pairing
 
+import com.skycommand.relay.device.capability.DeviceCapabilityReader
 import com.skycommand.relay.device.operation.DjiOperation
 import com.skycommand.relay.device.operation.DjiOperationCoordinator
 import com.skycommand.relay.device.operation.OperationCancellationHandle
@@ -8,9 +9,7 @@ import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
 import com.skycommand.relay.device.state.DeviceSnapshot
 import com.skycommand.relay.device.state.DeviceStateStore
-import com.skycommand.relay.device.state.LinkState
 import com.skycommand.relay.device.state.PairingState
-import com.skycommand.relay.device.state.SdkAvailability
 
 interface PairingPort {
     fun startPairing(): DjiOperation
@@ -48,7 +47,7 @@ class PairingController private constructor(
         listener: (PairingOperationResult) -> Unit,
     ): PairingRequestResult = submit(
         timeoutMillis = timeoutMillis,
-        allowed = { it.canStartPairing() },
+        allowed = { DeviceCapabilityReader.read(it).canStartPairing },
         rejected = PairingRejection.NOT_READY,
         targetState = PairingState.PAIRING,
         operation = { port.startPairing() },
@@ -112,18 +111,6 @@ class PairingController private constructor(
         store.applyPairing(PairingState.FAILED)
         listener(result)
     }
-
-    private fun DeviceSnapshot.canStartPairing(): Boolean =
-        sdkAvailability == SdkAvailability.READY &&
-            remoteController == LinkState.CONNECTED &&
-            aircraft == LinkState.DISCONNECTED &&
-            pairing in setOf(
-                PairingState.UNKNOWN,
-                PairingState.IDLE,
-                PairingState.PAIRED,
-                PairingState.FAILED,
-                PairingState.STOPPING,
-            )
 
     companion object {
         private const val MIN_TIMEOUT_MILLIS = 1_000L

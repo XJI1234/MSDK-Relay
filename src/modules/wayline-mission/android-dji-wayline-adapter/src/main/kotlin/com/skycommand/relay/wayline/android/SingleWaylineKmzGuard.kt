@@ -1,6 +1,7 @@
 package com.skycommand.relay.wayline.android
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.zip.ZipInputStream
@@ -21,7 +22,7 @@ internal object SingleWaylineKmzGuard {
                 val entry = archive.nextEntry ?: break
                 if (!entry.isDirectory && entry.name == WAYLINES_WPML) {
                     if (wpml != null) return@use null
-                    wpml = archive.readAllBytes()
+                    wpml = archive.readEntryBytes()
                 }
                 archive.closeEntry()
             }
@@ -60,6 +61,16 @@ internal object SingleWaylineKmzGuard {
                 }
             }
             return read
+        }
+
+        fun readEntryBytes(): ByteArray {
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8 * 1024)
+            while (true) {
+                val count = read(buffer)
+                if (count < 0) return output.toByteArray()
+                if (count > 0) output.write(buffer, 0, count)
+            }
         }
     }
 

@@ -16,7 +16,7 @@ class StreamStateStoreContractTest {
         val store = StreamStateStore.create()
         val start = assertIs<StreamStartResult.Accepted>(store.requestStart(config())).operationId
         assertEquals(StreamLifecycleState.STARTING, store.snapshot().state)
-        assertIs<StreamUpdateResult.Applied>(store.markStarted(start, StreamMetrics("1080p", 30.0, 2_000.0, 40)))
+        assertIs<StreamUpdateResult.Applied>(store.markStarted(start))
         assertEquals(StreamLifecycleState.STREAMING, store.snapshot().state)
 
         val stop = assertIs<StreamStopResult.Accepted>(store.requestStop()).operationId
@@ -24,6 +24,26 @@ class StreamStateStoreContractTest {
         assertIs<StreamUpdateResult.Applied>(store.markStopped(stop, "Stopped"))
         assertEquals(StreamLifecycleState.STOPPED, store.snapshot().state)
         assertEquals(false, store.snapshot().targetConfigured)
+        assertEquals(null, store.snapshot().djiStreaming)
+    }
+
+    @Test
+    fun keepsDjiStreamingFactSeparateFromStartLifecycle() {
+        val store = StreamStateStore.create()
+        val operation = assertIs<StreamStartResult.Accepted>(store.requestStart(config())).operationId
+
+        assertIs<StreamUpdateResult.Applied>(store.markStarted(operation))
+        assertEquals(StreamLifecycleState.STREAMING, store.snapshot().state)
+        assertEquals(null, store.snapshot().djiStreaming)
+
+        assertIs<StreamUpdateResult.Applied>(store.reportDjiStreaming(operation, StreamMetrics("1080p", 30.0, 2_000.0, 40)))
+        assertEquals(true, store.snapshot().djiStreaming)
+        assertEquals(StreamMetrics("1080p", 30.0, 2_000.0, 40), store.snapshot().metrics)
+
+        assertIs<StreamUpdateResult.Applied>(store.reportDjiStopped(operation))
+        assertEquals(false, store.snapshot().djiStreaming)
+        assertEquals(StreamLifecycleState.FAILED, store.snapshot().state)
+        assertEquals(null, store.snapshot().metrics)
     }
 
     @Test
@@ -47,10 +67,10 @@ class StreamStateStoreContractTest {
         val current = assertIs<StreamStartResult.Accepted>(store.requestStart(config("new"))).operationId
         val before = store.snapshot()
 
-        assertIs<StreamUpdateResult.IgnoredStale>(store.markStarted(old, StreamMetrics()))
+        assertIs<StreamUpdateResult.IgnoredStale>(store.markStarted(old))
         assertEquals(before, store.snapshot())
-        store.markStarted(current, StreamMetrics())
-        assertIs<StreamUpdateResult.IgnoredStale>(store.markStarted(current, StreamMetrics()))
+        store.markStarted(current)
+        assertIs<StreamUpdateResult.IgnoredStale>(store.markStarted(current))
         assertIs<StreamUpdateResult.IgnoredStale>(store.markStopped(old, "late"))
         assertEquals(StreamLifecycleState.STREAMING, store.snapshot().state)
     }
@@ -59,8 +79,8 @@ class StreamStateStoreContractTest {
     fun validatesMetricBoundariesAndRejectsInvalidValues() {
         val store = StreamStateStore.create()
         val operation = assertIs<StreamStartResult.Accepted>(store.requestStart(config())).operationId
-        assertIs<StreamUpdateResult.Applied>(store.markStarted(operation, StreamMetrics(null, 0.0, 0.0, 0)))
-        assertIs<StreamUpdateResult.Applied>(store.updateMetrics(operation, StreamMetrics("x".repeat(64), 240.0, 1_000_000.0, 60_000)))
+        assertIs<StreamUpdateResult.Applied>(store.markStarted(operation))
+        assertIs<StreamUpdateResult.Applied>(store.reportDjiStreaming(operation, StreamMetrics("x".repeat(64), 240.0, 1_000_000.0, 60_000)))
         assertEquals(240.0, store.snapshot().metrics?.fps)
         listOf(
             StreamMetrics("x".repeat(65), 1.0, 1.0, 1),
@@ -68,7 +88,7 @@ class StreamStateStoreContractTest {
             StreamMetrics(null, 1.0, -0.1, 1),
             StreamMetrics(null, 1.0, 1.0, -1),
         ).forEach { metrics ->
-            kotlin.test.assertFailsWith<IllegalArgumentException> { store.updateMetrics(operation, metrics) }
+            kotlin.test.assertFailsWith<IllegalArgumentException> { store.reportDjiStreaming(operation, metrics) }
         }
     }
 

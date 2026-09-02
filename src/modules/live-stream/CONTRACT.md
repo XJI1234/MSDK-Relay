@@ -1,7 +1,7 @@
 # live-stream 模块契约
 
 状态：已实施并已验证
-版本：1.1.0
+版本：1.2.0
 Gradle 路径：:live-stream
 
 ## 1. 唯一职责
@@ -28,9 +28,9 @@ liveStream.markDeviceUnavailable() -> StreamSnapshot
 
 ## 3. 所有权与行为规则
 
-只有 `stream-state-store` 持有图传事实，只有 `dji-stream-adapter` 可以调用 DJI 图传方法，所有 DJI 调用都经 `device-connection` 的 `dji-operation-coordinator`。命令处理器和校验器均不持有状态。MSDK `LiveStreamStatusListener` 是开始成功后的 DJI 图传运行态唯一来源：每个状态回调都会更新 `isStreaming` 或其指标；回调明确给出 `isStreaming=false` 时，必须立即将图传转入非活动失败态并经遥测发布，不能保留旧的“图传中”。
+只有 `stream-state-store` 持有图传事实，只有 `dji-stream-adapter` 可以调用 DJI 图传方法，所有 DJI 调用都经 `device-connection` 的 `dji-operation-coordinator`。命令处理器和校验器均不持有状态。`startStream` 成功、`LiveStreamStatus.isStreaming` 和桌面播放器分别是三个独立事实：前者只表示 DJI 已接受开始操作；`isStreaming` 是开始成功后的 DJI 推流运行态唯一来源，必须逐值透传为 `true|false|未知`，不得由前者推断；桌面播放器由媒体管线独立确认。回调明确给出 `isStreaming=false` 时，必须立即将图传转入非活动失败态并经遥测发布，不能保留旧的“图传中”。
 
-`live-stream.start` 必须在任何 DJI 调用前校验 RTMP URL 和 `StreamStartGate`。门禁拒绝时不得调用 DJI，且不得让图传状态进入启动中。只有 DJI 确认启动成功后才报告图传活动。停止、启动失败、超时、取消和设备断开必须产生稳定的非活动状态和安全提示；停止是恢复型操作，不使用启动门禁。重复或延迟 DJI 回调不得改变较新的状态，也不得完成同一中继命令两次。公开结果不得包含密码、令牌、文件路径、原始异常或 DJI 对象。
+`live-stream.start` 必须在任何 DJI 调用前校验 RTMP URL 和 `StreamStartGate`。门禁拒绝时不得调用 DJI，且不得让图传状态进入启动中。DJI 开始成功只报告“开始已接受”；在收到 `LiveStreamStatus.isStreaming=true` 前，公开 MSDK 推流状态必须为未知。停止、启动失败、超时、取消和设备断开必须产生稳定的非活动状态和安全提示；停止是恢复型操作，不使用启动门禁。重复或延迟 DJI 回调不得改变较新的状态，也不得完成同一中继命令两次。公开结果不得包含密码、令牌、文件路径、原始异常或 DJI 对象。
 
 设备不可用时，组合根必须调用 `LiveStream.markDeviceUnavailable`。门面先取消已接受的图传操作，再将该通知委托给 `StreamStateStore.markDeviceUnavailable`，使运行中图传进入安全非活动状态，并让旧 DJI 回调因操作代际失效而无法恢复图传；若共享协调器没有处于硬件结果未确认隔离，门面随后通过该协调器提交一次无状态的 DJI stop 尝试。停止完成回调不得改写已失效状态。若启动操作的硬件结果未确认，禁止为停止而绕过协调器或并发调用 DJI。门面不得自行解释 RTMP URL、状态迁移或 DJI 错误。
 

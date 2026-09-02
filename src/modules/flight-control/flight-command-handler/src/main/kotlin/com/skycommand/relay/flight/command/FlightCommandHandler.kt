@@ -8,7 +8,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 enum class FlightAction {
     TAKEOFF,
     LAND,
+    CONFIRM_LANDING,
     RETURN_HOME,
+    STOP_TAKEOFF,
+    STOP_AUTO_LANDING,
 }
 
 fun interface FlightActionCompletion {
@@ -65,7 +68,10 @@ class FlightCommandHandler private constructor(
     private fun actionFor(name: String): FlightAction? = when (name) {
         "flight.takeoff" -> FlightAction.TAKEOFF
         "flight.land" -> FlightAction.LAND
+        "flight.confirm-landing" -> FlightAction.CONFIRM_LANDING
         "flight.return-home" -> FlightAction.RETURN_HOME
+        "flight.stop-takeoff" -> FlightAction.STOP_TAKEOFF
+        "flight.stop-auto-landing" -> FlightAction.STOP_AUTO_LANDING
         else -> null
     }
 

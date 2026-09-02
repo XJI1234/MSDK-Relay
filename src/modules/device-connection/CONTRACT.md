@@ -1,7 +1,7 @@
 # device-connection 一级模块契约
 
 状态：已实施并已验证
-版本：1.1.0
+版本：1.2.0
 所属程序：MSDK Relay Android
 模块标识：`device-connection`
 
@@ -44,7 +44,7 @@ DeviceConnection.operations().submit(action, timeoutMillis, completion)
 
 ## 4. 数据所有权与不变量
 
-- `device-state-store` 是 SDK 可用性、遥控器、产品、AirLink、主相机、飞控连接和配对状态的唯一状态拥有者。每条连接事实均为三态：仅明确观察到 true 才是 `CONNECTED`，仅明确观察到 false 才是 `DISCONNECTED`，未观察、null、SDK 未就绪和停止后均为 `UNKNOWN`。每个 Android Key 适配器必须先用 `KeyManager.listen(key, holder, listener)` 建立持续订阅，再用 `KeyManager.getValue(key, callback)` 请求一次异步硬件读取；连接事实不得用同步 `getValue(key)` 的 MSDK 缓存初始化。初始硬件读取返回时，若该 Key 已收到更新的监听事件，旧初始结果必须丢弃。状态在监听仍有效且未收到反向事件时保持为当前 MSDK 事实，不因经过时间自动降级。端口重启、SDK 停止和运行代次更替必须先使旧观察失效，新的代次只有收到其初始异步 Key 回调或后续监听事件后才恢复可信事实。
+- `device-state-store` 是 SDK 可用性、遥控器、产品、AirLink、主相机、飞控连接和配对状态的唯一状态拥有者。每条连接事实均为三态：仅明确观察到 true 才是 `CONNECTED`，仅明确观察到 false 才是 `DISCONNECTED`，未观察、null、SDK 未就绪和停止后均为 `UNKNOWN`。每个 Android Key 适配器必须先用 `KeyManager.listen(key, holder, listener)` 建立持续订阅，再用 `KeyManager.getValue(key, callback)` 请求一次异步硬件读取；连接事实不得用同步 `getValue(key)` 的 MSDK 缓存初始化。硬件 Key 适配器只能在 `sdk-lifecycle` 已明确进入 `READY` 后被启动；`STARTING`、`FAILED` 与 `STOPPED` 阶段不得访问或重建任何硬件 Key。初始硬件读取返回时，若该 Key 已收到更新的监听事件，旧初始结果必须丢弃。状态在监听仍有效且未收到反向事件时保持为当前 MSDK 事实，不因经过时间自动降级。端口重启、SDK 停止和运行代次更替必须先使旧观察失效，新的代次只有收到其初始异步 Key 回调或后续监听事件后才恢复可信事实。
 - 所有读者只能取得不可变快照，不能持有或修改内部可变对象。
 - `dji-operation-coordinator` 是直播、航线、配对、飞行控制和设备设置执行 DJI SDK 调用的唯一调度入口；这些模块不得自行创建 DJI 操作线程或绕开协调器并发调用 DJI。
 - DJI 回调先由对应适配器规范化为公开观察值，再写入状态仓库；业务模块不得直接监听 DJI 回调。`ProductKey.KeyConnection`、`AirLinkKey.KeyConnection`、`CameraKey.KeyConnection(LEFT_OR_MAIN)` 与 `FlightControllerKey.KeyConnection` 必须分别保留，绝不相互推断或合并为“飞机已连接”。`ProductKey.KeyConnection` 只作为保留的原始诊断事实，业务能力、操作门禁、遥测 UI 与链路摘要不得读取它；飞行与航线以飞控 Key 为准，图传以 AirLink 和主相机 Key 为准。
@@ -62,19 +62,20 @@ READY -> STOPPED
 FAILED -> STOPPED
 ```
 
-`READY` 只表示设备连接模块已经可观察 DJI SDK，不表示遥控器、飞行器或配对已经就绪。`start()` 被重复调用不重启 SDK；`stop()` 被重复调用不再次注销监听。停止后到达的旧 DJI 回调必须被丢弃。USB 授权或 SDK 稍后变为 `READY` 时，组合根可以调用 `refreshHardwareLinks()`：它只重启遥控器、飞行器和配对状态观察，不得停止或重新初始化 SDK。SDK 已 `STOPPED` 时该调用是空操作。
+`READY` 只表示设备连接模块已经可以安全访问 DJI Key，不表示遥控器、飞行器或配对已经就绪。`start()` 被重复调用不重启 SDK；`stop()` 被重复调用不再次注销监听。停止后到达的旧 DJI 回调必须被丢弃。门面在 SDK 转入 `READY` 的同一运行代次内建立遥控器、飞行器和配对状态观察；组合根不得重复承担这项生命周期职责。USB 授权或重接入时可以调用 `refreshHardwareLinks()`，但它只在 SDK 当前为 `READY` 时重启这三类观察，不得停止或重新初始化 SDK；SDK 为 `STARTING`、`FAILED` 或 `STOPPED` 时该调用必须是空操作。
 
 门面层的 `start()` 与 `stop()` 必须线性化执行：任一调用的全部启动、回滚或停止步骤完成前，另一个调用不得穿插执行。若停止请求在启动过程中到达，它必须等待该次启动完成或回滚，再执行完整停止；停止返回后，不得遗留任何有效观察链接，也不得让该次启动的后续步骤重新写入运行时状态。
 
 门面层的组合顺序固定如下：
 
 ```text
-启动：sdk-lifecycle -> remote-controller-link -> aircraft-link -> pairing-status-link
-启动失败回滚：pairing-status-link -> aircraft-link -> remote-controller-link -> sdk-lifecycle
+启动：sdk-lifecycle
+SDK 异步进入 READY：remote-controller-link -> aircraft-link -> pairing-status-link
+硬件观察刷新：pairing-status-link -> aircraft-link -> remote-controller-link -> unknown -> remote-controller-link -> aircraft-link -> pairing-status-link
 停止：pairing-status-link -> aircraft-link -> remote-controller-link -> sdk-lifecycle -> markRuntimeUnavailable
 ```
 
-只有所有观察链接均成功启动，`start()` 才返回 `StartAccepted`。任一观察链接启动失败时，门面层必须停止此前已经成功启动的链接和 SDK；失败链接自身负责清理其未完成的启动，最终返回不暴露底层错误的 `StartRejected("device listener unavailable")`。回滚和停止中的清理异常必须被各链接隔离，不得阻止后续清理。停止完成后，`markRuntimeUnavailable` 必须最后执行，使快照不保留任何运行时连接或配对事实。
+`start()` 的 `StartAccepted` 只表示 SDK 初始化已接受；硬件 Key 尚未到 `READY` 时，所有硬件事实必须保持 `UNKNOWN`。SDK 初始化被拒绝时才返回 `StartRejected`。SDK 已 `READY` 后，每个硬件观察链接独立尝试启动：任一链接不可用时只记录该链接的稳定诊断并保持其事实为 `UNKNOWN`，不得停止 SDK、已成功链接或其余链接的启动。失败链接自身负责清理未完成启动；后续 USB 或显式刷新可以再次尝试。停止和刷新中的清理异常必须被各链接隔离，不得阻止后续清理。停止完成后，`markRuntimeUnavailable` 必须最后执行，使快照不保留任何运行时连接或配对事实。
 
 ## 6. 依赖与替身
 
@@ -90,4 +91,4 @@ JVM 测试 -> recording/in-memory port 与 manual scheduler
 
 ## 7. 交付标准
 
-每个二级模块必须先在自身目录写 `CONTRACT.md`，再写代码和测试。完成本一级模块前，必须覆盖：SDK 启停、所有观察链接的固定启动顺序、每个启动失败位置的完整回滚、停止顺序、状态版本隔离、监听注销、遥控器与飞行器独立变化、真实配对状态观察及停止后的旧回调隔离、配对前置条件、操作串行、超时、取消、重复完成回调、依赖异常，以及不泄露 DJI 细节的结果。
+每个二级模块必须先在自身目录写 `CONTRACT.md`，再写代码和测试。完成本一级模块前，必须覆盖：SDK 启停、`STARTING` 阶段不访问硬件 Key、SDK `READY` 后的固定观察启动顺序、SDK `READY` 后任一观察链接失败不会回滚 SDK 或阻断其余链接、非 `READY` 的刷新无操作、停止顺序、状态版本隔离、监听注销、遥控器与飞行器独立变化、真实配对状态观察及停止后的旧回调隔离、配对前置条件、操作串行、超时、取消、重复完成回调、依赖异常，以及不泄露 DJI 细节的结果。

@@ -28,6 +28,18 @@ class FlightControlContractTest {
     }
 
     @Test
+    fun namesTheCompletedRecoveryActionWithoutClaimingAircraftState() {
+        val fixture = Fixture()
+        val completion = Completion()
+
+        fixture.control.commandHandler().handle(command("flight.stop-auto-landing"), completion)
+        fixture.port.succeed()
+
+        assertEquals(listOf("ok:Stop automatic landing command completed"), completion.events)
+        assertEquals(listOf(FlightAction.STOP_AUTO_LANDING), fixture.port.actions)
+    }
+
+    @Test
     fun rejectsUnconfirmedCommandBeforeCallingDji() {
         val fixture = Fixture()
         val completion = Completion()

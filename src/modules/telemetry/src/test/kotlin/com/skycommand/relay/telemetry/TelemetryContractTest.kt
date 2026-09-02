@@ -88,7 +88,7 @@ class TelemetryContractTest {
 
         source.inputs = source.inputs.copy(
             device = connectedFlightDevice(),
-            flight = FlightTelemetrySnapshot(isFlying = true, batteryPercent = 77),
+            flight = FlightTelemetrySnapshot(isFlying = true, batteryPercent = 77, battery = LinkState.CONNECTED),
         )
         source.emit()
 
