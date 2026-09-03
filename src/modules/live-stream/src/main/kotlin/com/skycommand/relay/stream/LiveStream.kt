@@ -21,6 +21,7 @@ import com.skycommand.relay.stream.dji.StreamDjiTerminalListener
 import com.skycommand.relay.stream.dji.StreamDjiTerminalOutcome
 import com.skycommand.relay.stream.state.Registration
 import com.skycommand.relay.stream.state.StreamSnapshot
+import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamStateDiagnosticSink
 import com.skycommand.relay.stream.state.StreamStateListener
 import com.skycommand.relay.stream.state.StreamStateStore
@@ -63,6 +64,16 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
         val snapshot = (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
         if (requiresRecoveryStop) adapter.requestRecoveryStop()
+        snapshot
+    }
+
+    /** Stops the production RTMP stream when AirLink or the primary camera is unavailable. */
+    fun markSourceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
+        val requiresRecoveryStop = state.snapshot().state != StreamLifecycleState.STOPPED
+        if (!requiresRecoveryStop) return state.snapshot()
+        activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
+        val snapshot = (state.markSourceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
+        adapter.requestRecoveryStop()
         snapshot
     }
 

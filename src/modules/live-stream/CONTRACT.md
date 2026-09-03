@@ -20,6 +20,7 @@ liveStream.commandHandler() -> CommandHandler
 liveStream.snapshot() -> StreamSnapshot
 liveStream.onChanged(listener) -> Registration
 liveStream.markDeviceUnavailable() -> StreamSnapshot
+liveStream.markSourceUnavailable() -> StreamSnapshot
 ```
 
 `LiveStreamDependencies` 接受 `DjiStreamPort`、只读 `StreamStartGate`、共享 `DjiOperationCoordinator`、范围为 1,000..60,000 毫秒的操作超时和可选诊断接收器。`StreamStartGate` 只能回答当前是否允许开始图传，不能暴露 DJI 类型或修改设备状态；它由组合根连接到 `device-connection` 的 `canStreamVideo` 能力。注入对象仍归调用方所有；门面创建并唯一拥有 `StreamStateStore`、`DjiStreamAdapter` 和 `StreamCommandHandler`。
@@ -33,6 +34,8 @@ liveStream.markDeviceUnavailable() -> StreamSnapshot
 `live-stream.start` 必须在任何 DJI 调用前校验 RTMP URL 和 `StreamStartGate`。门禁拒绝时不得调用 DJI，且不得让图传状态进入启动中。DJI 开始成功只报告“开始已接受”；在收到 `LiveStreamStatus.isStreaming=true` 前，公开 MSDK 推流状态必须为未知。停止、启动失败、超时、取消和设备断开必须产生稳定的非活动状态和安全提示；停止是恢复型操作，不使用启动门禁。重复或延迟 DJI 回调不得改变较新的状态，也不得完成同一中继命令两次。公开结果不得包含密码、令牌、文件路径、原始异常或 DJI 对象。
 
 设备不可用时，组合根必须调用 `LiveStream.markDeviceUnavailable`。门面先取消已接受的图传操作，再将该通知委托给 `StreamStateStore.markDeviceUnavailable`，使运行中图传进入安全非活动状态，并让旧 DJI 回调因操作代际失效而无法恢复图传；若共享协调器没有处于硬件结果未确认隔离，门面随后通过该协调器提交一次无状态的 DJI stop 尝试。停止完成回调不得改写已失效状态。若启动操作的硬件结果未确认，禁止为停止而绕过协调器或并发调用 DJI。门面不得自行解释 RTMP URL、状态迁移或 DJI 错误。
+
+当 `DeviceConnection.capabilities().canStreamVideo` 从可用变为不可用时，应用组合根只对生产 RTMP 门面调用 `markSourceUnavailable`。该方法取消活动操作、委托 `StreamStateStore.markSourceUnavailable` 记录精确安全原因，并通过同一共享协调器提交一次恢复性 DJI stop；恢复 AirLink/主相机后不自动启动，必须等待新的 `live-stream.start`。它不调用也不改变封存的 `WhipLiveStream`。
 
 ## 4. 验证要求
 

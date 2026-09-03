@@ -117,6 +117,20 @@ class LiveStreamContractTest {
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
     }
 
+    @Test
+    fun sourceUnavailabilityStopsOnlyTheProductionRtmpStream() {
+        val fixture = Fixture()
+        val completion = Completion()
+        fixture.liveStream.commandHandler().handle(start(), completion)
+        fixture.port.startCompletion!!.succeed()
+
+        fixture.liveStream.markSourceUnavailable()
+
+        assertEquals(1, fixture.port.stopCalls)
+        assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
+        assertEquals("Video source unavailable", fixture.liveStream.snapshot().notice)
+    }
+
     private class Fixture(startAllowed: Boolean = true) {
         val port = Port()
         private val coordinator = DjiOperationCoordinator.create(

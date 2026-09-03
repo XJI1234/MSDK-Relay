@@ -131,6 +131,8 @@ class MobileRelayGraph private constructor(
     private val flightTelemetryLifecycleLock = Any()
     private var flightTelemetryInvalidated = false
     private var lastFlightControllerLink = LinkState.UNKNOWN
+    private val videoSourceLifecycleLock = Any()
+    private var videoSourceInvalidated = false
 
     fun start(): RuntimeStartResult {
         val result = runtime.start(setOf(PermissionKind.RUNTIME))
@@ -144,6 +146,7 @@ class MobileRelayGraph private constructor(
             flightTelemetryInvalidated = false
             lastFlightControllerLink = LinkState.UNKNOWN
         }
+        synchronized(videoSourceLifecycleLock) { videoSourceInvalidated = false }
         startCancellation?.cancel()
         startCancellation = null
         return runtime.stop()
@@ -188,6 +191,7 @@ class MobileRelayGraph private constructor(
             CloseableRegistration { registration.unregister() }
         }
         registrations += device.onChanged {
+            synchronizeRtmpStreamWithVideoSource()
             synchronizeFlightTelemetryWithFlightController()
             notifyStatus()
         }.let { registration ->
@@ -310,6 +314,21 @@ class MobileRelayGraph private constructor(
             FlightTelemetryLinkAction.REFRESH -> flight.refreshFlightControllerFacts()
             null -> Unit
         }
+    }
+
+    private fun synchronizeRtmpStreamWithVideoSource() {
+        val shouldStop = synchronized(videoSourceLifecycleLock) {
+            if (device.capabilities().canStreamVideo) {
+                videoSourceInvalidated = false
+                false
+            } else if (!videoSourceInvalidated && stream.snapshot().state != StreamLifecycleState.STOPPED) {
+                videoSourceInvalidated = true
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldStop) stream.markSourceUnavailable()
     }
 
     private fun cancelUsbWatch() {

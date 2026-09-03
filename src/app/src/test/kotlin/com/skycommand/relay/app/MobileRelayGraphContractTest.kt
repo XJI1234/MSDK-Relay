@@ -81,6 +81,20 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
+    fun videoSourceTransitionsStopOnlyTheProductionRtmpStream() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val synchronization = source.substringAfter("private fun synchronizeRtmpStreamWithVideoSource()")
+            .substringBefore("private fun synchronizeFlightTelemetryWithFlightController()")
+
+        assertTrue(synchronization.contains("device.capabilities().canStreamVideo"))
+        assertTrue(synchronization.contains("stream.markSourceUnavailable()"))
+        assertFalse(synchronization.contains("whipStream.markSourceUnavailable()"))
+    }
+
+    @Test
     fun productConnectionIsNotShownAsAnAircraftConnectionFact() {
         val strings = listOf(
             Path("src/main/res/values/strings.xml"),

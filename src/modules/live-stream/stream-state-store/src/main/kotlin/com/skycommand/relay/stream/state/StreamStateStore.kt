@@ -207,6 +207,32 @@ class StreamStateStore private constructor(
         return result
     }
 
+    /**
+     * Records that the MSDK video source is no longer usable. This is distinct from a
+     * relay or device lifecycle stop: the RTMP stream may be started manually again
+     * after AirLink and the primary camera both return to CONNECTED.
+     */
+    fun markSourceUnavailable(notice: String = "Video source unavailable"): StreamUpdateResult {
+        validateNotice(notice)
+        var shouldDrain = false
+        val result = lock.withLock {
+            val previous = current
+            activeOperation = null
+            current = current.copy(
+                revision = current.revision + 1,
+                state = if (current.state == StreamLifecycleState.STOPPED) StreamLifecycleState.STOPPED else StreamLifecycleState.FAILED,
+                targetConfigured = false,
+                notice = notice,
+                metrics = null,
+                djiStreaming = null,
+            )
+            shouldDrain = enqueue(previous, current)
+            StreamUpdateResult.Applied(current)
+        }
+        if (shouldDrain) drain()
+        return result
+    }
+
     fun reportDjiStreaming(operationId: Long, metrics: StreamMetrics?): StreamUpdateResult {
         validateMetrics(metrics)
         var shouldDrain = false

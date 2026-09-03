@@ -146,5 +146,19 @@ class StreamStateStoreContractTest {
         assertEquals(1, calls)
     }
 
+    @Test
+    fun sourceUnavailabilityFailsAnActiveStreamWithoutPretendingTheDeviceStopped() {
+        val store = StreamStateStore.create()
+        val operation = assertIs<StreamStartResult.Accepted>(store.requestStart(config())).operationId
+        store.markStarted(operation)
+
+        val result = store.markSourceUnavailable()
+
+        assertIs<StreamUpdateResult.Applied>(result)
+        assertEquals(StreamLifecycleState.FAILED, store.snapshot().state)
+        assertEquals("Video source unavailable", store.snapshot().notice)
+        assertEquals(null, store.snapshot().djiStreaming)
+    }
+
     private fun config(suffix: String = "device") = ValidatedStreamConfig("rtmp://computer/live/$suffix")
 }
