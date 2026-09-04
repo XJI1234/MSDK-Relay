@@ -2,6 +2,7 @@ package com.skycommand.relay.flight.dji.android
 
 import com.skycommand.relay.flight.command.FlightAction
 import com.skycommand.relay.flight.dji.FlightDjiCompletion
+import com.skycommand.relay.flight.dji.FlightDjiFailure
 import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -55,9 +56,35 @@ class AndroidDjiFlightPortContractTest {
         assertTrue(source.contains("perform(FlightControllerKey.KeyConfirmLanding, completion)"))
     }
 
+    @Test
+    fun mapsTheOfficialDjiFailureCodeAndDescriptionInsteadOfDiscardingThem() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/flight/dji/android/MsdkV5FlightApi.kt"),
+            Path("src/modules/flight-control/android-dji-flight-adapter/src/main/kotlin/com/skycommand/relay/flight/dji/android/MsdkV5FlightApi.kt"),
+        ).first { it.exists() }.readText()
+        assertTrue(source.contains("error.errorCode()"))
+        assertTrue(source.contains("error.description()"))
+    }
+
+    @Test
+    fun forwardsAPlatformDjiFailureWithoutChangingItsNormalizedFields() {
+        val api = Api()
+        val port = AndroidDjiFlightPort(api)
+        val failure = FlightDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The aircraft is busy")
+        var received: FlightDjiFailure? = null
+
+        port.execute(FlightAction.TAKEOFF, object : FlightDjiCompletion {
+            override fun succeed() = Unit
+            override fun fail(failure: FlightDjiFailure?) { received = failure }
+        })
+        api.fail(failure)
+
+        assertEquals(failure, received)
+    }
+
     private fun completion(events: MutableList<String>) = object : FlightDjiCompletion {
         override fun succeed() { events += "ok" }
-        override fun fail() { events += "fail" }
+        override fun fail(failure: FlightDjiFailure?) { events += "fail" }
     }
 
     private class Api : DjiFlightApi {
@@ -75,6 +102,6 @@ class AndroidDjiFlightPortContractTest {
             calls += name; this.completion = completion
         }
         fun succeed() = checkNotNull(completion).succeed()
-        fun fail() = checkNotNull(completion).fail()
+        fun fail(failure: FlightDjiFailure? = null) = checkNotNull(completion).fail(failure)
     }
 }

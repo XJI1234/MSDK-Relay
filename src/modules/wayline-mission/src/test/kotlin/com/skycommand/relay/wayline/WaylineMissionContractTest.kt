@@ -11,6 +11,7 @@ import com.skycommand.relay.gateway.mission.MissionSinkResult
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonBoolean
 import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.executor.ControlCompletion
 import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
@@ -353,14 +354,23 @@ class WaylineMissionContractTest {
         assertEquals("survey.kmz", fixture.mission.snapshot().file?.fileName)
         assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
         assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
-        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        assertEquals(listOf("reject:Mission operation result was not confirmed"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("wayline"),
+                    "outcome" to JsonString("RESULT_UNCONFIRMED"),
+                ),
+            ),
+            completion.result,
+        )
         fixture.upload.completeSuccess()
         assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
-        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        assertEquals(listOf("reject:Mission operation result was not confirmed"), completion.events)
     }
 
     @Test
-    fun reportsControlFailureAfterTheAircraftRejectsIt() {
+    fun reportsInvocationFailureWhenTheAdapterProvidesNoDjiError() {
         val fixture = Fixture()
         stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
@@ -371,7 +381,81 @@ class WaylineMissionContractTest {
         assertEquals(emptyList(), completion.events)
         fixture.control.completeFailure()
 
-        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        assertEquals(listOf("reject:Mission operation failed before DJI reported a result"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("wayline"),
+                    "outcome" to JsonString("INVOCATION_FAILED"),
+                ),
+            ),
+            completion.result,
+        )
+    }
+
+    @Test
+    fun restoresNotStartedWhenDjiExplicitlyRejectsMissionStart() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        val completion = Completion()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), completion)
+        fixture.control.completeFailure(
+            com.skycommand.relay.wayline.executor.MissionControlFailure.fromDjiError(
+                "WAYPOINT_MISSION_BUSY",
+                "The mission manager is busy",
+            ),
+        )
+
+        assertEquals(ExecutionState.NOT_STARTED, fixture.mission.snapshot().execution)
+        assertEquals(listOf("reject:Mission action was rejected"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("wayline"),
+                    "outcome" to JsonString("ACTION_REJECTED"),
+                    "errorCode" to JsonString("WAYPOINT_MISSION_BUSY"),
+                    "errorDescription" to JsonString("The mission manager is busy"),
+                ),
+            ),
+            completion.result,
+        )
+    }
+
+    @Test
+    fun reportsTheNormalizedDjiRejectionAsAStructuredWaylineFailure() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+        val completion = Completion()
+
+        fixture.mission.commandHandler().handle(confirm("wayline.pause"), completion)
+        fixture.control.completeFailure(
+            com.skycommand.relay.wayline.executor.MissionControlFailure.fromDjiError(
+                "WAYPOINT_MISSION_BUSY",
+                "The mission manager is busy",
+            ),
+        )
+
+        assertEquals(listOf("reject:Mission action was rejected"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("wayline"),
+                    "outcome" to JsonString("ACTION_REJECTED"),
+                    "errorCode" to JsonString("WAYPOINT_MISSION_BUSY"),
+                    "errorDescription" to JsonString("The mission manager is busy"),
+                ),
+            ),
+            completion.result,
+        )
+        assertEquals(ExecutionState.EXECUTING, fixture.mission.snapshot().execution)
     }
 
     @Test
@@ -387,10 +471,19 @@ class WaylineMissionContractTest {
 
         assertEquals(UploadState.FAILED, fixture.mission.snapshot().upload)
         assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
-        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        assertEquals(listOf("reject:Mission operation result was not confirmed"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("wayline"),
+                    "outcome" to JsonString("RESULT_UNCONFIRMED"),
+                ),
+            ),
+            completion.result,
+        )
         fixture.control.completeSuccess()
         assertEquals(ExecutionState.FAILED, fixture.mission.snapshot().execution)
-        assertEquals(listOf("reject:Mission operation failed"), completion.events)
+        assertEquals(listOf("reject:Mission operation result was not confirmed"), completion.events)
     }
 
     @Test
@@ -488,8 +581,13 @@ class WaylineMissionContractTest {
 
     private class Completion : CommandCompletion {
         val events = mutableListOf<String>()
+        var result: JsonObject? = null
         override fun succeed(detail: String) { events += "ok:$detail" }
         override fun reject(detail: String) { events += "reject:$detail" }
+        override fun reject(detail: String, result: JsonObject?) {
+            events += "reject:$detail"
+            this.result = result
+        }
     }
 
     private class Storage : StagingStorage {
@@ -519,7 +617,9 @@ class WaylineMissionContractTest {
         override fun resume(completion: ControlCompletion) { command = "resume"; this.completion = completion }
         override fun stop(completion: ControlCompletion) { command = "stop"; this.completion = completion }
         fun completeSuccess() { requireNotNull(completion).succeed() }
-        fun completeFailure() { requireNotNull(completion).fail() }
+        fun completeFailure(failure: com.skycommand.relay.wayline.executor.MissionControlFailure? = null) {
+            requireNotNull(completion).fail(failure)
+        }
     }
 
     private class SignalSource : MissionExecutionSignalSource {

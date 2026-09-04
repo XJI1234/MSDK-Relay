@@ -8,6 +8,12 @@ fun interface DjiOperation {
     fun run(completion: OperationCompletion)
 
     /**
+     * Runs after this action has timed out or been cancelled after DJI may have received it.
+     * The action may use its already-established authoritative state observation to settle the slot.
+     */
+    fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) = Unit
+
+    /**
      * Runs only when DJI finishes after a timeout or cancellation was already delivered.
      * It may arrange recovery work, but cannot report a second terminal result.
      */
@@ -192,6 +198,7 @@ class DjiOperationCoordinator private constructor(
     private fun reportUnconfirmedHardwareOutcome(entry: Entry, outcome: OperationOutcome) {
         var timeout: OperationCancellation? = null
         var listener: OperationResultListener? = null
+        var action: DjiOperation? = null
         val cancelledPending = mutableListOf<Entry>()
         lock.withLock {
             if (running !== entry || entry.hardwareSettled || entry.terminalReported) return
@@ -200,6 +207,7 @@ class DjiOperationCoordinator private constructor(
             entry.timeout = null
             hardwareOutcomeUnconfirmed = true
             listener = entry.listener
+            action = entry.action
             while (pending.isNotEmpty()) {
                 pending.removeFirst().also {
                     it.terminalReported = true
@@ -213,6 +221,7 @@ class DjiOperationCoordinator private constructor(
         cancelledPending.forEach { pendingEntry ->
             runCatching { pendingEntry.listener.onComplete(OperationOutcome.CANCELLED) }
         }
+        action?.let { runCatching { it.onHardwareOutcomeUnconfirmed(outcome) } }
     }
 
     private fun finishFromDji(entry: Entry, outcome: OperationOutcome) {

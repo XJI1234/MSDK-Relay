@@ -18,6 +18,42 @@ import kotlin.concurrent.withLock
 interface ControlCompletion {
     fun succeed()
     fun fail()
+    fun fail(failure: MissionControlFailure?) = fail()
+}
+
+class MissionControlFailure private constructor(
+    val errorCode: String,
+    val errorDescription: String,
+) {
+    override fun equals(other: Any?): Boolean = other is MissionControlFailure &&
+        errorCode == other.errorCode && errorDescription == other.errorDescription
+
+    override fun hashCode(): Int = 31 * errorCode.hashCode() + errorDescription.hashCode()
+
+    override fun toString(): String = "MissionControlFailure(errorCode=$errorCode, errorDescription=$errorDescription)"
+
+    companion object {
+        fun fromDjiError(errorCode: String?, errorDescription: String?): MissionControlFailure = MissionControlFailure(
+            normalize(errorCode, maxCodePoints = 128, fallback = "UNKNOWN_DJI_ERROR"),
+            normalize(errorDescription, maxCodePoints = 512, fallback = "DJI did not provide an error description"),
+        )
+
+        private fun normalize(value: String?, maxCodePoints: Int, fallback: String): String {
+            if (value == null) return fallback
+            val result = StringBuilder()
+            var offset = 0
+            var count = 0
+            while (offset < value.length && count < maxCodePoints) {
+                val codePoint = value.codePointAt(offset)
+                if (!Character.isISOControl(codePoint)) {
+                    result.appendCodePoint(codePoint)
+                    count += 1
+                }
+                offset += Character.charCount(codePoint)
+            }
+            return result.toString().trim().ifBlank { fallback }
+        }
+    }
 }
 
 interface MissionControlPort {
@@ -34,6 +70,7 @@ fun interface MissionStartSafetyGate {
 
 fun interface ExecutionTerminalListener {
     fun onCompleted(outcome: ExecutionTerminalOutcome)
+    fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) = onCompleted(outcome)
 }
 
 enum class ExecutionTerminalOutcome {
@@ -147,12 +184,28 @@ class MissionExecutor private constructor(
                     val completion = object : ControlCompletion {
                         override fun succeed() = operationCompletion.succeed()
                         override fun fail() = operationCompletion.fail()
+                        override fun fail(failure: MissionControlFailure?) {
+                            operation.installFailure(failure)
+                            operationCompletion.fail()
+                        }
                     }
                     when (command) {
-                        Command.START -> controlPort.start(completion)
-                        Command.PAUSE -> controlPort.pause(completion)
-                        Command.RESUME -> controlPort.resume(completion)
-                        Command.STOP -> controlPort.stop(completion)
+                        Command.START -> {
+                            operation.markInvocationStarted(stateStore.snapshot().revision)
+                            controlPort.start(completion)
+                        }
+                        Command.PAUSE -> {
+                            operation.markInvocationStarted(stateStore.snapshot().revision)
+                            controlPort.pause(completion)
+                        }
+                        Command.RESUME -> {
+                            operation.markInvocationStarted(stateStore.snapshot().revision)
+                            controlPort.resume(completion)
+                        }
+                        Command.STOP -> {
+                            operation.markInvocationStarted(stateStore.snapshot().revision)
+                            controlPort.stop(completion)
+                        }
                     }
                 } catch (_: Throwable) {
                     operationCompletion.fail()
@@ -174,7 +227,10 @@ class MissionExecutor private constructor(
         val completed = lock.withLock {
             if (active !== operation) false else {
                 active = null
-                if (outcome != OperationOutcome.SUCCEEDED && operation.command.requiresReceiptConfirmation) {
+                if (
+                    (outcome == OperationOutcome.TIMED_OUT || outcome == OperationOutcome.CANCELLED) &&
+                    operation.command.requiresReceiptConfirmation
+                ) {
                     if (matchingExecutionStateAlreadyObserved(operation)) {
                         if (outcome == OperationOutcome.TIMED_OUT || outcome == OperationOutcome.CANCELLED) {
                             hardwareConfirmation = operation.hardwareConfirmation
@@ -194,13 +250,15 @@ class MissionExecutor private constructor(
             }
         }
         nextState(operation, outcome)?.let { applyState(operation, it) }
-        runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome()) }
+        runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome(), operation.failure) }
     }
 
     private fun matchingExecutionStateAlreadyObserved(operation: ActiveCommand): Boolean {
         val observedState = operation.command.observedState ?: return false
         val snapshot = stateStore.snapshot()
-        return snapshot.missionRevision == operation.missionRevision &&
+        return operation.invocationRevision != null &&
+            snapshot.revision > requireNotNull(operation.invocationRevision) &&
+            snapshot.missionRevision == operation.missionRevision &&
             snapshot.deviceGeneration == operation.deviceGeneration &&
             snapshot.execution == observedState
     }
@@ -212,6 +270,7 @@ class MissionExecutor private constructor(
 
     private fun nextState(operation: ActiveCommand, outcome: OperationOutcome): ExecutionState? = when {
         outcome == OperationOutcome.SUCCEEDED -> operation.command.successState
+        operation.command == Command.START && operation.failure != null -> operation.previousState
         operation.command == Command.START -> null
         outcome == OperationOutcome.TIMED_OUT || outcome == OperationOutcome.CANCELLED -> null
         else -> operation.previousState
@@ -263,9 +322,19 @@ class MissionExecutor private constructor(
         val command: Command,
         val listener: ExecutionTerminalListener,
         var hardwareConfirmation: (() -> Boolean)? = null,
+        var invocationRevision: Long? = null,
+        var failure: MissionControlFailure? = null,
     ) {
         fun installHardwareConfirmation(confirmation: () -> Boolean) {
             hardwareConfirmation = confirmation
+        }
+
+        fun markInvocationStarted(revision: Long) {
+            if (invocationRevision == null) invocationRevision = revision
+        }
+
+        fun installFailure(value: MissionControlFailure?) {
+            failure = value
         }
     }
 

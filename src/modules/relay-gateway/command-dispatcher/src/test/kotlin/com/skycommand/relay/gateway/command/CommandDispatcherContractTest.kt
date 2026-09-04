@@ -83,6 +83,23 @@ class CommandDispatcherContractTest {
     }
 
     @Test
+    fun publishesAnOptionalStructuredRejectedCommandResult() {
+        val results = RecordingResultPublisher()
+        val dispatcher = CommandDispatcher(results)
+        val result = JsonObject(mapOf("outcome" to JsonString("ACTION_REJECTED")))
+        dispatcher.register("flight.takeoff", CommandHandler { _, completion -> completion.reject("Flight action was rejected", result) })
+        val connector = RecordingConnector()
+        val session = createSession(connector, dispatcher)
+
+        session.start()
+        connector.openCurrent()
+        connector.receive(encoded(PairedFrame("desktop-session", null)))
+        connector.receive(encoded(CommandFrame("takeoff-1", "flight.takeoff", JsonObject(emptyMap()))))
+
+        assertEquals(CommandResultFrame("takeoff-1", false, "Flight action was rejected", result), results.frames.single().second)
+    }
+
+    @Test
     fun rejectsUnknownAndForbiddenCommandNamesWithoutCallingAHandler() {
         val results = RecordingResultPublisher()
         val dispatcher = CommandDispatcher(results)

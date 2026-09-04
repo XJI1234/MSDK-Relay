@@ -5,6 +5,8 @@ import dji.v5.common.error.IDJIError
 import dji.v5.manager.aircraft.waypoint3.WaypointMissionManager
 import dji.v5.manager.aircraft.waypoint3.WaypointMissionExecuteStateListener
 import dji.v5.manager.aircraft.waypoint3.model.WaypointMissionExecuteState
+import com.skycommand.relay.wayline.executor.MissionControlFailure
+import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 
 internal class MsdkV5WaypointMissionApi(
     private val manager: WaypointMissionManager = WaypointMissionManager.getInstance(),
@@ -17,7 +19,7 @@ internal class MsdkV5WaypointMissionApi(
         manager.pushKMZFileToAircraft(path, object : CommonCallbacks.CompletionCallbackWithProgress<Double> {
             override fun onProgressUpdate(progress: Double) = completion.progress(progress)
             override fun onSuccess() = completion.succeed()
-            override fun onFailure(error: IDJIError) = completion.fail()
+            override fun onFailure(error: IDJIError) = completion.fail(error.toMissionUploadFailure())
         })
     }
 
@@ -35,8 +37,20 @@ internal class MsdkV5WaypointMissionApi(
 
     private fun DjiControlCompletion.sdk() = object : CommonCallbacks.CompletionCallback {
         override fun onSuccess() = succeed()
-        override fun onFailure(error: IDJIError) = fail()
+        override fun onFailure(error: IDJIError) = fail(error.toMissionControlFailure())
     }
+
+    private fun IDJIError.toMissionControlFailure(): MissionControlFailure =
+        MissionControlFailure.fromDjiError(
+            runCatching { errorCode() }.getOrNull(),
+            runCatching { description() }.getOrNull(),
+        )
+
+    private fun IDJIError.toMissionUploadFailure(): MissionUploadFailure =
+        MissionUploadFailure.fromDjiError(
+            runCatching { errorCode() }.getOrNull(),
+            runCatching { description() }.getOrNull(),
+        )
 
     private fun ensureInitialized() = synchronized(lock) {
         if (!initialized) { manager.init(); initialized = true }

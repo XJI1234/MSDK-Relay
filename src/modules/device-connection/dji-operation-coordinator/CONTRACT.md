@@ -22,6 +22,8 @@ cancellation.cancel() -> Cancelled | AlreadyFinished
 
 `TIMED_OUT` 或运行中 `CANCELLED` 只表示本程序未能继续等待该操作，**不表示 DJI 已停止执行**。这种情况下协调器进入“硬件结果未确认”隔离：会立即把终态交给原调用方，但仍占用唯一 DJI 操作槽位，取消尚未开始的排队项并拒绝新的提交。只有同一 action 之后的 `success` / `failure` 回调，或该 action 调用一次 `confirmHardwareSettled()`，才能解除隔离。
 
+协调器进入隔离后，必须在已向原调用方报告 `TIMED_OUT` 或 `CANCELLED` 后调用一次该 action 的 `onHardwareOutcomeUnconfirmed(outcome)`。action 可在此钩子内检查自己在调用前已建立的权威 DJI 状态观察；协调器不理解也不存储图传、飞控或航线的业务语义。
+
 `confirmHardwareSettled()` 只能由 action 持有的、与该写操作一一对应的 DJI 官方状态观察调用；它只在该 action 已超时或取消、仍占用槽位时生效。它不能由 WebSocket 回包、页面状态、缓存值或后续命令调用，也不能提前释放仍在等待回执的操作。状态监听和 RTMP 媒体数据不属于本模块的 DJI 写操作，不能被此队列阻塞。
 
 若 DJI 的终态回调晚于 `TIMED_OUT` 或 `CANCELLED`，协调器在释放槽位后只调用该 action 的 `onLateDjiCompletion(outcome)`。该钩子只能安排必要的后续恢复操作，不能向原调用方再次报告结果。它在下一项排队操作开始前运行，因此恢复操作可按 FIFO 规则重新进入同一队列。

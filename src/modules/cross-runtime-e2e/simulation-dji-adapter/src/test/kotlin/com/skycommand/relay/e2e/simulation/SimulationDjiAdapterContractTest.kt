@@ -40,7 +40,7 @@ class SimulationDjiAdapterContractTest {
         var landCallbacks = 0
         fun completion(increment: () -> Unit) = object : com.skycommand.relay.flight.dji.FlightDjiCompletion {
             override fun succeed() = increment()
-            override fun fail() = error("unexpected failure")
+            override fun fail(failure: com.skycommand.relay.flight.dji.FlightDjiFailure?) = error("unexpected failure")
         }
 
         adapter.ports().flight.execute(FlightAction.TAKEOFF, completion { takeoffCallbacks += 1 })
@@ -111,7 +111,7 @@ class SimulationDjiAdapterContractTest {
 
         adapter.ports().flight.execute(FlightAction.TAKEOFF, object : com.skycommand.relay.flight.dji.FlightDjiCompletion {
             override fun succeed() { succeeded += 1 }
-            override fun fail() { failed += 1 }
+            override fun fail(failure: com.skycommand.relay.flight.dji.FlightDjiFailure?) { failed += 1 }
         })
         adapter.advanceBy(Duration.ofMillis(999))
         assertEquals(0, succeeded)

@@ -212,9 +212,6 @@ class DeviceStateStore private constructor(
                 remoteControllerModel = null,
                 aircraftModel = null,
             )
-            DeviceStateSource.entries.forEach { source ->
-                sourceRevisions[source] = (sourceRevisions[source] ?: 0) + 1
-            }
             appliedSnapshot = current
             pendingEvents.addLast(PendingEvent(DeviceStateEvent(previous, current), listeners.toList()))
             if (draining) false else {

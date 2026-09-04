@@ -35,7 +35,13 @@ internal class MsdkV5ManagerBridge(
         val processSdkRegistered = runCatching { manager.isRegistered() }.getOrDefault(false)
         val action = synchronized(lock) {
             when (state) {
-                State.REGISTERED -> Action.ReportRegistered(listener)
+                State.REGISTERED -> if (processSdkRegistered) {
+                    Action.ReportRegistered(listener)
+                } else {
+                    // The local state is only a cache of the last terminal callback.  A
+                    // later initialize call must revalidate the process-level SDK fact.
+                    startForNewListener(listener, processSdkRegistered = false)
+                }
                 State.INITIALIZING,
                 State.REGISTERING,
                 -> {

@@ -24,6 +24,8 @@ interface UploadCompletion {
     fun succeed()
 
     fun fail()
+
+    fun fail(failure: MissionUploadFailure?) = fail()
 }
 
 interface MissionUploadPort {
@@ -35,8 +37,45 @@ interface MissionUploadPort {
     )
 }
 
+class MissionUploadFailure private constructor(
+    val errorCode: String,
+    val errorDescription: String,
+) {
+    override fun equals(other: Any?): Boolean = other is MissionUploadFailure &&
+        errorCode == other.errorCode && errorDescription == other.errorDescription
+
+    override fun hashCode(): Int = 31 * errorCode.hashCode() + errorDescription.hashCode()
+
+    override fun toString(): String = "MissionUploadFailure(errorCode=$errorCode, errorDescription=$errorDescription)"
+
+    companion object {
+        fun fromDjiError(errorCode: String?, errorDescription: String?): MissionUploadFailure = MissionUploadFailure(
+            normalize(errorCode, maxCodePoints = 128, fallback = "UNKNOWN_DJI_ERROR"),
+            normalize(errorDescription, maxCodePoints = 512, fallback = "DJI did not provide an error description"),
+        )
+
+        private fun normalize(value: String?, maxCodePoints: Int, fallback: String): String {
+            if (value == null) return fallback
+            val result = StringBuilder()
+            var offset = 0
+            var count = 0
+            while (offset < value.length && count < maxCodePoints) {
+                val codePoint = value.codePointAt(offset)
+                if (!Character.isISOControl(codePoint)) {
+                    result.appendCodePoint(codePoint)
+                    count += 1
+                }
+                offset += Character.charCount(codePoint)
+            }
+            return result.toString().trim().ifBlank { fallback }
+        }
+    }
+}
+
 fun interface UploadTerminalListener {
     fun onCompleted(outcome: UploadTerminalOutcome)
+
+    fun onCompleted(outcome: UploadTerminalOutcome, failure: MissionUploadFailure?) = onCompleted(outcome)
 }
 
 enum class UploadTerminalOutcome {
@@ -113,6 +152,10 @@ class MissionUploader private constructor(
                     completion = object : UploadCompletion {
                         override fun succeed() = operationCompletion.succeed()
                         override fun fail() = operationCompletion.fail()
+                        override fun fail(failure: MissionUploadFailure?) {
+                            activeUpload.installFailure(failure)
+                            operationCompletion.fail()
+                        }
                     },
                 )
             },
@@ -136,7 +179,7 @@ class MissionUploader private constructor(
         if (!clearIfActive(upload)) return
         val state = if (outcome == OperationOutcome.SUCCEEDED) UploadState.UPLOADED else UploadState.FAILED
         runCatching { applyUploadState(upload, state) }
-        runCatching { upload.listener.onCompleted(outcome.toTerminalOutcome()) }
+        runCatching { upload.listener.onCompleted(outcome.toTerminalOutcome(), upload.failure) }
     }
 
     private fun finishBeforeSubmission(upload: ActiveUpload, state: UploadState) {
@@ -176,7 +219,12 @@ class MissionUploader private constructor(
         val missionRevision: Long,
         val deviceGeneration: Long,
         val listener: UploadTerminalListener,
+        var failure: MissionUploadFailure? = null,
     )
+
+    private fun ActiveUpload.installFailure(value: MissionUploadFailure?) {
+        failure = value
+    }
 
     companion object {
         fun create(

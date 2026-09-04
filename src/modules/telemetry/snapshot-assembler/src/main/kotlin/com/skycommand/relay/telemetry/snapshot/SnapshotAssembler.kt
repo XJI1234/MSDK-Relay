@@ -40,6 +40,10 @@ data class FlightTelemetrySnapshot(
     val landingConfirmationNeeded: Boolean? = null,
     val takeoffFailureError: String? = null,
     val motorStartFailureError: String? = null,
+    /** Local source epoch for correlating a flight action with continuous MSDK facts. */
+    val sourceGeneration: Long = 0,
+    /** Strictly monotonic local revision for continuous MSDK facts in this process. */
+    val sourceRevision: Long = 0,
 ) {
     init {
         flightMode?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
@@ -56,6 +60,8 @@ data class FlightTelemetrySnapshot(
         landingProtectionState?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
         takeoffFailureError?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
         motorStartFailureError?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
+        require(sourceGeneration >= 0) { "Flight source generation must not be negative" }
+        require(sourceRevision >= 0) { "Flight source revision must not be negative" }
     }
 }
 

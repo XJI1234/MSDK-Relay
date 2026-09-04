@@ -3,11 +3,12 @@ package com.skycommand.relay.flight.dji.android
 import com.skycommand.relay.flight.command.FlightAction
 import com.skycommand.relay.flight.dji.DjiFlightPort
 import com.skycommand.relay.flight.dji.FlightDjiCompletion
+import com.skycommand.relay.flight.dji.FlightDjiFailure
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal interface DjiFlightCompletion {
     fun succeed()
-    fun fail()
+    fun fail(failure: FlightDjiFailure? = null)
 }
 
 internal interface DjiFlightApi {
@@ -57,16 +58,16 @@ class AndroidDjiFlightPort internal constructor(
 
     private fun callbackFor(operation: Active) = object : DjiFlightCompletion {
         override fun succeed() = finish(operation, succeeded = true)
-        override fun fail() = finish(operation, succeeded = false)
+        override fun fail(failure: FlightDjiFailure?) = finish(operation, succeeded = false, failure)
     }
 
-    private fun finish(operation: Active, succeeded: Boolean) {
+    private fun finish(operation: Active, succeeded: Boolean, failure: FlightDjiFailure? = null) {
         if (!operation.finishOnce()) return
         val deliver = synchronized(lock) {
             if (active === operation) active = null
             !closed
         }
-        if (deliver) runCatching { if (succeeded) operation.completion.succeed() else operation.completion.fail() }
+        if (deliver) runCatching { if (succeeded) operation.completion.succeed() else operation.completion.fail(failure) }
     }
 
     private class Active(val completion: FlightDjiCompletion) {

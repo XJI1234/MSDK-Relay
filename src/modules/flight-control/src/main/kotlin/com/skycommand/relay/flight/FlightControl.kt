@@ -4,6 +4,7 @@ import com.skycommand.relay.device.operation.DjiOperationCoordinator
 import com.skycommand.relay.device.operation.OperationCancellationHandle
 import com.skycommand.relay.flight.command.FlightAction
 import com.skycommand.relay.flight.command.FlightActionCompletion
+import com.skycommand.relay.flight.command.FlightActionFailure
 import com.skycommand.relay.flight.command.FlightActionResult
 import com.skycommand.relay.flight.command.FlightActionTerminalOutcome
 import com.skycommand.relay.flight.command.FlightCommandActions
@@ -11,12 +12,16 @@ import com.skycommand.relay.flight.command.FlightCommandHandler
 import com.skycommand.relay.flight.command.FlightCommandRejection
 import com.skycommand.relay.flight.command.FlightCommandResult
 import com.skycommand.relay.flight.dji.DjiFlightAdapter
+import com.skycommand.relay.flight.dji.FlightDjiFailure
 import com.skycommand.relay.flight.dji.DjiFlightPort
+import com.skycommand.relay.flight.dji.FlightActionState
 import com.skycommand.relay.flight.dji.FlightDjiTerminalOutcome
 import com.skycommand.relay.flight.dji.FlightSubmissionResult
 import com.skycommand.relay.gateway.command.CommandCompletion
 import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.protocol.CommandFrame
+import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -40,6 +45,10 @@ class FlightControl private constructor(
     private val commands = FlightCommandHandler.create(Actions())
 
     fun commandHandler(): CommandHandler = CommandHandler(::handleCommand)
+
+    fun observeDjiFlightState(state: FlightActionState) {
+        adapter.observeState(state)
+    }
 
     fun markDeviceUnavailable() {
         lifecycleLock.withLock {
@@ -70,9 +79,12 @@ class FlightControl private constructor(
     private inner class Actions : FlightCommandActions {
         override fun execute(action: FlightAction, completion: FlightActionCompletion): FlightActionResult = lifecycleLock.withLock {
             val tracked = TrackedOperation()
-            when (val result = adapter.execute(action) { outcome ->
+            when (val result = adapter.execute(action) { result ->
                 completeTrackedOperation(tracked)
-                completion.complete(outcome.toActionOutcome())
+                completion.complete(
+                    result.outcome.toActionOutcome(),
+                    result.failure?.toActionFailure(),
+                )
             }) {
                 is FlightSubmissionResult.Accepted -> {
                     tracked.install(result.cancellation)
@@ -101,12 +113,30 @@ class FlightControl private constructor(
     ) : FlightActionCompletion {
         private val finished = AtomicBoolean(false)
 
-        override fun complete(outcome: FlightActionTerminalOutcome) {
+        override fun complete(outcome: FlightActionTerminalOutcome) = complete(outcome, null)
+
+        override fun complete(outcome: FlightActionTerminalOutcome, djiFailure: FlightActionFailure?) {
             if (!finished.compareAndSet(false, true)) return
-            if (outcome == FlightActionTerminalOutcome.SUCCEEDED) {
-                completion.succeed(successDetail(commandName))
-            } else {
-                completion.reject("Flight command failed")
+            when (outcome) {
+                FlightActionTerminalOutcome.SUCCEEDED -> completion.succeed(successDetail(commandName))
+                FlightActionTerminalOutcome.FAILED -> {
+                    if (djiFailure == null) {
+                        completion.reject(
+                            "Flight command failed before DJI reported a result",
+                            terminalResult("INVOCATION_FAILED"),
+                        )
+                    } else {
+                        completion.reject(
+                            "Flight action was rejected",
+                            terminalResult("ACTION_REJECTED", djiFailure),
+                        )
+                    }
+                }
+                FlightActionTerminalOutcome.TIMED_OUT,
+                FlightActionTerminalOutcome.CANCELLED -> completion.reject(
+                    "Flight command result was not confirmed",
+                    terminalResult("RESULT_UNCONFIRMED"),
+                )
             }
         }
 
@@ -123,7 +153,22 @@ class FlightControl private constructor(
             "flight.stop-auto-landing" -> "Stop automatic landing command completed"
             else -> "Flight command completed"
         }
+
+        private fun terminalResult(outcome: String, djiFailure: FlightActionFailure? = null): JsonObject =
+            JsonObject(
+                buildMap {
+                    put("domain", JsonString("flight"))
+                    put("outcome", JsonString(outcome))
+                    djiFailure?.let {
+                        put("errorCode", JsonString(it.errorCode))
+                        put("errorDescription", JsonString(it.errorDescription))
+                    }
+                },
+            )
     }
+
+    private fun FlightDjiFailure.toActionFailure(): FlightActionFailure =
+        FlightActionFailure(errorCode, errorDescription)
 
     private fun FlightDjiTerminalOutcome.toActionOutcome(): FlightActionTerminalOutcome = when (this) {
         FlightDjiTerminalOutcome.SUCCEEDED -> FlightActionTerminalOutcome.SUCCEEDED

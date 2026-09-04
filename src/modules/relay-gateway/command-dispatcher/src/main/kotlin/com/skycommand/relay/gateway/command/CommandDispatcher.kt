@@ -24,6 +24,8 @@ interface CommandCompletion {
     fun succeed(detail: String, result: JsonObject?) = succeed(detail)
 
     fun reject(detail: String = "")
+
+    fun reject(detail: String, result: JsonObject?) = reject(detail)
 }
 
 fun interface CommandResultPublisher {
@@ -152,6 +154,8 @@ class CommandDispatcher(
         override fun succeed(detail: String, result: JsonObject?) = complete(key, ok = true, detail, result)
 
         override fun reject(detail: String) = complete(key, ok = false, detail)
+
+        override fun reject(detail: String, result: JsonObject?) = complete(key, ok = false, detail, result)
     }
 
     private data class PendingKey(

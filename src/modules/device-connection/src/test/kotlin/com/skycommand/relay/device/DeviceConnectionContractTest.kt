@@ -360,6 +360,43 @@ class DeviceConnectionContractTest {
     }
 
     @Test
+    fun stoppingPublishesOneAtomicUnavailableSnapshotRatherThanAStoppedSdkWithOldHardwareFacts() {
+        val events = mutableListOf<String>()
+        val sdk = FakeSdk(events)
+        val remote = FakeRemote(events)
+        val aircraft = FakeAircraft(events)
+        val pairingStatus = FakePairingStatus(events)
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = sdk,
+                remoteControllerPort = remote,
+                aircraftPort = aircraft,
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = pairingStatus,
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+        val stoppedSnapshots = mutableListOf<com.skycommand.relay.device.state.DeviceSnapshot>()
+        connection.onChanged { event ->
+            if (event.current.sdkAvailability == SdkAvailability.STOPPED) stoppedSnapshots += event.current
+        }
+
+        connection.start()
+        sdk.ready()
+        remote.emit(RemoteControllerSignal(1, true, "RC"))
+        aircraft.emit(AircraftSignal(1, true, true, "Matrice"))
+        pairingStatus.emit(PairingStatusSignal(1, PairingState.PAIRED))
+        connection.stop()
+
+        assertEquals(1, stoppedSnapshots.size)
+        assertEquals(LinkState.UNKNOWN, stoppedSnapshots.single().remoteController)
+        assertEquals(LinkState.UNKNOWN, stoppedSnapshots.single().aircraft)
+        assertEquals(LinkState.UNKNOWN, stoppedSnapshots.single().flightController)
+        assertEquals(PairingState.UNKNOWN, stoppedSnapshots.single().pairing)
+    }
+
+    @Test
     fun serializesStopAgainstAnInProgressStart() {
         val events = mutableListOf<String>()
         val sdkStopped = CountDownLatch(1)

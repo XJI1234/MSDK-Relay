@@ -58,7 +58,7 @@ private class KeyManagerObservation(
         val shouldClose = synchronized(lock) {
             active.also { active = false }
         }
-        if (shouldClose) manager.cancelListen(owner)
+        if (shouldClose) runCatching { manager.cancelListen(owner) }
     }
 
     private fun publishConnection(

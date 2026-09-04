@@ -101,10 +101,18 @@ class DjiStreamAdapter private constructor(
                             } else {
                                 stateStore.reportDjiStopped(operationId)
                             }
-                            if (!status.isStreaming && result is StreamUpdateResult.Applied) requestRecoveryStop()
+                            val settledAfterUnconfirmedOutcome = completion.confirmHardwareSettled()
+                            if ((!status.isStreaming && result is StreamUpdateResult.Applied) || settledAfterUnconfirmedOutcome) {
+                                // A post-timeout status is the authoritative fact that releases
+                                // the shared slot; cleanup is then submitted through that queue.
+                                requestRecoveryStop()
+                            }
                         },
                         runtimeFailure = {
                             if (stateStore.markFailed(operationId, "Stream runtime failed") is StreamUpdateResult.Applied) {
+                                requestRecoveryStop()
+                            } else if (completion.confirmHardwareSettled()) {
+                                // Runtime failure can also be the first post-timeout fact.
                                 requestRecoveryStop()
                             }
                         },

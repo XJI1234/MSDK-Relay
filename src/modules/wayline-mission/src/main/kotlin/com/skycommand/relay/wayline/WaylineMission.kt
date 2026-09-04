@@ -12,7 +12,10 @@ import com.skycommand.relay.gateway.mission.MissionSinkCompletionResult
 import com.skycommand.relay.gateway.mission.MissionSinkResult
 import com.skycommand.relay.gateway.mission.StagedMission
 import com.skycommand.relay.protocol.CommandFrame
+import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.command.WaylineActionCompletion
+import com.skycommand.relay.wayline.command.WaylineActionFailure
 import com.skycommand.relay.wayline.command.WaylineActionResult
 import com.skycommand.relay.wayline.command.WaylineActionTerminalOutcome
 import com.skycommand.relay.wayline.command.WaylineCommandActions
@@ -22,6 +25,7 @@ import com.skycommand.relay.wayline.command.WaylineCommandResult
 import com.skycommand.relay.wayline.executor.ExecutionRequestResult
 import com.skycommand.relay.wayline.executor.ExecutionTerminalListener
 import com.skycommand.relay.wayline.executor.ExecutionTerminalOutcome
+import com.skycommand.relay.wayline.executor.MissionControlFailure
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.executor.MissionExecutor
 import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
@@ -45,6 +49,7 @@ import com.skycommand.relay.wayline.state.MissionStateListener
 import com.skycommand.relay.wayline.state.MissionStateStore
 import com.skycommand.relay.wayline.state.Registration
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
+import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.uploader.MissionUploader
 import com.skycommand.relay.wayline.uploader.StagedMissionContentReader
 import com.skycommand.relay.wayline.uploader.UploadStartResult
@@ -153,9 +158,13 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         override fun upload(completion: WaylineActionCompletion): WaylineActionResult = lifecycleLock.withLock {
             if (incomingTransferActive) return WaylineActionResult.Rejected
             val tracked = TrackedOperation()
-            track(uploader.start(UploadTerminalListener {
-                completeTrackedOperation(tracked)
-                completion.complete(it.toWaylineOutcome())
+            track(uploader.start(object : UploadTerminalListener {
+                override fun onCompleted(outcome: UploadTerminalOutcome) = onCompleted(outcome, null)
+
+                override fun onCompleted(outcome: UploadTerminalOutcome, failure: MissionUploadFailure?) {
+                    completeTrackedOperation(tracked)
+                    completion.complete(outcome.toWaylineOutcome(), failure?.toWaylineFailure())
+                }
             }), tracked)
         }
 
@@ -183,18 +192,22 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
             flightPhase.prepareStart(missionRevision, snapshot.deviceGeneration, requireNotNull(snapshot.file).fileName)
         }
         val tracked = TrackedOperation()
-        val result = executor.start(ExecutionTerminalListener { outcome ->
-            if (outcome == ExecutionTerminalOutcome.SUCCEEDED && missionRevision != null) {
-                executionSignalSource.confirmStartAttempt()
-                flightPhase.confirmStart(missionRevision, snapshot.deviceGeneration).forEach { signal ->
-                    applyAcceptedExecutionSignal(signal, missionRevision, snapshot.deviceGeneration)
+        val result = executor.start(object : ExecutionTerminalListener {
+            override fun onCompleted(outcome: ExecutionTerminalOutcome) = onCompleted(outcome, null)
+
+            override fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) {
+                if (outcome == ExecutionTerminalOutcome.SUCCEEDED && missionRevision != null) {
+                    executionSignalSource.confirmStartAttempt()
+                    flightPhase.confirmStart(missionRevision, snapshot.deviceGeneration).forEach { signal ->
+                        applyAcceptedExecutionSignal(signal, missionRevision, snapshot.deviceGeneration)
+                    }
+                } else if (missionRevision != null) {
+                    executionSignalSource.invalidateStartAttempt()
+                    flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
                 }
-            } else if (missionRevision != null) {
-                executionSignalSource.invalidateStartAttempt()
-                flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
+                completeTrackedOperation(tracked)
+                completion.complete(outcome.toWaylineOutcome(), failure?.toWaylineFailure())
             }
-            completeTrackedOperation(tracked)
-            completion.complete(outcome.toWaylineOutcome())
         })
         if (result is ExecutionRequestResult.Rejected && missionRevision != null) {
             executionSignalSource.invalidateStartAttempt()
@@ -207,9 +220,13 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         if (incomingTransferActive) return WaylineActionResult.Rejected
         val snapshot = state.snapshot()
         val tracked = TrackedOperation()
-        val result = executor.stop(ExecutionTerminalListener {
-            completeTrackedOperation(tracked)
-            completion.complete(it.toWaylineOutcome())
+        val result = executor.stop(object : ExecutionTerminalListener {
+            override fun onCompleted(outcome: ExecutionTerminalOutcome) = onCompleted(outcome, null)
+
+            override fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) {
+                completeTrackedOperation(tracked)
+                completion.complete(outcome.toWaylineOutcome(), failure?.toWaylineFailure())
+            }
         })
         if (result is ExecutionRequestResult.Accepted) {
             executionSignalSource.invalidateStartAttempt()
@@ -224,9 +241,13 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     ): WaylineActionResult = lifecycleLock.withLock {
         if (incomingTransferActive) return WaylineActionResult.Rejected
         val tracked = TrackedOperation()
-        track(request(ExecutionTerminalListener {
-            completeTrackedOperation(tracked)
-            completion.complete(it.toWaylineOutcome())
+        track(request(object : ExecutionTerminalListener {
+            override fun onCompleted(outcome: ExecutionTerminalOutcome) = onCompleted(outcome, null)
+
+            override fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) {
+                completeTrackedOperation(tracked)
+                completion.complete(outcome.toWaylineOutcome(), failure?.toWaylineFailure())
+            }
         }), tracked)
     }
 
@@ -429,12 +450,23 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     ) : WaylineActionCompletion {
         private val finished = AtomicBoolean(false)
 
-        override fun complete(outcome: WaylineActionTerminalOutcome) {
+        override fun complete(outcome: WaylineActionTerminalOutcome) = complete(outcome, null)
+
+        override fun complete(outcome: WaylineActionTerminalOutcome, djiFailure: WaylineActionFailure?) {
             if (!finished.compareAndSet(false, true)) return
             if (outcome == WaylineActionTerminalOutcome.SUCCEEDED) {
                 completion.succeed(successDetail(commandName))
             } else {
-                completion.reject("Mission operation failed")
+                when (outcome) {
+                    WaylineActionTerminalOutcome.FAILED -> if (djiFailure === null) {
+                        completion.reject("Mission operation failed before DJI reported a result", terminalResult("INVOCATION_FAILED"))
+                    } else {
+                        completion.reject("Mission action was rejected", terminalResult("ACTION_REJECTED", djiFailure))
+                    }
+                    WaylineActionTerminalOutcome.TIMED_OUT,
+                    WaylineActionTerminalOutcome.CANCELLED -> completion.reject("Mission operation result was not confirmed", terminalResult("RESULT_UNCONFIRMED"))
+                    WaylineActionTerminalOutcome.SUCCEEDED -> Unit
+                }
             }
         }
 
@@ -454,7 +486,25 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
             "wayline.stop" -> "Mission stopped"
             else -> "Mission operation completed"
         }
+
+        private fun terminalResult(outcome: String, djiFailure: WaylineActionFailure? = null): JsonObject =
+            JsonObject(
+                buildMap {
+                    put("domain", JsonString("wayline"))
+                    put("outcome", JsonString(outcome))
+                    djiFailure?.let {
+                        put("errorCode", JsonString(it.errorCode))
+                        put("errorDescription", JsonString(it.errorDescription))
+                    }
+                },
+            )
     }
+
+    private fun MissionControlFailure.toWaylineFailure(): WaylineActionFailure =
+        WaylineActionFailure(errorCode, errorDescription)
+
+    private fun MissionUploadFailure.toWaylineFailure(): WaylineActionFailure =
+        WaylineActionFailure(errorCode, errorDescription)
 
     private fun UploadTerminalOutcome.toWaylineOutcome(): WaylineActionTerminalOutcome = when (this) {
         UploadTerminalOutcome.SUCCEEDED -> WaylineActionTerminalOutcome.SUCCEEDED

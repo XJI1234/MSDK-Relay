@@ -104,8 +104,8 @@ private class KeyManagerFlightTelemetryObservation(
     override fun close() {
         val shouldClose = synchronized(lock) { active.also { active = false } }
         if (shouldClose) {
-            manager.cancelListen(flightControllerOwner)
-            manager.cancelListen(batteryOwner)
+            runCatching { manager.cancelListen(flightControllerOwner) }
+            runCatching { manager.cancelListen(batteryOwner) }
         }
     }
 

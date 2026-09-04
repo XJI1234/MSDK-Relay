@@ -4,7 +4,7 @@
 
 ## 唯一职责与接口
 
-本模块经共享 DJI 操作协调器将当前暂存 KMZ 上传至飞行器，并只在 `mission-state-store` 记录上传进度和终态公开结果。它不暂存/删除文件、不解析 KMZ、不执行或控制任务、不持有设备连接事实，也不暴露 DJI 异常；暂存字节读取器和 DJI 上传适配器均为注入接缝。
+本模块经共享 DJI 操作协调器将当前暂存 KMZ 上传至飞行器，并只在 `mission-state-store` 记录上传进度和终态公开结果。它不暂存/删除文件、不解析 KMZ、不执行或控制任务、不持有设备连接事实；暂存字节读取器和 DJI 上传适配器均为注入接缝。DJI 明确拒绝以受限的 `MissionUploadFailure(errorCode, errorDescription)` 传给终态监听器，模块不暴露 DJI 异常对象。
 
 ```text
 MissionUploader.create(stateStore, contentReader, uploadPort, operationCoordinator, timeoutMillis = 30000)
@@ -19,4 +19,4 @@ uploader.start() -> Accepted(cancellation) | Rejected(reason)
 
 模块 JVM 安全，无 Android 生命周期；协调器提供串行化、超时和取消，超时为 1,000..60,000 ms。启动线程安全且最多一次接受；取消后旧适配器回调忽略，完成终态且幂等。每次操作还捕获当前 `deviceGeneration`，设备断开后即使同一 KMZ 的旧回调拥有更高来源版本也不能写入状态。调用方必须在接受操作运行时保持读取器和端口可用；结束后 uploader 不保留字节。
 
-失败映射：无任务 `NO_MISSION` 不变；活动上传 `ALREADY_ACTIVE` 不变；内容不可用、读取器抛出或读取字节与暂存元数据不一致均为 `CONTENT_UNAVAILABLE` 且 `FAILED`；无效超时/协调器拒绝 `OPERATION_REJECTED` 且 `FAILED`；适配器失败/异常为 `FAILED`；超时 `TIMED_OUT`；取消 `CANCELLED`。公开失败只含稳定枚举。测试覆盖成功、0/100 进度、全部失败类别、排队/运行取消、重复完成、取消后延迟进度、任务替换和并发启动。`start(listener = no-op)` 可接受 `UploadTerminalListener`，仅在已接受上传终态且状态更新尝试后恰好调用一次；拒绝不调用，监听器异常隔离。
+失败映射：无任务 `NO_MISSION` 不变；活动上传 `ALREADY_ACTIVE` 不变；内容不可用、读取器抛出或读取字节与暂存元数据不一致均为 `CONTENT_UNAVAILABLE` 且 `FAILED`；无效超时/协调器拒绝 `OPERATION_REJECTED` 且 `FAILED`；适配器同步异常或没有 DJI 错误的失败为 `FAILED` 且终态错误为 `null`；DJI `onFailure` 必须作为受限的 `MissionUploadFailure(errorCode, errorDescription)` 传给 `UploadTerminalListener`；超时 `TIMED_OUT`；取消 `CANCELLED`。公开失败只含稳定枚举和可选的受限 DJI 错误。测试覆盖成功、0/100 进度、全部失败类别、排队/运行取消、重复完成、取消后延迟进度、任务替换和并发启动。`start(listener = no-op)` 可接受 `UploadTerminalListener`，仅在已接受上传终态且状态更新尝试后恰好调用一次；拒绝不调用，监听器异常隔离。

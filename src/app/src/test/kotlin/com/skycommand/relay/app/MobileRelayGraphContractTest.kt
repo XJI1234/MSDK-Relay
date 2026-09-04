@@ -30,6 +30,19 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
+    fun missionStartSafetyGateDoesNotAuthorizeFromDiagnosticProductConnection() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val safetyGate = source.substringAfter("startSafetyGate = MissionStartSafetyGate {")
+            .substringBefore("executionSignalSource = waylineAdapter")
+
+        assertTrue(safetyGate.contains("device.capabilities().canRunWayline"))
+        assertFalse(safetyGate.contains("deviceSnapshot.aircraft"))
+    }
+
+    @Test
     fun telemetryReadPublishesTheCurrentSnapshotWithoutRestartingMsdkKeyObservers() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
@@ -51,6 +64,19 @@ class MobileRelayGraphContractTest {
 
         assertTrue(source.contains("\"flight.stop-takeoff\", \"flight.stop-auto-landing\""))
         assertTrue(source.contains("register(gateway, journal, it, flightControl.commandHandler())"))
+    }
+
+    @Test
+    fun forwardsContinuousMsdkFlightFactsToFlightControlBeforePublishingDesktopTelemetry() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val flightFeed = source.substringAfter("feed({ flight.snapshot() })")
+            .substringBefore("feed({ stream.snapshot() })")
+
+        assertTrue(flightFeed.contains("flightControl.observeDjiFlightState(flight.snapshot().toFlightActionState())"))
+        assertTrue(flightFeed.indexOf("flightControl.observeDjiFlightState") < flightFeed.indexOf("changed()"))
     }
 
     @Test
@@ -78,6 +104,18 @@ class MobileRelayGraphContractTest {
         assertTrue(synchronization.contains("lastFlightControllerLink"))
         assertTrue(synchronization.contains("previous != LinkState.CONNECTED"))
         assertTrue(synchronization.contains("FlightTelemetryLinkAction.REFRESH"))
+    }
+
+    @Test
+    fun msdkBecomingUnavailableInvalidatesFlightControllerFactsBeforeTheyCanBeRepublished() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val synchronization = source.substringAfter("private fun synchronizeFlightTelemetryWithFlightController()")
+            .substringBefore("private fun synchronizeRtmpStreamWithVideoSource()")
+
+        assertTrue(synchronization.contains("sdkAvailability != SdkAvailability.READY"))
     }
 
     @Test

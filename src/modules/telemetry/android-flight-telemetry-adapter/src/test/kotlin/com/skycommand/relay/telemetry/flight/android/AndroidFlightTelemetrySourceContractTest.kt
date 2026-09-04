@@ -6,6 +6,7 @@ import com.skycommand.relay.device.state.LinkState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class AndroidFlightTelemetrySourceContractTest {
     @Test
@@ -51,7 +52,7 @@ class AndroidFlightTelemetrySourceContractTest {
         assertEquals(1, changes)
         assertEquals(
             FlightTelemetrySnapshot(true, true, "WAYPOINT", 82, 420, 73.5, 30.1, 120.2, LowBatteryRthState.IDLE, LinkState.CONNECTED),
-            source.snapshot(),
+            source.snapshot().withoutObservationMetadata(),
         )
     }
 
@@ -62,7 +63,7 @@ class AndroidFlightTelemetrySourceContractTest {
 
         source.onChanged { }
 
-        assertEquals(FlightTelemetrySnapshot(), source.snapshot())
+        assertEquals(FlightTelemetrySnapshot(), source.snapshot().withoutObservationMetadata())
     }
 
     @Test
@@ -131,6 +132,25 @@ class AndroidFlightTelemetrySourceContractTest {
     }
 
     @Test
+    fun advancesObservationGenerationOnFlightControllerInvalidationAndRevisionForEveryFact() {
+        val platform = FakePlatform()
+        val source = AndroidFlightTelemetrySource(platform)
+        source.onChanged { }
+        val initial = source.snapshot()
+
+        platform.publish(FlightTelemetryFact(isFlying = false, motorsOn = false, flightMode = "GPS_ATTI"))
+        val observed = source.snapshot()
+        source.invalidateFlightControllerFacts()
+        val invalidated = source.snapshot()
+
+        assertTrue(initial.sourceGeneration > 0)
+        assertEquals(initial.sourceGeneration, observed.sourceGeneration)
+        assertTrue(observed.sourceRevision > initial.sourceRevision)
+        assertTrue(invalidated.sourceGeneration > observed.sourceGeneration)
+        assertTrue(invalidated.sourceRevision > observed.sourceRevision)
+    }
+
+    @Test
     fun startsANewGenerationAfterCloseAndContainsListenerAndReleaseFailures() {
         val platform = FakePlatform(FlightTelemetryFact(), throwOnClose = true)
         val source = AndroidFlightTelemetrySource(platform)
@@ -192,4 +212,9 @@ class AndroidFlightTelemetrySourceContractTest {
 
         fun listenerOrThrow(): DjiFlightTelemetryListener = checkNotNull(listener)
     }
+
+    private fun FlightTelemetrySnapshot.withoutObservationMetadata(): FlightTelemetrySnapshot = copy(
+        sourceGeneration = 0,
+        sourceRevision = 0,
+    )
 }

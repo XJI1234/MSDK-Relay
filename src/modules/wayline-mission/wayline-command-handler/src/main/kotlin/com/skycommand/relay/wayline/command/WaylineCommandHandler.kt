@@ -14,7 +14,13 @@ interface WaylineCommandActions {
 
 fun interface WaylineActionCompletion {
     fun complete(outcome: WaylineActionTerminalOutcome)
+    fun complete(outcome: WaylineActionTerminalOutcome, failure: WaylineActionFailure?) = complete(outcome)
 }
+
+data class WaylineActionFailure(
+    val errorCode: String,
+    val errorDescription: String,
+)
 
 enum class WaylineActionTerminalOutcome {
     SUCCEEDED,

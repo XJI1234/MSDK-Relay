@@ -105,6 +105,24 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
+    fun notifiesOnlyTheTimedOutActionAfterReportingItsTerminalOutcome() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val action = RecordingAction()
+        val events = mutableListOf<String>()
+
+        coordinator.submit(action, 1_000) { events += "terminal:$it" }
+        executor.runNext()
+        scheduler.fireNext()
+
+        assertEquals(
+            listOf("terminal:TIMED_OUT", "unconfirmed:TIMED_OUT"),
+            events + action.unconfirmedOutcomes.map { "unconfirmed:$it" },
+        )
+    }
+
+    @Test
     fun cancelsQueuedWorkWithoutStartingItAndRejectsInvalidTimeouts() {
         val executor = ManualExecutor()
         val coordinator = DjiOperationCoordinator.create(executor, ManualScheduler())
@@ -126,6 +144,7 @@ class DjiOperationCoordinatorContractTest {
     private class RecordingAction : DjiOperation {
         var starts = 0
         val lateOutcomes = mutableListOf<OperationOutcome>()
+        val unconfirmedOutcomes = mutableListOf<OperationOutcome>()
         private var completion: OperationCompletion? = null
 
         override fun run(completion: OperationCompletion) {
@@ -134,6 +153,8 @@ class DjiOperationCoordinatorContractTest {
         }
 
         override fun onLateDjiCompletion(outcome: OperationOutcome) { lateOutcomes += outcome }
+
+        override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) { unconfirmedOutcomes += outcome }
 
         fun succeed() = checkNotNull(completion).succeed()
 

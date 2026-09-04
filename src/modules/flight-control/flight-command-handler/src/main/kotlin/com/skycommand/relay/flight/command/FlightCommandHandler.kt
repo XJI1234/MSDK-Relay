@@ -16,7 +16,14 @@ enum class FlightAction {
 
 fun interface FlightActionCompletion {
     fun complete(outcome: FlightActionTerminalOutcome)
+
+    fun complete(outcome: FlightActionTerminalOutcome, failure: FlightActionFailure?) = complete(outcome)
 }
+
+data class FlightActionFailure(
+    val errorCode: String,
+    val errorDescription: String,
+)
 
 enum class FlightActionTerminalOutcome {
     SUCCEEDED,
@@ -93,8 +100,10 @@ class FlightCommandHandler private constructor(
     private class OnceCompletion(private val delegate: FlightActionCompletion) : FlightActionCompletion {
         private val completed = AtomicBoolean(false)
 
-        override fun complete(outcome: FlightActionTerminalOutcome) {
-            if (completed.compareAndSet(false, true)) delegate.complete(outcome)
+        override fun complete(outcome: FlightActionTerminalOutcome) = complete(outcome, null)
+
+        override fun complete(outcome: FlightActionTerminalOutcome, failure: FlightActionFailure?) {
+            if (completed.compareAndSet(false, true)) delegate.complete(outcome, failure)
         }
     }
 

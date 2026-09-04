@@ -10,10 +10,7 @@ import kotlin.test.assertTrue
 class MsdkV5FlightTelemetryKeyMappingTest {
     @Test
     fun chargePercentUsesThePrimaryBatteryKeyInsteadOfTheAggregateIndex() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         assertTrue(source.contains("BatteryKey.KeyChargeRemainingInPercent,\n        ComponentIndexType.LEFT_OR_MAIN"))
         assertFalse(source.contains("BatteryKey.KeyChargeRemainingInPercent,\n        ComponentIndexType.AGGREGATION"))
@@ -21,10 +18,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun observesPrimaryBatteryConnectionIndependentlyOfFlightControllerKeys() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         assertTrue(source.contains("BatteryKey.KeyConnection,\n        ComponentIndexType.LEFT_OR_MAIN"))
         assertTrue(source.contains("private val batteryOwner = Any()"))
@@ -43,10 +37,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun refreshesTheBatteryKeyFromHardwareWhenFlightControllerFirstBecomesReady() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         val refresh = source.substringAfter("override fun refreshFlightControllerFacts()")
             .substringBefore("private fun beginFlightControllerObservationGeneration()")
@@ -60,10 +51,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun lowBatteryRthObservationReadsTheStatusAlongsideTheTime() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         assertTrue(source.contains("LowBatteryRTHState"))
         assertTrue(source.contains("lowBatteryRTHStatus"))
@@ -71,10 +59,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun preservesExplicitUnknownMsdkStatesWithoutTreatingTheDefaultZeroAsAnEstimate() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         assertTrue(source.contains("private fun FCFlightMode?.toStableName(): String? = this?.name"))
         assertTrue(source.contains("LowBatteryRTHState.UNKNOWN -> LowBatteryRthState.UNKNOWN"))
@@ -83,10 +68,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun requestsEveryInitialTelemetryValueFromHardwareWhileContinuingToListen() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         assertTrue(source.contains("manager.listen(isFlyingKey, flightControllerOwner)"))
         assertTrue(source.contains("manager.listen(motorsOnKey, flightControllerOwner)"))
@@ -117,10 +99,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
 
     @Test
     fun observesRawGpsVisionAndTakeoffDiagnosticKeysWithoutInventingSafetyStates() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-            Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
-        ).first { it.exists() }.readText()
+        val source = telemetryAdapterSource()
 
         listOf(
             "FlightControllerKey.KeyGPSSignalLevel",
@@ -150,4 +129,19 @@ class MsdkV5FlightTelemetryKeyMappingTest {
         assertTrue(source.contains("requestInitialValue(visionSystemWarningKey, ObservedKey.VISION_SYSTEM_WARNING,"))
         assertTrue(source.contains("next?.name"))
     }
+
+    @Test
+    fun closingAttemptsFlightControllerAndBatteryListenerReleaseIndependently() {
+        val source = telemetryAdapterSource()
+        val close = source.substringAfter("override fun close()")
+            .substringBefore("private fun startBatteryObservation()")
+
+        assertTrue(close.contains("runCatching { manager.cancelListen(flightControllerOwner) }"))
+        assertTrue(close.contains("runCatching { manager.cancelListen(batteryOwner) }"))
+    }
+
+    private fun telemetryAdapterSource(): String = listOf(
+        Path("src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
+        Path("src/modules/telemetry/android-flight-telemetry-adapter/src/main/kotlin/com/skycommand/relay/telemetry/flight/android/MsdkV5FlightTelemetryApi.kt"),
+    ).first { it.exists() }.readText().replace("\r\n", "\n")
 }

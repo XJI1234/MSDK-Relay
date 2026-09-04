@@ -40,6 +40,18 @@ class AndroidPairingStatusPortContractTest {
     }
 
     @Test
+    fun closeIsolatesKeyManagerListenerReleaseFailure() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+            Path("src/modules/device-connection/android-pairing-status-adapter/src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),
+        ).first { it.exists() }.readText()
+        val close = source.substringAfter("override fun close()")
+            .substringBefore("private fun publish")
+
+        assertTrue(close.contains("runCatching { manager.cancelListen(owner) }"))
+    }
+
+    @Test
     fun requestsTheInitialPairingStateFromHardwareWhileContinuingToListen() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/pairing/status/android/MsdkV5PairingStatusApi.kt"),

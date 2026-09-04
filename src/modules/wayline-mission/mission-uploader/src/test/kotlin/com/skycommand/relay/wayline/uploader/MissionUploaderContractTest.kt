@@ -35,6 +35,22 @@ class MissionUploaderContractTest {
     }
 
     @Test
+    fun forwardsTheNormalizedDjiFailureToTheAcceptedCaller() {
+        val fixture = Fixture()
+        val failure = MissionUploadFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy")
+        var received: MissionUploadFailure? = null
+        fixture.uploader.start(object : UploadTerminalListener {
+            override fun onCompleted(outcome: UploadTerminalOutcome) = Unit
+            override fun onCompleted(outcome: UploadTerminalOutcome, failure: MissionUploadFailure?) { received = failure }
+        })
+
+        fixture.port.completion!!.fail(failure)
+
+        assertEquals(failure, received)
+        assertEquals(UploadState.FAILED, fixture.store.snapshot().upload)
+    }
+
+    @Test
     fun recordsProgressAndPublishesUploadedOnlyAfterCoordinatorSuccess() {
         val fixture = Fixture()
         val accepted = assertIs<UploadStartResult.Accepted>(fixture.uploader.start())

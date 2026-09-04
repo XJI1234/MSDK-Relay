@@ -47,6 +47,8 @@ class AndroidFlightTelemetrySource internal constructor(
 ) : FlightTelemetrySource {
     private val lock = Any()
     private var generation = 0L
+    private var sourceGeneration = 0L
+    private var sourceRevision = 0L
     private var current = FlightTelemetrySnapshot()
     private var active: Active? = null
 
@@ -55,7 +57,7 @@ class AndroidFlightTelemetrySource internal constructor(
     override fun onChanged(listener: () -> Unit): FlightTelemetryRegistration {
         val operation = synchronized(lock) {
             active?.let { return FlightTelemetryRegistration { } }
-            current = FlightTelemetrySnapshot()
+            current = advanceObservationGeneration(FlightTelemetrySnapshot())
             Active(++generation, listener).also { active = it }
         }
         val observationGeneration = nextObservationGeneration(operation)
@@ -68,7 +70,7 @@ class AndroidFlightTelemetrySource internal constructor(
 
     override fun invalidateFlightControllerFacts() {
         val (observation, listener) = synchronized(lock) {
-            current = current.withoutFlightControllerFacts()
+            current = advanceObservationGeneration(current.withoutFlightControllerFacts())
             active?.let { it.observation to it.listener } ?: (null to null)
         }
         runCatching { observation?.invalidateFlightControllerFacts() }
@@ -77,7 +79,7 @@ class AndroidFlightTelemetrySource internal constructor(
 
     override fun refreshFlightControllerFacts() {
         val (observation, listener) = synchronized(lock) {
-            current = current.withoutFlightControllerFacts()
+            current = advanceObservationGeneration(current.withoutFlightControllerFacts())
             active?.let { it.observation to it.listener } ?: (null to null)
         }
         runCatching { observation?.refreshFlightControllerFacts() }
@@ -86,7 +88,7 @@ class AndroidFlightTelemetrySource internal constructor(
 
     override fun close() {
         val observation = synchronized(lock) {
-            current = FlightTelemetrySnapshot()
+            current = advanceObservationGeneration(FlightTelemetrySnapshot())
             active?.also { active = null }?.observation
         }
         runCatching { observation?.close() }
@@ -101,7 +103,7 @@ class AndroidFlightTelemetrySource internal constructor(
             ) {
                 null
             } else {
-                current = fact.toSnapshot()
+                current = advanceRevision(fact.toSnapshot())
                 operation.listener
             }
         }
@@ -184,6 +186,17 @@ class AndroidFlightTelemetrySource internal constructor(
             takeoffFailureError = takeoffFailureError?.takeIf(::validEnumName),
             motorStartFailureError = motorStartFailureError?.takeIf(::validEnumName),
         )
+    }
+
+    private fun advanceObservationGeneration(snapshot: FlightTelemetrySnapshot): FlightTelemetrySnapshot {
+        sourceGeneration += 1
+        sourceRevision += 1
+        return snapshot.copy(sourceGeneration = sourceGeneration, sourceRevision = sourceRevision)
+    }
+
+    private fun advanceRevision(snapshot: FlightTelemetrySnapshot): FlightTelemetrySnapshot {
+        sourceRevision += 1
+        return snapshot.copy(sourceGeneration = sourceGeneration, sourceRevision = sourceRevision)
     }
 
     private fun validEnumName(value: String): Boolean =

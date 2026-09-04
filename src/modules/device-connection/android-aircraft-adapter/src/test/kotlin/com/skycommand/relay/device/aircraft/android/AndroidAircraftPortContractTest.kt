@@ -23,6 +23,19 @@ class AndroidAircraftPortContractTest {
         assertTrue(source.contains("private var flightControllerConnected: Boolean? = null"))
         assertFalse(source.contains("next == true"))
     }
+
+    @Test
+    fun closeIsolatesKeyManagerListenerReleaseFailure() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+            Path("src/modules/device-connection/android-aircraft-adapter/src/main/kotlin/com/skycommand/relay/device/aircraft/android/MsdkV5AircraftApi.kt"),
+        ).first { it.exists() }.readText()
+        val close = source.substringAfter("override fun close()")
+            .substringBefore("private fun publishConnection")
+
+        assertTrue(close.contains("runCatching { manager.cancelListen(owner) }"))
+    }
+
     @Test
     fun publishesAnInitialConnectedAircraftFact() {
         val platform = FakePlatform(initial = Fact(true, true, "M350 RTK"))

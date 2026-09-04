@@ -26,6 +26,7 @@ interface RelayLifecyclePorts {
     fun stopDevice()
     fun startTelemetry()
     fun stopTelemetry()
+    fun resetTelemetryPublicationBaseline() = Unit
     fun publishTelemetry()
     fun publishLinkSnapshot()
     fun startGateway()
@@ -47,6 +48,7 @@ class RelayBootstrapModule(
     private var gatewayStarted = false
     private var telemetryStarted = false
     private var gatewayActive = false
+    private var deviceBoundFeaturesInvalidated = false
     private var deviceRegistration: CloseableRegistration? = null
     private var gatewayRegistration: CloseableRegistration? = null
 
@@ -54,6 +56,7 @@ class RelayBootstrapModule(
         synchronized(lock) {
             check(!active) { "Relay bootstrap is already active" }
             active = true
+            deviceBoundFeaturesInvalidated = false
             try {
                 deviceRegistration = ports.onDeviceChanged { onDeviceChanged(false) }
                 gatewayRegistration = ports.onGatewayStateChanged(::onGatewayStateChanged)
@@ -65,8 +68,11 @@ class RelayBootstrapModule(
                 throw failure
             }
             try {
-                ports.startGateway()
+                // Mark the gateway as started before entering the external call.  A
+                // partially-started gateway must still receive the compensating stop
+                // when startGateway throws.
                 gatewayStarted = true
+                ports.startGateway()
                 syncTelemetry(true)
             } catch (failure: Exception) {
                 report(RelayBootstrapDiagnosticKind.RELAY_START_FAILURE)
@@ -94,6 +100,7 @@ class RelayBootstrapModule(
 
     private fun syncTelemetry(propagateFailure: Boolean) {
         if (ports.sdkAvailability() == SdkAvailability.READY) {
+            deviceBoundFeaturesInvalidated = false
             if (telemetryStarted) return
             telemetryStarted = true
             try {
@@ -110,10 +117,7 @@ class RelayBootstrapModule(
                 if (propagateFailure) throw failure
             }
         } else if (telemetryStarted) {
-            ports.markStreamUnavailable()
-            ports.markMissionUnavailable()
-            ports.markFlightControlUnavailable()
-            ports.markDeviceSettingsUnavailable()
+            invalidateDeviceBoundFeatures()
             telemetryStarted = false
             stopTelemetry()
             publishAvailableSnapshot()
@@ -128,6 +132,7 @@ class RelayBootstrapModule(
             val wasActive = gatewayActive
             gatewayActive = state == SessionState.ACTIVE
             if (gatewayActive) {
+                if (!wasActive) ports.resetTelemetryPublicationBaseline()
                 publishAvailableSnapshot()
             } else if (wasActive) {
                 ports.markStreamUnavailable()
@@ -142,6 +147,7 @@ class RelayBootstrapModule(
     }
 
     private fun stopInternal() {
+        invalidateDeviceBoundFeatures()
         runCatching { gatewayRegistration?.unregister() }
             .onFailure { report(RelayBootstrapDiagnosticKind.REGISTRATION_RELEASE_FAILURE) }
         gatewayRegistration = null
@@ -157,6 +163,15 @@ class RelayBootstrapModule(
             .onFailure { report(RelayBootstrapDiagnosticKind.FLIGHT_TELEMETRY_CLOSE_FAILURE) }
         runCatching { ports.stopDevice() }
             .onFailure { report(RelayBootstrapDiagnosticKind.DEVICE_STOP_FAILURE) }
+    }
+
+    private fun invalidateDeviceBoundFeatures() {
+        if (deviceBoundFeaturesInvalidated) return
+        deviceBoundFeaturesInvalidated = true
+        ports.markStreamUnavailable()
+        ports.markMissionUnavailable()
+        ports.markFlightControlUnavailable()
+        ports.markDeviceSettingsUnavailable()
     }
 
     private fun stopGateway() {

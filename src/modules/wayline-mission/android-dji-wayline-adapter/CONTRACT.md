@@ -31,6 +31,6 @@ DJI 上传没有取消接口，因此新上传不得删除仍可能被旧上传�
 
 DJI 原始状态不携带本项目任务身份，因此适配器必须实现 `beginStartAttempt`、`confirmStartAttempt` 和 `invalidateStartAttempt` 状态隔离：门面准备启动新任务时先关闭投递，监听注册和 `startMission` 调用期间的任何状态都丢弃；仅在同一启动请求收到 DJI 成功回执后才打开投递。回执失败、超时、取消、停止、任务替换、设备失效或关闭时再次关闭。禁止缓存或补发被隔离状态，避免把上一任务的迟到回调归属给新任务。
 
-原始 `RETURN_TO_START_POINT` 表示飞行器仍在执行返航动作，不是任务完成；它必须保持为非终态 `EXECUTING`，直到 DJI 后续明确报告 `FINISHED`。只有 `FINISHED` 可以映射为 `COMPLETED`。`close()` 必须最终调用 `WaypointMissionManager.destroy()`，以取消其产品类型监听并销毁内部任务操作者；上层适配器负责隔离该调用异常。
+原始 `RETURN_TO_START_POINT` 表示飞行器仍在执行返航动作，不是任务完成；它必须保持为非终态 `EXECUTING`，直到 DJI 后续明确报告 `FINISHED`。只有 `FINISHED` 可以映射为 `COMPLETED`。对于 `pushKMZFileToAircraft`、`startMission`、`pauseMission`、`resumeMission` 和 `stopMission`，DJI `onFailure(IDJIError)` 的 `errorCode()` 与 `description()` 必须在 Android 边界归一化为受限的错误码和描述，并经对应端口原样传回；同步异常、关闭和没有可用 `IDJIError` 的失败只产生无错误详情的失败。适配器绝不把 `IDJIError` 实例越过该模块边界。`close()` 必须最终调用 `WaypointMissionManager.destroy()`，以取消其产品类型监听并销毁内部任务操作者；上层适配器负责隔离该调用异常。
 
 模块仅依赖 `mission-uploader`、`mission-executor`、`mission-flight-phase` 和 DJI MSDK v5.17。JVM 测试覆盖文件名防穿越、零条和多条 WPML 航线的提前拒绝、写入失败、进度、成功/失败、重复和迟到回调、当前文件名替换规则、四种控制、同步异常、关闭与清理、DJI 状态到封闭信号集的完整映射、返航中不提前完成、监听先注册、关闭后静默及禁止从启动回调伪造阶段。Android Debug 构建必须编译真实 `IWaypointMissionManager`；真机仍需验证 `init()`、KMZ 上传、文件名匹配、飞行器控制以及 `ENTER_WAYLINE` 到 `EXECUTING` 的状态回调顺序。

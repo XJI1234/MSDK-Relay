@@ -86,17 +86,20 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     init {
         lifecycle.onChanged { availability ->
             lifecycleLock.withLock {
-                store.applySdk(availability)
                 when (availability) {
-                    SdkAvailability.READY -> startHardwareLinks()
+                    SdkAvailability.READY -> {
+                        store.applySdk(availability)
+                        startHardwareLinks()
+                    }
+
                     SdkAvailability.FAILED -> {
+                        store.applySdk(availability)
                         stopHardwareLinks()
                         store.markHardwareObservationsUnknown()
                     }
 
-                    SdkAvailability.STARTING,
-                    SdkAvailability.STOPPED,
-                    -> Unit
+                    SdkAvailability.STOPPED -> store.markRuntimeUnavailable()
+                    SdkAvailability.STARTING -> store.applySdk(availability)
                 }
             }
         }
@@ -114,7 +117,7 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     fun stop(): DeviceConnectionStopResult = lifecycleLock.withLock {
         stopHardwareLinks()
         val lifecycleResult = lifecycle.stop()
-        store.markRuntimeUnavailable()
+        if (lifecycleResult is StopResult.AlreadyStopped) store.markRuntimeUnavailable()
         return if (lifecycleResult is StopResult.AlreadyStopped) {
             DeviceConnectionStopResult.AlreadyStopped
         } else {

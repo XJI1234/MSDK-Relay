@@ -25,6 +25,7 @@ Gradle 路径：`:telemetry`
 Telemetry.create(source, sink) -> Telemetry
 telemetry.start() -> Started | AlreadyStarted
 telemetry.stop() -> Stopped | AlreadyStopped
+telemetry.resetPublicationBaseline() -> Unit
 telemetry.read() -> ReadSucceeded(snapshot) | ReadUnavailable
 telemetry.publishCurrent() -> Published | SkippedUnchanged | Rejected
 ```
@@ -34,6 +35,7 @@ telemetry.publishCurrent() -> Published | SkippedUnchanged | Rejected
 - `source` 是组合根提供的只读 `TelemetryStateSource`，负责在一个采样边界返回设备、飞行、直播和航线快照，并在任一来源变化时通知。telemetry 不持有或修改这些事实。
 - `start()` 订阅统一状态源，并对每次有效状态事件重新采样后尝试发布；重复启动不得重复订阅。
 - `stop()` 注销订阅并重置发布去重基线；停止后不得因已经排队的旧事件发布。
+- `resetPublicationBaseline()` 只清除已发送快照的去重基线，不订阅、注销、读取或修改任何状态源。每次电脑 WebSocket 进入一个新的 `ACTIVE` 会话，组合根必须在发布该会话首帧前调用它；因此相同的当前快照也必须发送给新会话。
 - 启动不补发历史状态；连接建立后需要立即完整快照时，组合根调用 `publishCurrent()`。未启动或采样/发送失败时返回 `Rejected`。
 - 即时读取和持续发布都使用同一个 `SnapshotAssembler`，不存在两套字段规则。
 - `TelemetrySnapshot.capabilities` 只能是 `TelemetryCapabilities`，不得暴露 `DeviceCapabilities` 或其他设备连接层内部类型。

@@ -2,7 +2,9 @@ package com.skycommand.relay.wayline.android
 
 import android.content.Context
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.executor.MissionControlFailure
 import com.skycommand.relay.wayline.executor.MissionControlPort
+import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
@@ -19,8 +21,8 @@ internal class StoredMissionFile(val path: String, val fileName: String, private
 }
 
 internal fun interface MissionFileStore { fun write(fileName: String, content: ByteArray): StoredMissionFile }
-internal interface DjiUploadCompletion { fun progress(value: Double); fun succeed(); fun fail() }
-internal interface DjiControlCompletion { fun succeed(); fun fail() }
+internal interface DjiUploadCompletion { fun progress(value: Double); fun succeed(); fun fail(failure: MissionUploadFailure? = null) }
+internal interface DjiControlCompletion { fun succeed(); fun fail(failure: MissionControlFailure? = null) }
 internal enum class DjiMissionExecutionState {
     PREPARING,
     ENTER_WAYLINE,
@@ -77,7 +79,7 @@ class AndroidDjiWaylineAdapter internal constructor(
                 }
             }
             override fun succeed() = finishUpload(operationGeneration, file, once, true)
-            override fun fail() = finishUpload(operationGeneration, file, once, false)
+            override fun fail(failure: MissionUploadFailure?) = finishUpload(operationGeneration, file, once, false, failure)
         }
         synchronized(submissionLock) {
             if (isCurrentUpload(operationGeneration)) {
@@ -171,7 +173,7 @@ class AndroidDjiWaylineAdapter internal constructor(
         listeners.forEach { runCatching { it.listener.onSignal(signal) } }
     }
 
-    private fun finishUpload(generation: Long, file: StoredMissionFile, completion: OnceUpload, success: Boolean) {
+    private fun finishUpload(generation: Long, file: StoredMissionFile, completion: OnceUpload, success: Boolean, failure: MissionUploadFailure? = null) {
         val (shouldDelete, accepted) = synchronized(lock) {
             val ownedFile = uploadFiles.remove(generation) === file
             if (!ownedFile || !completion.claim() || closed || uploadGeneration != generation) ownedFile to false else {
@@ -181,7 +183,7 @@ class AndroidDjiWaylineAdapter internal constructor(
             }
         }
         if (shouldDelete) file.delete()
-        if (accepted) completion.deliver(success)
+        if (accepted) completion.deliver(success, failure)
     }
 
     private fun withName(completion: ControlCompletion, action: (String, DjiControlCompletion) -> Unit) {
@@ -198,7 +200,7 @@ class AndroidDjiWaylineAdapter internal constructor(
                 val operationGeneration = ++controlGeneration
                 val callback = object : DjiControlCompletion {
                     override fun succeed() = finishControl(operationGeneration, once, true)
-                    override fun fail() = finishControl(operationGeneration, once, false)
+                    override fun fail(failure: MissionControlFailure?) = finishControl(operationGeneration, once, false, failure)
                 }
                 PreparedControl(operationGeneration, name, callback)
             }
@@ -218,12 +220,12 @@ class AndroidDjiWaylineAdapter internal constructor(
         }
     }
 
-    private fun finishControl(generation: Long, completion: OnceControl, success: Boolean) {
+    private fun finishControl(generation: Long, completion: OnceControl, success: Boolean, failure: MissionControlFailure? = null) {
         val accepted = synchronized(lock) {
             if (closed || controlGeneration != generation || !completion.claim()) false
             else { controlGeneration++; true }
         }
-        if (accepted) completion.deliver(success)
+        if (accepted) completion.deliver(success, failure)
     }
 
     private fun isCurrentUpload(value: Long) = synchronized(lock) { !closed && uploadGeneration == value }
@@ -233,10 +235,10 @@ class AndroidDjiWaylineAdapter internal constructor(
 
     private class OnceUpload(private val delegate: UploadCompletion) { private val lock=Any();private var done=false
         fun claim():Boolean=synchronized(lock){if(done)false else{done=true;true}}
-        fun deliver(success:Boolean)=runCatching{if(success)delegate.succeed()else delegate.fail()}}
+        fun deliver(success:Boolean, failure: MissionUploadFailure? = null)=runCatching{if(success)delegate.succeed()else delegate.fail(failure)}}
     private class OnceControl(private val delegate: ControlCompletion) { private val lock=Any();private var done=false
         fun claim():Boolean=synchronized(lock){if(done)false else{done=true;true}}
-        fun deliver(success:Boolean)=runCatching{if(success)delegate.succeed()else delegate.fail()}
+        fun deliver(success:Boolean, failure: MissionControlFailure? = null)=runCatching{if(success)delegate.succeed()else delegate.fail(failure)}
         fun fail(){if(claim())deliver(false)}}
 
     private data class PreparedControl(

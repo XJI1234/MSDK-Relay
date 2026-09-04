@@ -87,6 +87,11 @@ class Telemetry private constructor(
         return TelemetryStopResult.Stopped
     }
 
+    /** Makes the next current snapshot publishable to a newly established relay session. */
+    fun resetPublicationBaseline() = lock.withLock {
+        publisher.reset()
+    }
+
     fun read(): TelemetryReadResult = commandHandler.read()
 
     fun publishCurrent(): PublishTelemetryResult {

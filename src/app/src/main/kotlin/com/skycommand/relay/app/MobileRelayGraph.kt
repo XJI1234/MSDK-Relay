@@ -64,6 +64,7 @@ import com.skycommand.relay.stream.whip.state.WhipStreamLifecycle
 import com.skycommand.relay.stream.whip.android.AndroidWhipTransport
 import com.skycommand.relay.flight.FlightControl
 import com.skycommand.relay.flight.FlightControlDependencies
+import com.skycommand.relay.flight.dji.FlightActionState
 import com.skycommand.relay.flight.dji.android.AndroidDjiFlightPort
 import com.skycommand.relay.settings.DeviceSettings
 import com.skycommand.relay.settings.DeviceSettingsDependencies
@@ -75,6 +76,7 @@ import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
 import com.skycommand.relay.telemetry.publish.PublishTelemetryResult
 import com.skycommand.relay.telemetry.publish.TelemetrySink
 import com.skycommand.relay.telemetry.snapshot.SnapshotAssembler
+import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
 import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
@@ -287,26 +289,34 @@ class MobileRelayGraph private constructor(
     }
 
     private fun synchronizeFlightTelemetryWithFlightController() {
+        val deviceSnapshot = device.snapshot()
         val action = synchronized(flightTelemetryLifecycleLock) {
-            val current = device.snapshot().flightController
+            val current = deviceSnapshot.flightController
             val previous = lastFlightControllerLink
             lastFlightControllerLink = current
-            when (current) {
-                LinkState.DISCONNECTED -> {
+            when {
+                deviceSnapshot.sdkAvailability != SdkAvailability.READY -> {
                     if (flightTelemetryInvalidated) null else {
                         flightTelemetryInvalidated = true
                         FlightTelemetryLinkAction.INVALIDATE
                     }
                 }
 
-                LinkState.CONNECTED -> {
+                current == LinkState.DISCONNECTED -> {
+                    if (flightTelemetryInvalidated) null else {
+                        flightTelemetryInvalidated = true
+                        FlightTelemetryLinkAction.INVALIDATE
+                    }
+                }
+
+                current == LinkState.CONNECTED -> {
                     if (previous != LinkState.CONNECTED) {
                         flightTelemetryInvalidated = false
                         FlightTelemetryLinkAction.REFRESH
                     } else null
                 }
 
-                LinkState.UNKNOWN -> null
+                else -> null
             }
         }
         when (action) {
@@ -461,7 +471,6 @@ class MobileRelayGraph private constructor(
                         val flightSnapshot = flight.snapshot()
                         deviceSnapshot.sdkAvailability == SdkAvailability.READY &&
                             deviceSnapshot.remoteController == LinkState.CONNECTED &&
-                            deviceSnapshot.aircraft == LinkState.CONNECTED &&
                             deviceSnapshot.flightController == LinkState.CONNECTED &&
                             device.capabilities().canRunWayline &&
                             flightSnapshot.isFlying == false &&
@@ -585,7 +594,10 @@ class MobileRelayGraph private constructor(
                     device.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
                 },
                 feed({ flight.snapshot() }) { changed ->
-                    flight.onChanged(changed).let { CloseableRegistration(it::unregister) }
+                    flight.onChanged {
+                        flightControl.observeDjiFlightState(flight.snapshot().toFlightActionState())
+                        changed()
+                    }.let { CloseableRegistration(it::unregister) }
                 },
                 feed({ stream.snapshot() }) { changed ->
                     stream.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
@@ -620,6 +632,7 @@ class MobileRelayGraph private constructor(
                     override fun stopDevice() { device.stop() }
                     override fun startTelemetry() { telemetry.start() }
                     override fun stopTelemetry() { telemetry.stop() }
+                    override fun resetTelemetryPublicationBaseline() { telemetry.resetPublicationBaseline() }
                     override fun publishTelemetry() { telemetry.publishCurrent() }
                     override fun publishLinkSnapshot() {
                         gateway.publishTelemetry(
@@ -796,6 +809,15 @@ private fun commandModule(name: String): String = when {
     name.startsWith("telemetry.") -> "telemetry"
     else -> "relay-gateway"
 }
+
+private fun FlightTelemetrySnapshot.toFlightActionState() = FlightActionState(
+    sourceGeneration = sourceGeneration,
+    sourceRevision = sourceRevision,
+    isFlying = isFlying,
+    motorsOn = motorsOn,
+    flightMode = flightMode,
+    landingConfirmationNeeded = landingConfirmationNeeded,
+)
 
 private fun commandEventCode(name: String, ok: Boolean): String {
     val stem = name.uppercase().replace('.', '_').replace('-', '_')

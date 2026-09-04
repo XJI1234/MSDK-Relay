@@ -6,6 +6,7 @@ import dji.sdk.keyvalue.value.common.EmptyMsg
 import dji.v5.common.callback.CommonCallbacks
 import dji.v5.common.error.IDJIError
 import dji.v5.manager.KeyManager
+import com.skycommand.relay.flight.dji.FlightDjiFailure
 
 internal class MsdkV5FlightApi(
     private val manager: KeyManager = KeyManager.getInstance(),
@@ -25,7 +26,12 @@ internal class MsdkV5FlightApi(
             KeyTools.createKey(key),
             object : CommonCallbacks.CompletionCallbackWithParam<EmptyMsg> {
                 override fun onSuccess(result: EmptyMsg) = completion.succeed()
-                override fun onFailure(error: IDJIError) = completion.fail()
+                override fun onFailure(error: IDJIError) = completion.fail(
+                    FlightDjiFailure.fromDjiError(
+                        runCatching { error.errorCode() }.getOrNull(),
+                        runCatching { error.description() }.getOrNull(),
+                    ),
+                )
             },
         )
     }

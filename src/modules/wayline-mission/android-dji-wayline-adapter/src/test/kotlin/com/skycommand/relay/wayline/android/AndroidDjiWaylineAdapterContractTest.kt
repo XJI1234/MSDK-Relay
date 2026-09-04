@@ -1,6 +1,8 @@
 package com.skycommand.relay.wayline.android
 
 import com.skycommand.relay.wayline.executor.ControlCompletion
+import com.skycommand.relay.wayline.executor.MissionControlFailure
+import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
@@ -47,6 +49,34 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(files.paths.single(),dji.uploadPath); requireNotNull(dji.uploadCompletion).progress(45.4); requireNotNull(dji.uploadCompletion).succeed(); requireNotNull(dji.uploadCompletion).succeed()
         assertEquals(listOf(45),progress); assertEquals(listOf("success"),done.events); assertEquals(1,files.deletes)
         val start=ControlDone(); adapter.start(start); assertEquals("one.kmz",dji.controlName); requireNotNull(dji.controlCompletion).succeed(); assertEquals(listOf("success"),start.events)
+    }
+
+    @Test fun forwardsDjiControlFailureWithoutDroppingItsNormalizedDetails() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+
+        val completion = ControlDone()
+        adapter.start(completion)
+        val failure = MissionControlFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy")
+        requireNotNull(dji.controlCompletion).fail(failure)
+
+        assertEquals(listOf("failure"), completion.events)
+        assertEquals(failure, completion.failure)
+    }
+
+    @Test fun forwardsDjiUploadFailureWithoutDroppingItsNormalizedDetails() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        val completion = UploadDone()
+
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+        val failure = MissionUploadFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy")
+        requireNotNull(dji.uploadCompletion).fail(failure)
+
+        assertEquals(listOf("failure"), completion.events)
+        assertEquals(failure, completion.failure)
     }
 
     @Test fun rejectsMultipleWaylinesBeforeWritingOrCallingDji() {
@@ -203,8 +233,20 @@ class AndroidDjiWaylineAdapterContractTest {
         }
         return output.toByteArray()
     }
-    private class UploadDone:UploadCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
-    private class ControlDone:ControlCompletion{val events=mutableListOf<String>();override fun succeed(){events+="success"};override fun fail(){events+="failure"}}
+    private class UploadDone:UploadCompletion{
+        val events=mutableListOf<String>()
+        var failure: MissionUploadFailure? = null
+        override fun succeed(){events+="success"}
+        override fun fail(){fail(null)}
+        override fun fail(value: MissionUploadFailure?){failure=value;events+="failure"}
+    }
+    private class ControlDone:ControlCompletion{
+        val events=mutableListOf<String>()
+        var failure: MissionControlFailure? = null
+        override fun succeed(){events+="success"}
+        override fun fail(){fail(null)}
+        override fun fail(value: MissionControlFailure?){failure=value;events+="failure"}
+    }
     private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>()
         override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;val index=deleteCounts.size;deleteCounts+=0;val path="C:/cache/$index/$fileName";paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++}}}
     private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null

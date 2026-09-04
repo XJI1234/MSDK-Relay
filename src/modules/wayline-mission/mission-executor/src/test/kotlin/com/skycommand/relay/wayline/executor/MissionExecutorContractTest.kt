@@ -122,6 +122,59 @@ class MissionExecutorContractTest {
     }
 
     @Test
+    fun restoresPauseStateAfterExplicitDjiFailureAndAllowsRetry() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.port.completeFailure()
+
+        assertEquals(ExecutionState.EXECUTING, fixture.store.snapshot().execution)
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+    }
+
+    @Test
+    fun restoresThePreStartStateAndForwardsTheNormalizedDjiFailureToTheAcceptedCaller() {
+        val fixture = Fixture()
+        val failure = MissionControlFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy")
+        var received: MissionControlFailure? = null
+        fixture.executor.start(object : ExecutionTerminalListener {
+            override fun onCompleted(outcome: ExecutionTerminalOutcome) = Unit
+            override fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) { received = failure }
+        })
+
+        fixture.port.completeFailure(failure)
+
+        assertEquals(failure, received)
+        assertEquals(ExecutionState.NOT_STARTED, fixture.store.snapshot().execution)
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+    }
+
+    @Test
+    fun doesNotUseTargetStateObservedBeforeControlInvocationToReleaseTimeout() {
+        val operations = ManualExecutor()
+        val fixture = Fixture(operationExecutor = operations)
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.store.apply(
+            MissionStateEvent.ExecutionChanged(
+                4,
+                fixture.store.snapshot().missionRevision!!,
+                fixture.store.snapshot().deviceGeneration,
+                ExecutionState.PAUSED,
+            ),
+        )
+        operations.runNext()
+        fixture.scheduler.fire()
+
+        assertEquals(
+            ExecutionRejection.OPERATION_UNCONFIRMED,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.resume()).reason,
+        )
+    }
+
+    @Test
     fun acceptsResumeWhenTheMatchingPauseStateArrivedBeforeThePauseReceiptTimedOut() {
         val fixture = Fixture()
         fixture.markExecutionStarted()
@@ -250,12 +303,15 @@ class MissionExecutorContractTest {
         assertEquals(1, results.count { it is ExecutionRequestResult.Rejected })
     }
 
-    private class Fixture(ready: Boolean = true) {
+    private class Fixture(
+        ready: Boolean = true,
+        operationExecutor: OperationExecutor = OperationExecutor { it() },
+    ) {
         val store = MissionStateStore.create()
         val port = Port()
         val scheduler = Scheduler()
         private val coordinator = DjiOperationCoordinator.create(
-            executor = OperationExecutor { it() },
+            executor = operationExecutor,
             scheduler = scheduler,
         )
         val executor = MissionExecutor.create(store, port, coordinator, startSafetyGate = MissionStartSafetyGate { true })
@@ -307,7 +363,7 @@ class MissionExecutorContractTest {
             this.completion = completion
         }
         fun completeSuccess() { completion!!.succeed() }
-        fun completeFailure() { completion!!.fail() }
+        fun completeFailure(failure: MissionControlFailure? = null) { completion!!.fail(failure) }
     }
 
     private class Scheduler : OperationScheduler {
@@ -317,6 +373,16 @@ class MissionExecutorContractTest {
             return OperationCancellation {}
         }
         fun fire() { callback?.invoke() }
+    }
+
+    private class ManualExecutor : OperationExecutor {
+        private val tasks = ArrayDeque<() -> Unit>()
+
+        override fun execute(task: () -> Unit) {
+            tasks += task
+        }
+
+        fun runNext() = tasks.removeFirst()()
     }
 
     private fun metadata(name: String = "mission.kmz") = MissionMetadata(name, 3, "a".repeat(64))

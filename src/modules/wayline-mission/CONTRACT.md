@@ -59,7 +59,7 @@ mission.markDeviceUnavailable() -> MissionSnapshot
 
 由于 DJI 原始状态不含任务标识，门面在准备新启动前必须关闭 Android 状态源的 `beginStartAttempt` 隔离，在该启动得到成功回执后才 `confirmStartAttempt`，并在失败、超时、取消、停止、任务替换、设备失效及终态时 `invalidateStartAttempt`。隔离窗口中的状态必须丢弃，不能暂存、重放或用于判断新任务；这优先于快速显示状态，保证迟到回调不会被归属给新任务。
 
-完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。启动、暂停、继续和停止的回执丢失不能作为 DJI 未执行的证据：启动保持 `STARTING`，暂停/继续等待匹配 DJI 状态，停止保持 `STOPPING`；除明确失败外不得自动重发，操作员只能使用保守停止处置。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
+完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。上传、暂停、继续和停止的 DJI 明确 `onFailure` 必须作为 `command-result.result` 的 `{ domain: "wayline", outcome: "ACTION_REJECTED", errorCode, errorDescription }` 原样送回桌面；同步调用失败或缺少 DJI 错误时为 `INVOCATION_FAILED`，超时或取消为 `RESULT_UNCONFIRMED`。上传明确拒绝时恢复 `staged`，不得把未上传任务写成 `failed`；启动明确带 DJI 错误的拒绝恢复调用前执行状态（通常为 `NOT_STARTED`），并允许再次尝试；启动没有错误的失败、超时或回执丢失不能作为 DJI 未执行的证据，必须保持 `STARTING`。暂停/继续等待匹配 DJI 状态，停止保持 `STOPPING`；除明确失败外不得自动重发，操作员只能使用保守停止处置。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
 
 依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、原始 DJI 任务状态源、共享 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。
 

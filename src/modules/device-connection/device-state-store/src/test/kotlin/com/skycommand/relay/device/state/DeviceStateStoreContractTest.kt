@@ -30,6 +30,19 @@ class DeviceStateStoreContractTest {
     }
 
     @Test
+    fun acceptsTheFirstNewHardwareObservationAfterTheRuntimeRestarts() {
+        val store = DeviceStateStore.create()
+        store.apply(DeviceStatePatch.pairing(1, PairingState.PAIRED))
+
+        store.markRuntimeUnavailable()
+
+        val resumed = store.apply(DeviceStatePatch.pairing(2, PairingState.PAIRED))
+
+        assertIs<ApplyResult.Applied>(resumed)
+        assertEquals(PairingState.PAIRED, store.snapshot().pairing)
+    }
+
+    @Test
     fun marksHardwareFactsUnknownWhileTheirMsdkObserversAreBeingReestablished() {
         val store = DeviceStateStore.create()
         store.apply(readyObservation(revision = 1))

@@ -25,6 +25,18 @@ class MsdkV5RemoteControllerMappingTest {
     }
 
     @Test
+    fun closeIsolatesKeyManagerListenerReleaseFailure() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+            Path("src/modules/device-connection/android-remote-controller-adapter/src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),
+        ).first { it.exists() }.readText()
+        val close = source.substringAfter("override fun close()")
+            .substringBefore("private fun publishConnection")
+
+        assertTrue(close.contains("runCatching { manager.cancelListen(owner) }"))
+    }
+
+    @Test
     fun observeDoesNotSeedDisconnectedFromMissingKeyDefaults() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/device/remote/android/MsdkV5RemoteControllerApi.kt"),

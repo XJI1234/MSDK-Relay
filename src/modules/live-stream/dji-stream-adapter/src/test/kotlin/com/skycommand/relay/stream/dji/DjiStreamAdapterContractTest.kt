@@ -95,6 +95,27 @@ class DjiStreamAdapterContractTest {
     }
 
     @Test
+    fun settlesATimedOutStartFromALaterDjiStatusBeforeQueuingRecoveryStop() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+        fixture.scheduler.fire()
+
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+        assertEquals(0, fixture.port.stopCalls)
+
+        fixture.port.status!!.invoke(DjiStreamStatus(false))
+
+        assertEquals(1, fixture.port.stopCalls)
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+
+        fixture.port.stopCompletion!!.succeed()
+        val other = BlockingOperation()
+        assertIs<com.skycommand.relay.device.operation.SubmissionResult.Accepted>(
+            fixture.coordinator.submit(other, 1_000) { },
+        )
+    }
+
+    @Test
     fun convertsDjiAdapterExceptionsToFailedState() {
         val fixture = Fixture()
         fixture.port.throwOnStart = true

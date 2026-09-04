@@ -5,14 +5,20 @@ import com.skycommand.relay.device.operation.OperationCancellation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
 import com.skycommand.relay.flight.command.FlightAction
+import com.skycommand.relay.flight.dji.FlightDjiFailure
 import com.skycommand.relay.flight.dji.DjiFlightPort
 import com.skycommand.relay.flight.dji.FlightDjiCompletion
 import com.skycommand.relay.gateway.command.CommandCompletion
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonBoolean
 import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class FlightControlContractTest {
     @Test
@@ -59,7 +65,50 @@ class FlightControlContractTest {
         fixture.control.markDeviceUnavailable()
         fixture.port.succeed()
 
-        assertEquals(listOf("reject:Flight command failed"), completion.events)
+        assertEquals(listOf("reject:Flight command result was not confirmed"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("flight"),
+                    "outcome" to JsonString("RESULT_UNCONFIRMED"),
+                ),
+            ),
+            completion.result,
+        )
+    }
+
+    @Test
+    fun returnsTheNormalizedDjiRejectionAsAStructuredFailureResult() {
+        val fixture = Fixture()
+        val completion = Completion()
+
+        fixture.control.commandHandler().handle(command("flight.takeoff"), completion)
+        fixture.port.fail(FlightDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The aircraft is busy"))
+
+        assertEquals(listOf("reject:Flight action was rejected"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("flight"),
+                    "outcome" to JsonString("ACTION_REJECTED"),
+                    "errorCode" to JsonString("COMMON_SYSTEM_BUSY"),
+                    "errorDescription" to JsonString("The aircraft is busy"),
+                ),
+            ),
+            completion.result,
+        )
+    }
+
+    @Test
+    fun preservesDjiRejectionMetadataInTheStructuredCommandResult() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/flight/FlightControl.kt"),
+            Path("src/modules/flight-control/src/main/kotlin/com/skycommand/relay/flight/FlightControl.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("errorCode"))
+        assertTrue(source.contains("errorDescription"))
+        assertTrue(source.contains("ACTION_REJECTED"))
     }
 
     private fun command(name: String) = CommandFrame(name, name, JsonObject(mapOf("confirm" to JsonBoolean(true))))
@@ -82,11 +131,17 @@ class FlightControlContractTest {
         private var completion: FlightDjiCompletion? = null
         override fun execute(action: FlightAction, completion: FlightDjiCompletion) { actions += action; this.completion = completion }
         fun succeed() = checkNotNull(completion).succeed()
+        fun fail(failure: FlightDjiFailure) = checkNotNull(completion).fail(failure)
     }
 
     private class Completion : CommandCompletion {
         val events = mutableListOf<String>()
+        var result: JsonObject? = null
         override fun succeed(detail: String) { events += "ok:$detail" }
         override fun reject(detail: String) { events += "reject:$detail" }
+        override fun reject(detail: String, result: JsonObject?) {
+            events += "reject:$detail"
+            this.result = result
+        }
     }
 }

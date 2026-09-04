@@ -127,13 +127,14 @@ CommandHandler.handle(command, completion)
 completion.succeed(detail)
 completion.succeed(detail, result)
 completion.reject(detail)
+completion.reject(detail, result)
 ```
 
 - `command` 是不可变 `CommandFrame`，处理器可读取 `id`、`name` 与通用 JSON fields，但不得修改它；
 - `completion` 只能为该次调用使用，不得跨命令复用；
 - 第一次 `succeed` 或 `reject` 获胜，随后任何完成调用安静丢弃；
-- `succeed(detail)` 形成 `CommandResultFrame(id, true, detail)`；`succeed(detail, result)` 形成 `CommandResultFrame(id, true, detail, result)`；`reject(detail)` 形成 `CommandResultFrame(id, false, detail)`；
-- `result` 是可选的不可变 JSON 对象，写入 `command-result.result`；它适用于设备设置完整快照等结构化业务结果。缺失 `result` 与 `null` 都不写入协议帧，且不改变 `ok` 或 `detail` 的语义；
+- `succeed(detail)` 形成 `CommandResultFrame(id, true, detail)`；`succeed(detail, result)` 形成 `CommandResultFrame(id, true, detail, result)`；`reject(detail)` 形成 `CommandResultFrame(id, false, detail)`；`reject(detail, result)` 形成 `CommandResultFrame(id, false, detail, result)`；
+- `result` 是可选的不可变 JSON 对象，写入 `command-result.result`；它适用于设备设置完整快照以及飞行命令的受限动作拒绝摘要等结构化业务结果。缺失 `result` 与 `null` 都不写入协议帧，且不改变 `ok` 或 `detail` 的语义；
 - detail 必须满足 `protocol-core` 对 result detail 的限制：最多 1024 个 Unicode code point，且不含控制字符；空 detail 合法；
 - detail 不合法时不回显输入，统一形成 `CommandResultFrame(id, false, "Command result is invalid")`；
 - 处理器负责参数语义、业务授权和 DJI 操作；分发器只负责名称与结果关联。

@@ -84,6 +84,30 @@ class MsdkV5ManagerBridgeContractTest {
     }
 
     @Test
+    fun revalidatesProcessRegistrationBeforeReusingAReadyBridge() {
+        val manager = FakeManager(registered = true)
+        val bridge = MsdkV5ManagerBridge(ContextWrapper(null), manager)
+        var firstRegistrations = 0
+        var secondRegistrations = 0
+
+        bridge.initialize(listener(onRegistered = { firstRegistrations += 1 }))
+        manager.registered = false
+
+        assertIs<BridgeStartResult.Accepted>(
+            bridge.initialize(listener(onRegistered = { secondRegistrations += 1 })),
+        )
+        assertEquals(1, firstRegistrations)
+        assertEquals(0, secondRegistrations)
+        assertEquals(1, manager.initCalls)
+
+        manager.callbackOrThrow().onInitializationComplete()
+        manager.callbackOrThrow().onRegistrationSuccess()
+
+        assertEquals(1, secondRegistrations)
+        assertEquals(1, manager.registerCalls)
+    }
+
+    @Test
     fun turnsAnSdkInitThrowIntoARejectedStart() {
         val manager = FakeManager(throwOnInit = true)
         val bridge = MsdkV5ManagerBridge(ContextWrapper(null), manager)
@@ -161,7 +185,7 @@ class MsdkV5ManagerBridgeContractTest {
     private class FakeManager(
         private val throwOnInit: Boolean = false,
         private val throwOnRegister: Boolean = false,
-        private val registered: Boolean = false,
+        var registered: Boolean = false,
     ) : DjiSdkManagerApi {
         var initCalls = 0
         var registerCalls = 0
@@ -178,6 +202,7 @@ class MsdkV5ManagerBridgeContractTest {
         override fun registerApp() {
             registerCalls += 1
             if (throwOnRegister) error("SDK registration failed")
+            registered = true
         }
 
         fun callbackOrThrow(): DjiSdkManagerCallback = checkNotNull(callback)

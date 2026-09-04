@@ -5,6 +5,7 @@ import com.skycommand.relay.gateway.session.SessionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class RelayBootstrapModuleTest {
     @Test fun startsDeviceAndGatewayThenDefersTelemetryUntilSdkReady() {
@@ -17,9 +18,9 @@ class RelayBootstrapModuleTest {
         ports.deviceChanged()
         ports.gatewayStateChanged(SessionState.ACTIVE)
         assertEquals(
-            listOf(
+                listOf(
                 "device-listen", "gateway-listen", "device-start", "gateway-start",
-                "telemetry-start", "telemetry-publish",
+                "telemetry-start", "telemetry-publication-reset", "telemetry-publish",
             ),
             ports.events,
         )
@@ -59,6 +60,42 @@ class RelayBootstrapModuleTest {
         ports.deviceChanged()
         assertEquals(1, ports.events.count { it == "telemetry-start" })
         assertEquals(1, ports.events.count { it == "telemetry-publish" })
+    }
+
+    @Test fun enteringANewGatewaySessionResetsTelemetryDeduplicationBeforePublishingItsFirstSnapshot() {
+        val ports = FakePorts().apply { sdk = SdkAvailability.READY }
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        ports.gatewayStateChanged(SessionState.ACTIVE)
+        ports.events.clear()
+
+        ports.gatewayStateChanged(SessionState.RECONNECT_WAIT)
+        ports.gatewayStateChanged(SessionState.ACTIVE)
+
+        assertEquals(
+            listOf("stream-unavailable", "telemetry-publication-reset", "telemetry-publish"),
+            ports.events,
+        )
+    }
+
+    @Test fun stoppingTheRelayInvalidatesEveryDeviceBoundFeatureBeforeReleasingLifecycleResources() {
+        val ports = FakePorts().apply { sdk = SdkAvailability.READY }
+        val module = RelayBootstrapModule(ports)
+        module.start()
+        ports.events.clear()
+
+        module.stop()
+
+        val firstRelease = ports.events.indexOf("gateway-unlisten")
+        assertTrue(firstRelease >= 0)
+        listOf(
+            "stream-unavailable",
+            "mission-unavailable",
+            "flight-control-unavailable",
+            "device-settings-unavailable",
+        ).forEach { event ->
+            assertTrue(ports.events.indexOf(event) in 0 until firstRelease, event)
+        }
     }
 
     @Test fun invalidatesDeviceBoundFeaturesAndStopsInReverseOrder() {
@@ -114,6 +151,7 @@ class RelayBootstrapModuleTest {
 
         assertEquals(true, result.isFailure)
         assertEquals(1, ports.events.count { it == "diagnostic:RELAY_START_FAILURE" })
+        assertEquals(1, ports.events.count { it == "gateway-stop" })
         module.start()
         assertEquals(2, ports.events.count { it == "device-start" })
         assertEquals(2, ports.events.count { it == "gateway-start" })
@@ -195,6 +233,7 @@ class RelayBootstrapModuleTest {
         override fun stopDevice() { events += "device-stop" }
         override fun startTelemetry() { events += "telemetry-start"; afterTelemetryStart?.invoke() }
         override fun stopTelemetry() { events += "telemetry-stop" }
+        override fun resetTelemetryPublicationBaseline() { events += "telemetry-publication-reset" }
         override fun publishTelemetry() { events += "telemetry-publish" }
         override fun publishLinkSnapshot() { events += "link-publish" }
         override fun startGateway() {

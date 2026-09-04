@@ -12,8 +12,8 @@ Gradle 路径：`:app`
 
 1. `MainActivity`：只承载地址输入、启动/停止操作和状态展示；不直接调用 DJI 或 WebSocket。状态顺序必须是运行时、电脑连接、MSDK 生命周期、遥控器连接、对频状态、飞控连接。MSDK 状态行必须一对一显示 `SdkLifecycle` 的受限状态；遥控器、对频和飞控状态行必须一对一显示 `RemoteControllerKey.KeyConnection`、`RemoteControllerKey.KeyPairingStatus`、`FlightControllerKey.KeyConnection` 的受限状态。`ProductKey.KeyConnection` 不进入手机 UI；它仅作为原始诊断事实保留，绝不翻译为飞机物理在线。展示文字必须是操作员能读的中文，不得把 `ACTIVE`、`RECONNECT_WAIT` 等机器词直接画上，也不得把多个 DJI Key 合并为同一行。开始/停止对频按钮只反映 `device-connection` 的能力：飞控明确断开时允许开始对频，飞控已连接或未知时不允许。首次创建时必须在 `onCreate`、生命周期到达 `STARTED` 前 `attach` 权限适配器，并把该实例交给图。中继仍在启动或运行时，界面销毁必须保留图和适配器，恢复时必须 `rebind` 到新界面，不得再次 `attach`，也不得因此停止电脑会话。仅当中继已停止、失败或正在停止时，`onDestroy` 才关闭图和适配器。
 2. `MobileRelayGraph`：只创建一级模块的真实实例、注册命令并集中释放资源；不重新实现模块业务规则，对频按钮条件必须来自 `DeviceConnection.capabilities()`。旧 RTMP `LiveStream` 与 WHIP `WhipLiveStream` 必须拥有各自的适配器、状态、命令处理器和关闭路径；任一链路的启动、停止、发布器或 DJI 失败不得调用或改变另一链路。组合根唯一负责在两个命令处理器之前装配运行时图传互斥，拒绝的命令不得调用另一链路。每次设备状态变化还必须以 `canStreamVideo` 观察生产 RTMP 图传源：从可用到不可用时只调用 `stream.markSourceUnavailable()`，从不可用恢复时只清除本地边沿标记，绝不自动重启 RTMP，也绝不调用 WHIP。权限适配器由 Activity 持有，图关闭时不得关闭它。
-3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次。SDK 离开 `READY` 时通知直播、航线、飞行控制和设备设置失效。网关已是 `ACTIVE` 但遥测尚未启动时发布设备链路快照。网关从 `ACTIVE` 进入重连或停止时只通知直播失效，从而停止 WHIP/RTMP 发布并释放图传互斥，不得因此停止网关重连。`MobileRelayGraph` 装配网关时握手超时必须为 15 秒，与桌面端一致。
-4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。组合根以 `FlightControllerKey.KeyConnection` 为飞行事实有效性的唯一开关：它明确断开时立即使飞行遥测快照失效；任何一次从非 `CONNECTED`（首次 `UNKNOWN` 或已断开）到 `CONNECTED` 的转换，都必须要求飞行遥测适配器重新建立 `listen + 异步 getValue(callback)` 观察。这样首次飞控硬件比 MSDK 遥测观察更晚就绪时，先前失败的初读不会让飞行 Key 永久停留在未知。断开前内存快照及其迟到回调不得在重连后伪装为当前飞行事实。
+3. `RelayBootstrapModule`：只执行设备、遥测和网关的有序启停，隔离启动代次。SDK 离开 `READY` 或中继主动停止时，必须使直播、航线、飞行控制和设备设置失效，取消未终态的设备操作；主动停止不得把上一次 DJI 会话的本地业务状态带入下一次启动。网关已是 `ACTIVE` 但遥测尚未启动时发布设备链路快照。每次网关从非 `ACTIVE` 进入新的 `ACTIVE` 会话时，必须仅重置遥测发布去重基线、随后发布一份完整当前快照，不得为此重建 MSDK Key 观察。网关从 `ACTIVE` 进入重连或停止时只通知直播失效，从而停止 WHIP/RTMP 发布并释放图传互斥，不得因此停止网关重连。`MobileRelayGraph` 装配网关时握手超时必须为 15 秒，与桌面端一致。
+4. `CompositeTelemetrySource`：只原子读取设备、飞行、直播和航线四类快照，并把任一来源变化合并为统一通知。组合根以 MSDK 生命周期和 `FlightControllerKey.KeyConnection` 共同决定飞行事实有效性：MSDK 不是 `READY`，或飞控 Key 明确断开时，必须立即使飞行遥测快照失效；任何一次在 MSDK 已 `READY` 后从非 `CONNECTED`（首次 `UNKNOWN` 或已断开）到 `CONNECTED` 的转换，都必须要求飞行遥测适配器重新建立 `listen + 异步 getValue(callback)` 观察。这样首次飞控硬件比 MSDK 遥测观察更晚就绪时，先前失败的初读不会让飞行 Key 永久停留在未知；SDK 重启后也不会将断开前内存快照作为当前飞行事实发布。断开前内存快照及其迟到回调不得在重连后伪装为当前飞行事实。
 5. `TelemetryFrameMapper`：只把完整业务快照无损映射到协议 JSON；每个经 WebSocket 发出的 `TelemetryFrame` 必须带组合根分配的正单调 `telemetrySequence`，它只用于同一会话内拒绝迟到帧，绝不是 DJI 状态。缺失 DJI 值保持为 `null`。低电量返航状态与预估时间必须作为不同字段原样映射，不能把 `UNKNOWN + 0` 重新写成有效预估。`pairing.status` 的结构化 `result` 也只由该映射器从当前遥测快照生成，且不冒充持续遥测序号。
 
 上述职责之间只通过稳定接口协作。界面不得持有模块内部端口，映射器不得访问 Android，生命周期模块不得解析命令，组合源不得发布网络消息。
@@ -28,9 +28,9 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 
 1. 用户保存合法 `ws://` 或 `wss://` 地址后才能启动。
 2. `AppRuntime` 先取得运行时权限，再启动前台服务，最后调用组合启动模块。电脑 WebSocket 不得等待 USB。中继进入 `RUNNING` 后，组合根单独请求 `USB_ACCESS`：没有附件时保持等待，接入后弹出系统授权；授权成功或 USB 再次接入且已授权时，可以请求 `device-connection` 刷新硬件观察。`device-connection` 自己在 SDK 首次进入 `READY` 后建立观察，组合根不得提前访问或重复编排硬件 Key。USB 拒绝或失败后必须允许再次请求，不得把 USB 授权绑进 `AppRuntime.start()`。USB 广播接收器必须存活到权限适配器关闭，不能随 Activity 进入后台而注销。
-3. 组合启动模块先启动 `device-connection`，随即启动 `relay-gateway`。电脑 WebSocket 不得等待 DJI SDK。仅在 DJI 状态为 `READY` 后启动飞行遥测源和 `telemetry`。SDK 离开 `READY` 时必须停止遥测并通知直播/航线/飞行控制/设备设置失效，但不得因此断开电脑连接；SDK 再次 `READY` 后只重试遥测。网关离开 `ACTIVE` 时必须通知直播失效（含 WHIP 发布器和图传互斥），操作者重连后必须重新启动图传。
-4. 网关已是 `ACTIVE` 且遥测已启动时调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。网关已是 `ACTIVE` 但 SDK 尚未 `READY` 时，必须发布当前设备链路快照（SDK、遥控器、飞机、对频），不得等待飞行遥测模块启动；`ACTIVE` 期间设备事实变化必须再次发布该链路快照。所有这些 `TelemetryFrame` 共用组合根的正单调 `telemetrySequence`，不得因 SDK 停止或遥测重启倒退。网关先于 SDK 就绪进入 `ACTIVE` 时，遥测启动后再补发完整首帧。
-5. 停止顺序严格反向：网关、遥测、飞行源、设备；同时关闭航线缓存、DJI 航线适配器、前台服务端口和线程资源。权限适配器不随中继图重建关闭。中继仍在运行时，适配器不得随界面销毁关闭；USB 广播接收器必须注册在应用上下文，存活到适配器关闭。
+3. 组合启动模块先启动 `device-connection`，随即启动 `relay-gateway`。电脑 WebSocket 不得等待 DJI SDK。仅在 DJI 状态为 `READY` 后启动飞行遥测源和 `telemetry`。SDK 离开 `READY` 时必须立即清空飞控从属遥测、停止遥测并通知直播/航线/飞行控制/设备设置失效，但不得因此断开电脑连接；SDK 再次 `READY` 后只重试遥测，直到飞控 Key 明确连接并重建观察前飞行事实保持未知。网关离开 `ACTIVE` 时必须通知直播失效（含 WHIP 发布器和图传互斥），操作者重连后必须重新启动图传。
+4. 网关每次进入新的 `ACTIVE` 会话时，组合根先重置遥测发布去重基线，再调用 `telemetry.publishCurrent()`，保证电脑端立即收到完整首帧。网关已是 `ACTIVE` 但 SDK 尚未 `READY` 时，必须发布当前设备链路快照（SDK、遥控器、飞机、对频），不得等待飞行遥测模块启动；`ACTIVE` 期间设备事实变化必须再次发布该链路快照。所有这些 `TelemetryFrame` 共用组合根的正单调 `telemetrySequence`，不得因 SDK 停止或遥测重启倒退。网关先于 SDK 就绪进入 `ACTIVE` 时，遥测启动后再补发完整首帧。
+5. 停止顺序严格反向：在撤销设备、遥测和网关监听前，先使直播、航线、飞行控制和设备设置状态失效；随后网关、遥测、飞行源、设备依次停止，同时关闭航线缓存、DJI 航线适配器、前台服务端口和线程资源。权限适配器不随中继图重建关闭。中继仍在运行时，适配器不得随界面销毁关闭；USB 广播接收器必须注册在应用上下文，存活到适配器关闭。
 6. 设备离线时必须通知直播、航线、飞行控制和设备设置模块失效；旧 DJI、网络和状态回调不得恢复已停止代次。
 7. 任一启动步骤抛出异常时，必须注销已建立的监听、逆序停止已启动资源，并允许后续完整重试。
 8. 任何可安装 APK 都必须在打包时通过 Gradle 属性 `DJI_API_KEY` 注入已注册的 DJI API Key；未提供时打包必须失败，不能生成携带空密钥的伪可用 APK。该密钥不得进入源码、契约或版本控制。
@@ -42,7 +42,7 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 
 `telemetry.read` 只读取并发布当前持续 MSDK Key 观察已写入的完整快照；它不重建遥控器、产品、AirLink、相机、飞控或对频 Key 观察，不轮询桌面缓存，也不调用任何 DJI、飞控、航线或图传操作。只有 `device-connection` 在 SDK 已 `READY` 后才能建立 Key 观察：每个 Key 在观察建立时先注册 `KeyManager.listen`，再以带回调的 `KeyManager.getValue(key, callback)` 取得首次硬件值；每个后续 Key 变化由 `Telemetry` 对设备观察事件的订阅立即推送到电脑。配对命令使用 30 秒超时并且每条命令恰好产生一个终态。`pairing.status` 成功时必须通过 `command-result.result` 返回根契约 §7.4 的结构化快照：`pairingState`、`aircraftConnected`、`flightControllerConnected`、`aircraftModel`、`motorsOn`、`sdkRegistered`。该结果只来自当前遥测快照；遥测不可用时拒绝命令。`pairing.start` / `pairing.stop` 不得附带该结构化 `result`。旧 RTMP 直播和 WHIP 直播分别复用 `LiveStream` 与 `WhipLiveStream` 门面提供的处理器；旧 `live-stream.*` 命令不得路由到 WHIP，`live-stream-webrtc.*` 命令不得路由到旧 RTMP。航线、飞行控制和设备设置命令直接复用各一级模块门面提供的处理器。飞行控制处理器要求每次命令都带 `confirm: true`；设备设置处理器在读写成功时通过 `command-result.result` 返回完整结构化快照。四类 DJI 业务处理器都只能经 `device-connection` 的共享操作协调器调用 DJI，不得由组合根另建执行路径。
 
-`wayline.start` 的手机端最终门禁由 `MobileRelayGraph` 提供给 `wayline-mission`：同一次判定必须要求 SDK 就绪、遥控器/飞机/飞控均明确连接、当前设备支持航线、电量至少 20、`isFlying == false` 与 `motorsOn == false`。对频不是航线前置条件。任何缺失、未知、异常或不一致事实均为拒绝，且不得触达 DJI `startMission`。该门禁是桌面 `PreflightCheck` 的独立第二层，不能用 UI 按钮可用性或上一次遥测结果替代。
+`wayline.start` 的手机端最终门禁由 `MobileRelayGraph` 提供给 `wayline-mission`：同一次判定必须要求 SDK 就绪、遥控器和飞控均明确连接、当前设备支持航线、电量至少 20、`isFlying == false` 与 `motorsOn == false`。`ProductKey.KeyConnection` 派生的产品连接事实仅作诊断，不得参与此门禁。对频不是航线前置条件。任何缺失、未知、异常或不一致事实均为拒绝，且不得触达 DJI `startMission`。该门禁是桌面 `PreflightCheck` 的独立第二层，不能用 UI 按钮可用性或上一次遥测结果替代。
 
 ### 运行时图传互斥
 
