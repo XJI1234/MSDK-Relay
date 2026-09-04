@@ -22,6 +22,7 @@ import com.skycommand.relay.settings.executor.DjiSettingsPort
 import com.skycommand.relay.settings.executor.SettingsDjiCompletion
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.dji.DjiStreamPort
+import com.skycommand.relay.stream.dji.StreamDjiFailure
 import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
 import com.skycommand.relay.device.sdk.DjiSdkCallbacks
@@ -494,7 +495,7 @@ class SimulationDjiAdapter private constructor(
         override fun start(
             config: ValidatedStreamConfig,
             status: (DjiStreamStatus) -> Unit,
-            runtimeFailure: () -> Unit,
+            runtimeFailure: (StreamDjiFailure?) -> Unit,
             completion: StreamDjiCompletion,
         ) {
             check(config.rtmpUrl.isNotBlank()) { "stream URL is required" }

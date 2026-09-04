@@ -92,6 +92,9 @@ data class TelemetrySnapshot(
     val longitude: Double? = null,
     val liveStreaming: Boolean? = null,
     val liveStreamNotice: String? = null,
+    /** Raw safe details from the current live-stream runtime MSDK callback. */
+    val liveStreamRuntimeErrorCode: String? = null,
+    val liveStreamRuntimeErrorDescription: String? = null,
     val liveResolution: String? = null,
     val liveFps: Double? = null,
     val liveVideoBitrateKbps: Double? = null,
@@ -165,6 +168,8 @@ object SnapshotAssembler {
         motorStartFailureError = flightControllerFacts.motorStartFailureError,
         liveStreaming = inputs.stream.djiStreaming,
         liveStreamNotice = inputs.stream.notice,
+        liveStreamRuntimeErrorCode = inputs.stream.runtimeFailure?.errorCode,
+        liveStreamRuntimeErrorDescription = inputs.stream.runtimeFailure?.errorDescription,
         liveResolution = liveMetrics?.resolution,
         liveFps = liveMetrics?.fps,
         liveVideoBitrateKbps = liveMetrics?.videoBitrateKbps,

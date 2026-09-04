@@ -11,6 +11,7 @@ import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.stream.dji.DjiStreamPort
 import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
+import com.skycommand.relay.stream.dji.StreamDjiFailure
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import kotlin.test.Test
@@ -82,8 +83,41 @@ class LiveStreamContractTest {
         fixture.port.startCompletion!!.fail()
         fixture.port.startCompletion!!.fail()
 
-        assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        assertEquals(listOf("reject:Stream operation failed before DJI reported a result"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("live-stream"),
+                    "outcome" to JsonString("INVOCATION_FAILED"),
+                ),
+            ),
+            completion.result,
+        )
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
+    }
+
+    @Test
+    fun preservesTheDjiFailureCodeAndDescriptionInTheStreamCommandResult() {
+        val fixture = Fixture()
+        val completion = Completion()
+        fixture.liveStream.commandHandler().handle(start(), completion)
+
+        fixture.port.startCompletion!!.fail(
+            StreamDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The live stream manager is busy"),
+        )
+
+        assertEquals(listOf("reject:Stream action was rejected"), completion.events)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "domain" to JsonString("live-stream"),
+                    "outcome" to JsonString("ACTION_REJECTED"),
+                    "errorCode" to JsonString("COMMON_SYSTEM_BUSY"),
+                    "errorDescription" to JsonString("The live stream manager is busy"),
+                ),
+            ),
+            completion.result,
+        )
     }
 
     @Test
@@ -95,11 +129,11 @@ class LiveStreamContractTest {
         fixture.liveStream.markDeviceUnavailable()
 
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
-        assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        assertEquals(listOf("reject:Stream operation result was not confirmed"), completion.events)
         assertEquals(0, fixture.port.stopCalls)
         fixture.port.startCompletion!!.succeed()
         assertEquals(StreamLifecycleState.FAILED, fixture.liveStream.snapshot().state)
-        assertEquals(listOf("reject:Stream operation failed"), completion.events)
+        assertEquals(listOf("reject:Stream operation result was not confirmed"), completion.events)
         assertEquals(1, fixture.port.stopCalls)
     }
 
@@ -142,8 +176,13 @@ class LiveStreamContractTest {
 
     private class Completion : CommandCompletion {
         val events = mutableListOf<String>()
+        var result: JsonObject? = null
         override fun succeed(detail: String) { events += "ok:$detail" }
         override fun reject(detail: String) { events += "reject:$detail" }
+        override fun reject(detail: String, result: JsonObject?) {
+            events += "reject:$detail"
+            this.result = result
+        }
     }
 
     private class Port : DjiStreamPort {
@@ -151,7 +190,7 @@ class LiveStreamContractTest {
         var stopCalls = 0
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
-        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: (StreamDjiFailure?) -> Unit, completion: StreamDjiCompletion) {
             startCalls += 1
             startCompletion = completion
         }

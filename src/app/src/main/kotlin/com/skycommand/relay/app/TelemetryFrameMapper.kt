@@ -81,6 +81,8 @@ object TelemetryFrameMapper {
         "motorStartFailureError" to snapshot.motorStartFailureError.json(),
         "liveStreaming" to snapshot.liveStreaming.json(),
         "liveStreamNotice" to snapshot.liveStreamNotice.json(),
+        "liveStreamRuntimeErrorCode" to snapshot.liveStreamRuntimeErrorCode.json(),
+        "liveStreamRuntimeErrorDescription" to snapshot.liveStreamRuntimeErrorDescription.json(),
         "liveResolution" to snapshot.liveResolution.json(),
         "liveFps" to snapshot.liveFps.json(),
         "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),

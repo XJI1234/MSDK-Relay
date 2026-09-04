@@ -27,6 +27,12 @@ liveStream.markSourceUnavailable() -> StreamSnapshot
 
 `live-stream.start` 与 `live-stream.stop` 只有在对应 DJI 操作成功终态到达后才向 gateway 报告成功。接受提交、同步拒绝、失败、超时、取消、重复或延迟回调必须各自产生至多一个不泄漏 DJI 细节的安全结果。
 
+## DJI 回执保真
+
+MSDK `CompletionCallback.onSuccess` 只能产生 `SUCCEEDED`：它仅表示 DJI 已接受/完成该 API 调用，不表示手机已经推流、桌面已出画、飞机已经起飞或任务已经进入执行。MSDK `CompletionCallback.onFailure(IDJIError)` 必须保留其实际 `errorCode()` 与 `description()` 的安全、有界副本，并以结构化 `{ domain: "live-stream", outcome: "ACTION_REJECTED", errorCode, errorDescription }` 交给 gateway。手机本地异常或调用失败使用 `INVOCATION_FAILED`；超时、取消、断线使用 `RESULT_UNCONFIRMED`。后三者绝不能伪装成 DJI 拒绝。
+
+`LiveStreamStatusListener.onError(IDJIError)` 是独立于按钮操作的运行期 MSDK 回调。它必须以 `liveStreamRuntimeErrorCode` 和 `liveStreamRuntimeErrorDescription` 两个遥测字段持续交给桌面，即使它导致 `liveStreaming=false` 也不得丢失；新开始、明确停止、设备不可用或源不可用会清除上一轮运行期错误。它不能覆盖已显示的开始/停止命令回执，也不能被显示为某次命令的 `onFailure`。
+
 ## 3. 所有权与行为规则
 
 只有 `stream-state-store` 持有图传事实，只有 `dji-stream-adapter` 可以调用 DJI 图传方法，所有 DJI 调用都经 `device-connection` 的 `dji-operation-coordinator`。命令处理器和校验器均不持有状态。`startStream` 成功、`LiveStreamStatus.isStreaming` 和桌面播放器分别是三个独立事实：前者只表示 DJI 已接受开始操作；`isStreaming` 是开始成功后的 DJI 推流运行态唯一来源，必须逐值透传为 `true|false|未知`，不得由前者推断；桌面播放器由媒体管线独立确认。回调明确给出 `isStreaming=false` 时，必须立即将图传转入非活动失败态并经遥测发布，不能保留旧的“图传中”。

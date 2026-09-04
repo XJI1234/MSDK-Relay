@@ -24,6 +24,12 @@ data class StreamMetrics(
     val packetCacheLength: Long? = null,
 )
 
+/** Safe, platform-neutral copy of a DJI live-stream runtime error. */
+data class StreamRuntimeFailure(
+    val errorCode: String,
+    val errorDescription: String,
+)
+
 data class StreamSnapshot(
     val revision: Long,
     val state: StreamLifecycleState,
@@ -32,6 +38,8 @@ data class StreamSnapshot(
     val metrics: StreamMetrics?,
     /** Raw Android MSDK LiveStreamStatus.isStreaming; null means not observed for the active stream. */
     val djiStreaming: Boolean? = null,
+    /** Raw details from LiveStreamStatusListener.onError, if the active stream reported one. */
+    val runtimeFailure: StreamRuntimeFailure? = null,
 )
 
 sealed interface StreamStartResult {
@@ -110,6 +118,7 @@ class StreamStateStore private constructor(
                 notice = "Starting",
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = null,
             )
             shouldDrain = enqueue(previous, current)
             StreamStartResult.Accepted(operationId)
@@ -134,6 +143,7 @@ class StreamStateStore private constructor(
                         notice = "Stopping",
                         metrics = null,
                         djiStreaming = null,
+                        runtimeFailure = null,
                     )
                     shouldDrain = enqueue(previous, current)
                     StreamStopResult.Accepted(operationId)
@@ -156,6 +166,7 @@ class StreamStateStore private constructor(
                 notice = "Streaming",
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = null,
             )
         }
     }
@@ -169,12 +180,18 @@ class StreamStateStore private constructor(
                 notice = notice,
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = null,
             )
         }
     }
 
-    fun markFailed(operationId: Long, notice: String = "Stream failed"): StreamUpdateResult {
+    fun markFailed(
+        operationId: Long,
+        notice: String = "Stream failed",
+        runtimeFailure: StreamRuntimeFailure? = null,
+    ): StreamUpdateResult {
         validateNotice(notice)
+        validateRuntimeFailure(runtimeFailure)
         return completeAnyActive(operationId) {
             copy(
                 state = StreamLifecycleState.FAILED,
@@ -182,6 +199,7 @@ class StreamStateStore private constructor(
                 notice = notice,
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = runtimeFailure,
             )
         }
     }
@@ -199,6 +217,7 @@ class StreamStateStore private constructor(
                 notice = notice,
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = null,
             )
             shouldDrain = enqueue(previous, current)
             StreamUpdateResult.Applied(current)
@@ -225,6 +244,7 @@ class StreamStateStore private constructor(
                 notice = notice,
                 metrics = null,
                 djiStreaming = null,
+                runtimeFailure = null,
             )
             shouldDrain = enqueue(previous, current)
             StreamUpdateResult.Applied(current)
@@ -262,6 +282,7 @@ class StreamStateStore private constructor(
                 notice = "DJI reported stream stopped",
                 metrics = null,
                 djiStreaming = false,
+                runtimeFailure = null,
             )
         }
     }
@@ -402,6 +423,12 @@ class StreamStateStore private constructor(
 
     private fun validateNotice(notice: String) {
         require(notice.codePointCount(0, notice.length) <= 256 && notice.none(Char::isISOControl))
+    }
+
+    private fun validateRuntimeFailure(failure: StreamRuntimeFailure?) {
+        if (failure == null) return
+        require(failure.errorCode.isNotBlank() && failure.errorCode.codePointCount(0, failure.errorCode.length) <= 128 && failure.errorCode.none(Char::isISOControl))
+        require(failure.errorDescription.isNotBlank() && failure.errorDescription.codePointCount(0, failure.errorDescription.length) <= 512 && failure.errorDescription.none(Char::isISOControl))
     }
 
     companion object {

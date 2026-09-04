@@ -8,6 +8,13 @@ fun interface DjiOperation {
     fun run(completion: OperationCompletion)
 
     /**
+     * A stable, non-null marker permits this containment operation to replace a
+     * timed-out operation with the same marker. Normal DJI operations must use
+     * the default: a missing receipt keeps the shared slot quarantined.
+     */
+    fun unconfirmedRetryMarker(): Any? = null
+
+    /**
      * Runs after this action has timed out or been cancelled after DJI may have received it.
      * The action may use its already-established authoritative state observation to settle the slot.
      */
@@ -85,7 +92,21 @@ class DjiOperationCoordinator private constructor(
         if (timeoutMillis !in 1_000..60_000) return SubmissionResult.Rejected
         val entry = Entry(action, timeoutMillis, listener)
         val shouldStart = lock.withLock {
-            if (hardwareOutcomeUnconfirmed) return SubmissionResult.Rejected
+            if (hardwareOutcomeUnconfirmed) {
+                val unresolved = running ?: return SubmissionResult.Rejected
+                val replacementMarker = runCatching { action.unconfirmedRetryMarker() }.getOrNull()
+                val unresolvedMarker = runCatching { unresolved.action.unconfirmedRetryMarker() }.getOrNull()
+                if (replacementMarker == null || replacementMarker != unresolvedMarker) {
+                    return SubmissionResult.Rejected
+                }
+                // This is deliberately limited to an equivalent containment command.
+                // Its prior terminal result was already reported as unconfirmed;
+                // a late DJI callback remains isolated from the replacement request.
+                unresolved.hardwareSettled = true
+                unresolved.superseded = true
+                running = null
+                hardwareOutcomeUnconfirmed = false
+            }
             pending.addLast(entry)
             running == null
         }
@@ -229,8 +250,15 @@ class DjiOperationCoordinator private constructor(
         var listener: OperationResultListener? = null
         var lateCompletion: DjiOperation? = null
         var startNext = false
+        var completed = false
         lock.withLock {
-            if (running !== entry || entry.hardwareSettled) return
+            if (running !== entry || entry.hardwareSettled) {
+                if (entry.superseded && !entry.lateCompletionReported) {
+                    entry.lateCompletionReported = true
+                    lateCompletion = entry.action
+                }
+                return@withLock
+            }
             entry.hardwareSettled = true
             if (!entry.terminalReported) {
                 entry.terminalReported = true
@@ -243,6 +271,11 @@ class DjiOperationCoordinator private constructor(
             running = null
             hardwareOutcomeUnconfirmed = false
             startNext = pending.isNotEmpty()
+            completed = true
+        }
+        if (!completed) {
+            lateCompletion?.let { runCatching { it.onLateDjiCompletion(outcome) } }
+            return
         }
         runCatching { timeout?.cancel() }
         listener?.let { runCatching { it.onComplete(outcome) } }
@@ -285,6 +318,8 @@ class DjiOperationCoordinator private constructor(
         var terminalReported: Boolean = false,
         var hardwareSettled: Boolean = false,
         var mayHaveInvokedDji: Boolean = false,
+        var superseded: Boolean = false,
+        var lateCompletionReported: Boolean = false,
     )
 
     companion object {

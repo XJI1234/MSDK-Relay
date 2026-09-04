@@ -5,7 +5,10 @@ import com.skycommand.relay.device.operation.OperationCancellationHandle
 import com.skycommand.relay.gateway.command.CommandCompletion
 import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.protocol.CommandFrame
+import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.stream.command.StreamActionCompletion
+import com.skycommand.relay.stream.command.StreamActionFailure
 import com.skycommand.relay.stream.command.StreamActionResult
 import com.skycommand.relay.stream.command.StreamActionTerminalOutcome
 import com.skycommand.relay.stream.command.StreamCommandActions
@@ -19,6 +22,7 @@ import com.skycommand.relay.stream.dji.DjiStreamStartResult
 import com.skycommand.relay.stream.dji.DjiStreamStopResult
 import com.skycommand.relay.stream.dji.StreamDjiTerminalListener
 import com.skycommand.relay.stream.dji.StreamDjiTerminalOutcome
+import com.skycommand.relay.stream.dji.StreamDjiFailure
 import com.skycommand.relay.stream.state.Registration
 import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.stream.state.StreamLifecycleState
@@ -107,18 +111,26 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
                 return StreamActionResult.Rejected
             }
             val tracked = TrackedOperation()
-            val result = adapter.start(config, StreamDjiTerminalListener {
-                completeTrackedOperation(tracked)
-                completion.complete(it.toActionOutcome())
+            val result = adapter.start(config, object : StreamDjiTerminalListener {
+                override fun onCompleted(outcome: StreamDjiTerminalOutcome) = onCompleted(outcome, null)
+
+                override fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) {
+                    completeTrackedOperation(tracked)
+                    completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
+                }
             })
             track(result, tracked)
         }
 
         override fun stop(completion: StreamActionCompletion): StreamActionResult = lifecycleLock.withLock {
             val tracked = TrackedOperation()
-            val result = adapter.stop(StreamDjiTerminalListener {
-                completeTrackedOperation(tracked)
-                completion.complete(it.toActionOutcome())
+            val result = adapter.stop(object : StreamDjiTerminalListener {
+                override fun onCompleted(outcome: StreamDjiTerminalOutcome) = onCompleted(outcome, null)
+
+                override fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) {
+                    completeTrackedOperation(tracked)
+                    completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
+                }
             })
             track(result, tracked)
         }
@@ -164,12 +176,22 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
     ) : StreamActionCompletion {
         private val finished = AtomicBoolean(false)
 
-        override fun complete(outcome: StreamActionTerminalOutcome) {
+        override fun complete(outcome: StreamActionTerminalOutcome) = complete(outcome, null)
+
+        override fun complete(outcome: StreamActionTerminalOutcome, djiFailure: StreamActionFailure?) {
             if (!finished.compareAndSet(false, true)) return
-            if (outcome == StreamActionTerminalOutcome.SUCCEEDED) {
-                completion.succeed(successDetail(commandName))
-            } else {
-                completion.reject("Stream operation failed")
+            when (outcome) {
+                StreamActionTerminalOutcome.SUCCEEDED -> completion.succeed(successDetail(commandName))
+                StreamActionTerminalOutcome.FAILED -> if (djiFailure === null) {
+                    completion.reject("Stream operation failed before DJI reported a result", terminalResult("INVOCATION_FAILED"))
+                } else {
+                    completion.reject("Stream action was rejected", terminalResult("ACTION_REJECTED", djiFailure))
+                }
+                StreamActionTerminalOutcome.TIMED_OUT,
+                StreamActionTerminalOutcome.CANCELLED -> completion.reject(
+                    "Stream operation result was not confirmed",
+                    terminalResult("RESULT_UNCONFIRMED"),
+                )
             }
         }
 
@@ -186,7 +208,22 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
             "live-stream.stop" -> "Stream stopped"
             else -> "Stream operation completed"
         }
+
+        private fun terminalResult(outcome: String, djiFailure: StreamActionFailure? = null): JsonObject =
+            JsonObject(
+                buildMap {
+                    put("domain", JsonString("live-stream"))
+                    put("outcome", JsonString(outcome))
+                    djiFailure?.let {
+                        put("errorCode", JsonString(it.errorCode))
+                        put("errorDescription", JsonString(it.errorDescription))
+                    }
+                },
+            )
     }
+
+    private fun StreamDjiFailure.toActionFailure(): StreamActionFailure =
+        StreamActionFailure(errorCode, errorDescription)
 
     private fun DjiStreamStartResult.toActionResult(): StreamActionResult = when (this) {
         is DjiStreamStartResult.Accepted -> StreamActionResult.Accepted

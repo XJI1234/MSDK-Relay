@@ -28,7 +28,7 @@ Gradle 路径：`:wayline-mission`
 
 - 文件暂存成功不代表已上传，上传成功不代表任务已开始。
 - 当前生产业务一份 KMZ 任务只能包含一条 DJI WPML `wayline`。设备侧上传边界必须在写缓存和触达 DJI 前拒绝缺少、重复或包含零条/多条 `waylineId` 的归档；不得依赖 `startMission` 的未选择航线重载或空 `waylineIds` 列表来决定执行对象。该基数检查只消除执行对象歧义，不替代 DJI 对 WPML、机型适配或飞行条件的完整校验。
-- `wayline.start` 只有一个 DJI 飞控命令：DJI 负责起飞、按 KMZ 的入场策略飞往首航点并连续执行航线。手机端不得把它拆成二次起飞、虚拟摇杆导航或第二次 `startMission` 调用。
+- `wayline.start` 只有一个 DJI 飞控命令：DJI 负责起飞、按 KMZ 的入场策略飞往首航点并连续执行航线。手机端只保留当前文件已上传、任务阶段合法和同设备单操作这些业务不变量；不得以本地遥控器、飞控、机型能力、电量或地面遥测拒绝调用，也不得把它拆成二次起飞、虚拟摇杆导航或第二次 `startMission` 调用。
 - `startMission` 的成功回调只表示 DJI 接受了启动请求，绝不表示飞行器已到达首航点或已开始飞行航线。
 - 仅 DJI 的 `ENTER_WAYLINE` 原始状态可确认飞行器已进入首航点。收到该状态时只产生 `START_POINT_REACHED`，任务执行状态必须保持 `STARTING`，不得把入场当成已经开始执行航线。
 - 仅 DJI 的 `EXECUTING` 原始状态可确认航线开始执行。已见过首点后的首次 `EXECUTING` 产生 `ROUTE_EXECUTION_STARTED`，门面此时才把当前任务写成 `EXECUTING`。没有收到 `ENTER_WAYLINE` 而直接收到 `EXECUTING` 时，只能确认 `ROUTE_EXECUTION_STARTED`，不得补造 `START_POINT_REACHED`；必须记录不含敏感数据的 `ENTRY_STATE_MISSING` 诊断。两条事实可以紧挨着到达，但不得由一次 `ENTER_WAYLINE` 同时合成。

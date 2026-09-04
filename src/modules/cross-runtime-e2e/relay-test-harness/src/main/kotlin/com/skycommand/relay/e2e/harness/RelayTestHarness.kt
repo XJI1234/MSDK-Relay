@@ -76,7 +76,6 @@ import com.skycommand.relay.telemetry.snapshot.TelemetryInputs
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
-import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
@@ -292,7 +291,7 @@ class RelayTestHarness private constructor(
             val storage = InMemoryMissionStorage()
             val wayline = WaylineMission.create(
                 WaylineMissionDependencies(
-                    storage, storage, ports.missionUpload, ports.missionControl, MissionStartSafetyGate { true }, ports.executionSignals,
+                    storage, storage, ports.missionUpload, ports.missionControl, ports.executionSignals,
                     device.operations(), uploadTimeoutMillis = 1_000, controlTimeoutMillis = 1_000,
                 ),
             )

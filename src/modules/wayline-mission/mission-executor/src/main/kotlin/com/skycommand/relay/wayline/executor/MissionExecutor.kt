@@ -63,11 +63,6 @@ interface MissionControlPort {
     fun stop(completion: ControlCompletion)
 }
 
-/** The composition root supplies the current physical safety facts before startMission. */
-fun interface MissionStartSafetyGate {
-    fun allowsStart(): Boolean
-}
-
 fun interface ExecutionTerminalListener {
     fun onCompleted(outcome: ExecutionTerminalOutcome)
     fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) = onCompleted(outcome)
@@ -91,7 +86,6 @@ enum class ExecutionRejection {
     INVALID_STATE,
     ALREADY_ACTIVE,
     OPERATION_UNCONFIRMED,
-    SAFETY_CHECK_FAILED,
     OPERATION_REJECTED,
 }
 
@@ -101,7 +95,6 @@ class MissionExecutor private constructor(
     private val coordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
     private val sourceRevision: AtomicLong,
-    private val startSafetyGate: MissionStartSafetyGate,
 ) {
     private val lock = ReentrantLock()
     private var active: ActiveCommand? = null
@@ -166,10 +159,6 @@ class MissionExecutor private constructor(
         if (!command.allowedFrom(snapshot.execution)) {
             return ExecutionRequestResult.Rejected(ExecutionRejection.INVALID_STATE)
         }
-        if (command == Command.START && !allowsStartSafely()) {
-            return ExecutionRequestResult.Rejected(ExecutionRejection.SAFETY_CHECK_FAILED)
-        }
-
         val operation = ActiveCommand(Any(), missionRevision, snapshot.deviceGeneration, snapshot.execution, command, listener)
         lock.withLock {
             if (active != null) return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
@@ -178,7 +167,11 @@ class MissionExecutor private constructor(
         applyState(operation, command.pendingState)
 
         val submission = coordinator.submit(
-            action = DjiOperation { operationCompletion ->
+            action = object : DjiOperation {
+                override fun unconfirmedRetryMarker(): Any? =
+                    if (operation.command == Command.STOP) StopRetryMarker(operation.missionRevision, operation.deviceGeneration) else null
+
+                override fun run(operationCompletion: OperationCompletion) {
                 operation.installHardwareConfirmation(operationCompletion::confirmHardwareSettled)
                 try {
                     val completion = object : ControlCompletion {
@@ -209,6 +202,7 @@ class MissionExecutor private constructor(
                     }
                 } catch (_: Throwable) {
                     operationCompletion.fail()
+                }
                 }
             },
             timeoutMillis = timeoutMillis,
@@ -276,8 +270,6 @@ class MissionExecutor private constructor(
         else -> operation.previousState
     }
 
-    private fun allowsStartSafely(): Boolean = runCatching { startSafetyGate.allowsStart() }.getOrDefault(false)
-
     private fun applyState(operation: ActiveCommand, state: ExecutionState) {
         runCatching {
             stateStore.apply(
@@ -307,7 +299,7 @@ class MissionExecutor private constructor(
         START(ExecutionState.STARTING, ExecutionState.STARTING, setOf(ExecutionState.NOT_STARTED, ExecutionState.FAILED)),
         PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING), ExecutionState.PAUSED),
         RESUME(ExecutionState.PAUSED, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED), ExecutionState.EXECUTING),
-        STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED));
+        STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED, ExecutionState.STOPPING));
 
         val requiresReceiptConfirmation: Boolean get() = observedState != null
 
@@ -338,6 +330,11 @@ class MissionExecutor private constructor(
         }
     }
 
+    private data class StopRetryMarker(
+        val missionRevision: Long,
+        val deviceGeneration: Long,
+    )
+
     companion object {
         fun create(
             stateStore: MissionStateStore,
@@ -345,8 +342,7 @@ class MissionExecutor private constructor(
             coordinator: DjiOperationCoordinator,
             timeoutMillis: Long = 30_000,
             executionSourceRevision: AtomicLong = AtomicLong(0),
-            startSafetyGate: MissionStartSafetyGate,
-        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis, executionSourceRevision, startSafetyGate)
+        ): MissionExecutor = MissionExecutor(stateStore, controlPort, coordinator, timeoutMillis, executionSourceRevision)
     }
 
     private fun OperationOutcome.toTerminalOutcome(): ExecutionTerminalOutcome = when (this) {

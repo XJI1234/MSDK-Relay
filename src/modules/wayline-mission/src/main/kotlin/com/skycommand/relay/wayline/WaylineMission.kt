@@ -28,7 +28,6 @@ import com.skycommand.relay.wayline.executor.ExecutionTerminalOutcome
 import com.skycommand.relay.wayline.executor.MissionControlFailure
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.executor.MissionExecutor
-import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
@@ -65,7 +64,6 @@ data class WaylineMissionDependencies(
     val contentReader: StagedMissionContentReader,
     val uploadPort: MissionUploadPort,
     val controlPort: MissionControlPort,
-    val startSafetyGate: MissionStartSafetyGate,
     val executionSignalSource: MissionExecutionSignalSource,
     val operationCoordinator: DjiOperationCoordinator,
     val uploadTimeoutMillis: Long = 30_000,
@@ -81,7 +79,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private val executionStateRevision = AtomicLong(0)
     private val phaseListeners = mutableSetOf<MissionPhaseListener>()
     private var incomingTransferActive = false
-    private val groundedReadinessGate = dependencies.startSafetyGate
     private val executionSignalSource = dependencies.executionSignalSource
     private val staging = MissionStaging.create(dependencies.stagingStorage)
     private val state = MissionStateStore.create(dependencies.diagnosticSink)
@@ -98,7 +95,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         coordinator = dependencies.operationCoordinator,
         timeoutMillis = dependencies.controlTimeoutMillis,
         executionSourceRevision = executionStateRevision,
-        startSafetyGate = dependencies.startSafetyGate,
     )
     private val flightPhase = MissionFlightPhase.create(MissionPhaseSink(::acceptPhaseFact))
     @Suppress("unused")
@@ -433,7 +429,7 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
             val execution = state.snapshot().execution
             val canReplace = execution == ExecutionState.NOT_STARTED ||
                 execution == ExecutionState.FINISHED ||
-                (execution == ExecutionState.FAILED && runCatching { groundedReadinessGate.allowsStart() }.getOrDefault(false))
+                execution == ExecutionState.FAILED
             return activeOperations.isEmpty() && canReplace
         }
 

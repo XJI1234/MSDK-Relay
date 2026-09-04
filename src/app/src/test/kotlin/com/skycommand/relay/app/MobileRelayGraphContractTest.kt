@@ -20,26 +20,30 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
-    fun missionStartSafetyGateDoesNotTreatPairingAsAFlightReadinessFact() {
+    fun waylineMissionDoesNotInjectALocalDjiSafetyJudge() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
         ).first { it.exists() }.readText()
 
-        assertFalse(source.contains("deviceSnapshot.pairing == PairingState.PAIRED"))
+        val waylineWiring = source.substringAfter("val wayline = WaylineMission.create(")
+            .substringBefore("val stream = LiveStream.create(")
+        assertFalse(waylineWiring.contains("MissionStartSafetyGate"))
+        assertFalse(waylineWiring.contains("device.snapshot()"))
+        assertFalse(waylineWiring.contains("flight.snapshot()"))
     }
 
     @Test
-    fun missionStartSafetyGateDoesNotAuthorizeFromDiagnosticProductConnection() {
+    fun waylineMissionDoesNotUseCapabilityOrPhysicalTelemetryAsAStartGate() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
         ).first { it.exists() }.readText()
-        val safetyGate = source.substringAfter("startSafetyGate = MissionStartSafetyGate {")
-            .substringBefore("executionSignalSource = waylineAdapter")
+        val waylineWiring = source.substringAfter("val wayline = WaylineMission.create(")
+            .substringBefore("val stream = LiveStream.create(")
 
-        assertTrue(safetyGate.contains("device.capabilities().canRunWayline"))
-        assertFalse(safetyGate.contains("deviceSnapshot.aircraft"))
+        assertFalse(waylineWiring.contains("device.capabilities().canRunWayline"))
+        assertFalse(waylineWiring.contains("PairingState.PAIRED"))
     }
 
     @Test
@@ -75,7 +79,8 @@ class MobileRelayGraphContractTest {
         val flightFeed = source.substringAfter("feed({ flight.snapshot() })")
             .substringBefore("feed({ stream.snapshot() })")
 
-        assertTrue(flightFeed.contains("flightControl.observeDjiFlightState(flight.snapshot().toFlightActionState())"))
+        assertTrue(flightFeed.contains("val snapshot = flight.snapshot()"))
+        assertTrue(flightFeed.contains("flightControl.observeDjiFlightState(snapshot.toFlightActionState())"))
         assertTrue(flightFeed.indexOf("flightControl.observeDjiFlightState") < flightFeed.indexOf("changed()"))
     }
 

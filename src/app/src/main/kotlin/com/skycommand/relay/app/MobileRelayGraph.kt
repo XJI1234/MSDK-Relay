@@ -80,7 +80,6 @@ import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import com.skycommand.relay.wayline.WaylineMission
 import com.skycommand.relay.wayline.WaylineMissionDependencies
 import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
-import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.staging.android.AndroidMissionStagingStorage
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -122,6 +121,7 @@ class MobileRelayGraph private constructor(
     private val foregroundPort: AndroidForegroundServicePort,
     private val executor: ScheduledThreadPoolExecutor,
     private val journal: DiagnosticJournal,
+    private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
@@ -144,6 +144,7 @@ class MobileRelayGraph private constructor(
 
     fun stop(): RuntimeStopResult {
         cancelUsbWatch()
+        flightTelemetryDiagnostics.reset()
         synchronized(flightTelemetryLifecycleLock) {
             flightTelemetryInvalidated = false
             lastFlightControllerLink = LinkState.UNKNOWN
@@ -365,6 +366,7 @@ class MobileRelayGraph private constructor(
         runCatching { videoTransports.close() }
         runCatching { whipStream.close() }
         runCatching { flightControl.close() }
+        runCatching { flightTelemetryDiagnostics.reset() }
         runCatching { deviceSettings.close() }
         runCatching { stream.close() }
         runCatching { waylineAdapter.close() }
@@ -401,6 +403,7 @@ class MobileRelayGraph private constructor(
                 persistence = diagnosticStore.persistence(),
                 recoveredEvents = diagnosticStore.restore(),
             )
+            val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),
@@ -466,17 +469,6 @@ class MobileRelayGraph private constructor(
                     contentReader = staging,
                     uploadPort = waylineAdapter,
                     controlPort = waylineAdapter,
-                    startSafetyGate = MissionStartSafetyGate {
-                        val deviceSnapshot = device.snapshot()
-                        val flightSnapshot = flight.snapshot()
-                        deviceSnapshot.sdkAvailability == SdkAvailability.READY &&
-                            deviceSnapshot.remoteController == LinkState.CONNECTED &&
-                            deviceSnapshot.flightController == LinkState.CONNECTED &&
-                            device.capabilities().canRunWayline &&
-                            flightSnapshot.isFlying == false &&
-                            flightSnapshot.motorsOn == false &&
-                            (flightSnapshot.batteryPercent ?: -1) >= 20
-                    },
                     executionSignalSource = waylineAdapter,
                     operationCoordinator = device.operations(),
                     uploadTimeoutMillis = 60_000,
@@ -595,7 +587,9 @@ class MobileRelayGraph private constructor(
                 },
                 feed({ flight.snapshot() }) { changed ->
                     flight.onChanged {
-                        flightControl.observeDjiFlightState(flight.snapshot().toFlightActionState())
+                        val snapshot = flight.snapshot()
+                        flightTelemetryDiagnostics.record(snapshot)
+                        flightControl.observeDjiFlightState(snapshot.toFlightActionState())
                         changed()
                     }.let { CloseableRegistration(it::unregister) }
                 },
@@ -682,7 +676,7 @@ class MobileRelayGraph private constructor(
             )
             return MobileRelayGraph(
                 runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, journal, permissionAdapter,
+                staging, foregroundPort, executor, journal, flightTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
 

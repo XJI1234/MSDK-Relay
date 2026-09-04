@@ -105,6 +105,28 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
+    fun permitsOnlyTheSameDeclaredContainmentRetryAfterAnUnconfirmedOutcome() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = MarkedAction(marker = "mission-1/device-1")
+        val mismatched = MarkedAction(marker = "mission-2/device-1")
+        val retry = MarkedAction(marker = "mission-1/device-1")
+
+        coordinator.submit(first, 1_000) { }
+        executor.runNext()
+        scheduler.fireNext()
+
+        assertIs<SubmissionResult.Rejected>(coordinator.submit(mismatched, 1_000) { })
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(retry, 1_000) { })
+        executor.runNext()
+        assertEquals(1, retry.starts)
+
+        first.succeed()
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+    }
+
+    @Test
     fun notifiesOnlyTheTimedOutActionAfterReportingItsTerminalOutcome() {
         val executor = ManualExecutor()
         val scheduler = ManualScheduler()
@@ -161,6 +183,25 @@ class DjiOperationCoordinatorContractTest {
         fun fail() = checkNotNull(completion).fail()
 
         fun confirmHardwareSettled() = checkNotNull(completion).confirmHardwareSettled()
+    }
+
+    private class MarkedAction(
+        private val marker: String,
+    ) : DjiOperation {
+        var starts = 0
+        val lateOutcomes = mutableListOf<OperationOutcome>()
+        private var completion: OperationCompletion? = null
+
+        override fun run(completion: OperationCompletion) {
+            starts += 1
+            this.completion = completion
+        }
+
+        override fun unconfirmedRetryMarker(): Any = marker
+
+        override fun onLateDjiCompletion(outcome: OperationOutcome) { lateOutcomes += outcome }
+
+        fun succeed() = checkNotNull(completion).succeed()
     }
 
     private class ManualExecutor : OperationExecutor {

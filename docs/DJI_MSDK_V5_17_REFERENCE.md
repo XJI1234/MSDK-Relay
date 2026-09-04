@@ -230,7 +230,7 @@
 
 `LiveStreamStatus` 当前一对一映射为：`isStreaming`、`resolution.width/height`、`fps`、`vbps`、`packetLoss`、`packetCacheLen`、`rtt`。其中 `vbps`、`packetLoss`、`packetCacheLen` 和 `rtt` 均保持 DJI 返回的原始状态值；桌面播放器状态必须由桌面媒体链路独立报告。开始成功后监听每次状态变化；若 MSDK 明确返回 `isStreaming=false`，图传立刻进入非活动失败态并同步到桌面。图传启动不使用飞控连接作为前置条件，原因不是绕过安全，而是图传与飞控是独立状态域；具体可否开始由 `live-stream` 模块的能力门禁和 MSDK 回调决定。
 
-**当前生产启动门禁**：这是项目在请求 `startStream` 前的保守组合规则，不把它伪称为 `ILiveStreamManager` 单独声明的机型能力。仅当 `SdkAvailability.READY`、`ProductKey.KeyConnection == true`、`AirLinkKey.KeyConnection == true`，且 `CameraKey.KeyConnection(LEFT_OR_MAIN) == true` 时，`canStreamVideo` 才允许发送 `live-stream.start`。`FlightControllerKey.KeyConnection`、电量、航线和对频不参与该图传门禁。任一 Key 为 `false` 或 `null` 时，项目只报告“当前图传链路未就绪”；它不等于机型永久不支持。门禁放行后，`startStream` callback、`LiveStreamStatus.isStreaming` 和桌面首帧仍是三项独立后续事实。
+**当前生产启动门禁**：这是项目在请求 `startStream` 前的保守组合规则，不把它伪称为 `ILiveStreamManager` 单独声明的机型能力。仅当 `SdkAvailability.READY`、`AirLinkKey.KeyConnection == true`，且 `CameraKey.KeyConnection(LEFT_OR_MAIN) == true` 时，`canStreamVideo` 才允许发送 `live-stream.start`。`ProductKey.KeyConnection` 仅作为诊断事实保留，不参与图传门禁；`FlightControllerKey.KeyConnection`、电量、航线和对频同样不参与该图传门禁。任一图传 Key 为 `false` 或 `null` 时，项目只报告“当前图传链路未就绪”；它不等于机型永久不支持。门禁放行后，`startStream` callback、`LiveStreamStatus.isStreaming` 和桌面首帧仍是三项独立后续事实。
 
 **官方来源**：[ILiveStreamManager](https://developer.dji.com/api-reference-v5/android-api/Components/IMediaDataCenter/ILiveStreamManager.html)。
 

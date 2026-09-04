@@ -13,7 +13,6 @@ import com.skycommand.relay.protocol.JsonBoolean
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.wayline.executor.ControlCompletion
-import com.skycommand.relay.wayline.executor.MissionStartSafetyGate
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
@@ -133,16 +132,13 @@ class WaylineMissionContractTest {
     }
 
     @Test
-    fun allowsReplacementAfterFailureOnlyWhenGroundedReadinessIsConfirmedAgain() {
+    fun allowsReplacementAfterFailureWithoutRequiringLocalDeviceSafetyTelemetry() {
         val fixture = Fixture()
         stageTransferred(fixture)
         fixture.mission.markDeviceUnavailable()
-        fixture.allowStart = false
         val replacement = fixture.mission.missionSink()
         val metadata = GatewayMissionMetadata("replacement", "replacement.kmz", 3, hash(byteArrayOf(4, 5, 6)))
 
-        assertEquals(MissionSinkResult.Rejected, replacement.begin(metadata))
-        fixture.allowStart = true
         assertEquals(MissionSinkResult.Accepted, replacement.begin(metadata))
         replacement.abort(com.skycommand.relay.gateway.mission.MissionAbortReason.TRANSFER_FAILED)
     }
@@ -203,9 +199,8 @@ class WaylineMissionContractTest {
     }
 
     @Test
-    fun rejectsStartWhenThePhoneSafetyGateDoesNotConfirmGroundedReadyState() {
+    fun submitsStartToDjiWhenTheCurrentUploadedMissionIsInALegalState() {
         val fixture = Fixture()
-        fixture.allowStart = false
         stageTransferred(fixture)
         fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
         fixture.upload.completeSuccess()
@@ -213,9 +208,9 @@ class WaylineMissionContractTest {
 
         fixture.mission.commandHandler().handle(confirm("wayline.start"), completion)
 
-        assertEquals(ExecutionState.NOT_STARTED, fixture.mission.snapshot().execution)
-        assertEquals(false, fixture.control.hasStarted)
-        assertEquals(listOf("reject:Mission operation was rejected"), completion.events)
+        assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+        assertEquals(true, fixture.control.hasStarted)
+        assertEquals(emptyList(), completion.events)
     }
 
     @Test
@@ -560,7 +555,6 @@ class WaylineMissionContractTest {
         val control = ControlPort()
         val signals = SignalSource()
         val scheduler = Scheduler()
-        var allowStart = true
         val mission = WaylineMission.create(
             WaylineMissionDependencies(
                 stagingStorage = storage,
@@ -569,7 +563,6 @@ class WaylineMissionContractTest {
                 },
                 uploadPort = upload,
                 controlPort = control,
-                startSafetyGate = MissionStartSafetyGate { allowStart },
                 executionSignalSource = signals,
                 operationCoordinator = DjiOperationCoordinator.create(
                     executor = OperationExecutor { it() },

@@ -16,7 +16,14 @@ interface StreamCommandActions {
 
 fun interface StreamActionCompletion {
     fun complete(outcome: StreamActionTerminalOutcome)
+
+    fun complete(outcome: StreamActionTerminalOutcome, failure: StreamActionFailure?) = complete(outcome)
 }
+
+data class StreamActionFailure(
+    val errorCode: String,
+    val errorDescription: String,
+)
 
 enum class StreamActionTerminalOutcome {
     SUCCEEDED,
@@ -86,7 +93,11 @@ class StreamCommandHandler private constructor(
         private val completed = AtomicBoolean(false)
 
         override fun complete(outcome: StreamActionTerminalOutcome) {
-            if (completed.compareAndSet(false, true)) delegate.complete(outcome)
+            complete(outcome, null)
+        }
+
+        override fun complete(outcome: StreamActionTerminalOutcome, failure: StreamActionFailure?) {
+            if (completed.compareAndSet(false, true)) delegate.complete(outcome, failure)
         }
     }
 

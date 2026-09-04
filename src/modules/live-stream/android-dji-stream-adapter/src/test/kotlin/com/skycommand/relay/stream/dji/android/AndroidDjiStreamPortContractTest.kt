@@ -2,6 +2,7 @@ package com.skycommand.relay.stream.dji.android
 
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
+import com.skycommand.relay.stream.dji.StreamDjiFailure
 import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.state.StreamMetrics
 import kotlin.test.Test
@@ -85,6 +86,19 @@ class AndroidDjiStreamPortContractTest {
         requireNotNull(platform.listener).onError()
 
         assertEquals(1, runtimeFailures)
+        assertEquals(0, platform.stopCalls)
+    }
+
+    @Test fun forwardsTheOriginalDjiRuntimeErrorWithoutStartingAnotherOperation() {
+        val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
+        val failures = mutableListOf<StreamDjiFailure?>()
+        val expected = StreamDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The live stream manager is busy")
+
+        port.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, { failures += it }, Completion())
+        requireNotNull(platform.startCompletion).succeed()
+        requireNotNull(platform.listener).onError(expected)
+
+        assertEquals(listOf<StreamDjiFailure?>(expected), failures)
         assertEquals(0, platform.stopCalls)
     }
 

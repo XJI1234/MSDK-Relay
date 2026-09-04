@@ -12,11 +12,27 @@ import com.skycommand.relay.wayline.state.UploadState
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 
 class MissionExecutorContractTest {
+
+    @Test
+    fun containsNoLocalDeviceSafetyGateBeforeCallingDjiStartMission() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/wayline/executor/MissionExecutor.kt"),
+            Path("src/modules/wayline-mission/mission-executor/src/main/kotlin/com/skycommand/relay/wayline/executor/MissionExecutor.kt"),
+        ).first { it.exists() }.readText()
+
+        assertFalse(source.contains("MissionStartSafetyGate"))
+        assertFalse(source.contains("SAFETY_CHECK_FAILED"))
+    }
 
     @Test
     fun reportsExactlyOneSafeTerminalOutcomeToTheAcceptedCaller() {
@@ -105,20 +121,31 @@ class MissionExecutorContractTest {
             ExecutionRejection.OPERATION_UNCONFIRMED,
             assertIs<ExecutionRequestResult.Rejected>(fixture.executor.pause()).reason,
         )
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                4,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.PAUSED,
-            ),
-        )
+        fixture.setExecution(ExecutionState.PAUSED)
         fixture.executor.observeExecutionState(
             ExecutionState.PAUSED,
             fixture.store.snapshot().missionRevision!!,
             fixture.store.snapshot().deviceGeneration,
         )
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
+    }
+
+    @Test
+    fun allowsStopRetryAfterItsDjiReceiptIsLost() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+        assertEquals(
+            ExecutionRejection.ALREADY_ACTIVE,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.stop()).reason,
+        )
+        assertEquals(1, fixture.port.stopCalls)
+        fixture.scheduler.fire()
+
+        assertEquals(ExecutionState.STOPPING, fixture.store.snapshot().execution)
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+        assertEquals(2, fixture.port.stopCalls)
     }
 
     @Test
@@ -157,14 +184,7 @@ class MissionExecutorContractTest {
         fixture.markExecutionStarted()
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                4,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.PAUSED,
-            ),
-        )
+        fixture.setExecution(ExecutionState.PAUSED)
         operations.runNext()
         fixture.scheduler.fire()
 
@@ -180,14 +200,7 @@ class MissionExecutorContractTest {
         fixture.markExecutionStarted()
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                4,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.PAUSED,
-            ),
-        )
+        fixture.setExecution(ExecutionState.PAUSED)
         fixture.executor.observeExecutionState(
             ExecutionState.PAUSED,
             fixture.store.snapshot().missionRevision!!,
@@ -202,14 +215,7 @@ class MissionExecutorContractTest {
     fun doesNotRepeatResumeAfterItsDjiReceiptIsLost() {
         val fixture = Fixture()
         fixture.markExecutionStarted()
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                4,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.PAUSED,
-            ),
-        )
+        fixture.setExecution(ExecutionState.PAUSED)
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
         fixture.scheduler.fire()
@@ -218,14 +224,7 @@ class MissionExecutorContractTest {
             ExecutionRejection.OPERATION_UNCONFIRMED,
             assertIs<ExecutionRequestResult.Rejected>(fixture.executor.resume()).reason,
         )
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                5,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.EXECUTING,
-            ),
-        )
+        fixture.setExecution(ExecutionState.EXECUTING)
         fixture.executor.observeExecutionState(
             ExecutionState.EXECUTING,
             fixture.store.snapshot().missionRevision!!,
@@ -238,24 +237,10 @@ class MissionExecutorContractTest {
     fun acceptsPauseWhenTheMatchingResumeStateArrivedBeforeTheResumeReceiptTimedOut() {
         val fixture = Fixture()
         fixture.markExecutionStarted()
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                4,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.PAUSED,
-            ),
-        )
+        fixture.setExecution(ExecutionState.PAUSED)
 
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
-        fixture.store.apply(
-            MissionStateEvent.ExecutionChanged(
-                5,
-                fixture.store.snapshot().missionRevision!!,
-                fixture.store.snapshot().deviceGeneration,
-                ExecutionState.EXECUTING,
-            ),
-        )
+        fixture.setExecution(ExecutionState.EXECUTING)
         fixture.executor.observeExecutionState(
             ExecutionState.EXECUTING,
             fixture.store.snapshot().missionRevision!!,
@@ -310,11 +295,17 @@ class MissionExecutorContractTest {
         val store = MissionStateStore.create()
         val port = Port()
         val scheduler = Scheduler()
+        private val executionStateRevision = AtomicLong(0)
         private val coordinator = DjiOperationCoordinator.create(
             executor = operationExecutor,
             scheduler = scheduler,
         )
-        val executor = MissionExecutor.create(store, port, coordinator, startSafetyGate = MissionStartSafetyGate { true })
+        val executor = MissionExecutor.create(
+            stateStore = store,
+            controlPort = port,
+            coordinator = coordinator,
+            executionSourceRevision = executionStateRevision,
+        )
 
         init {
             if (ready) {
@@ -340,12 +331,16 @@ class MissionExecutorContractTest {
         }
 
         fun markExecutionStarted() {
+            setExecution(ExecutionState.EXECUTING)
+        }
+
+        fun setExecution(state: ExecutionState) {
             store.apply(
                 MissionStateEvent.ExecutionChanged(
-                    3,
+                    executionStateRevision.incrementAndGet(),
                     store.snapshot().missionRevision!!,
                     store.snapshot().deviceGeneration,
-                    ExecutionState.EXECUTING,
+                    state,
                 ),
             )
         }
@@ -357,7 +352,11 @@ class MissionExecutorContractTest {
         override fun start(completion: ControlCompletion) = call(completion)
         override fun pause(completion: ControlCompletion) = call(completion)
         override fun resume(completion: ControlCompletion) = call(completion)
-        override fun stop(completion: ControlCompletion) = call(completion)
+        var stopCalls = 0
+        override fun stop(completion: ControlCompletion) {
+            stopCalls += 1
+            call(completion)
+        }
         private fun call(completion: ControlCompletion) {
             if (throwOnCall) error("adapter failure")
             this.completion = completion

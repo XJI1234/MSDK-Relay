@@ -22,6 +22,8 @@ cancellation.cancel() -> Cancelled | AlreadyFinished
 
 `TIMED_OUT` 或运行中 `CANCELLED` 只表示本程序未能继续等待该操作，**不表示 DJI 已停止执行**。这种情况下协调器进入“硬件结果未确认”隔离：会立即把终态交给原调用方，但仍占用唯一 DJI 操作槽位，取消尚未开始的排队项并拒绝新的提交。只有同一 action 之后的 `success` / `failure` 回调，或该 action 调用一次 `confirmHardwareSettled()`，才能解除隔离。
 
+唯一例外是声明了同一个非空 `unconfirmedRetryMarker()` 的等价收尾动作。协调器只允许该动作替换已超时/取消的同标记动作，并把旧 action 标记为已被替换；迟到 DJI 回调只交给旧 action 的 `onLateDjiCompletion`，不能二次报告或污染替换操作。此例外只可用于重复调用不会扩大硬件风险的单向收尾命令；当前正式实现仅 `wayline.stop` 使用带任务代际和设备代次的私有标记。所有其它 DJI 操作仍必须等待权威状态确认或迟到回调后才能释放槽位。
+
 协调器进入隔离后，必须在已向原调用方报告 `TIMED_OUT` 或 `CANCELLED` 后调用一次该 action 的 `onHardwareOutcomeUnconfirmed(outcome)`。action 可在此钩子内检查自己在调用前已建立的权威 DJI 状态观察；协调器不理解也不存储图传、飞控或航线的业务语义。
 
 `confirmHardwareSettled()` 只能由 action 持有的、与该写操作一一对应的 DJI 官方状态观察调用；它只在该 action 已超时或取消、仍占用槽位时生效。它不能由 WebSocket 回包、页面状态、缓存值或后续命令调用，也不能提前释放仍在等待回执的操作。状态监听和 RTMP 媒体数据不属于本模块的 DJI 写操作，不能被此队列阻塞。
@@ -34,7 +36,7 @@ cancellation.cancel() -> Cancelled | AlreadyFinished
 - 超时范围为 1,000 到 60,000 ms；范围外直接拒绝，不入队。
 - 超时从 action 真正开始执行时计算，不包含等待队列时间。
 - 取消排队操作后不启动 action；取消运行中操作后立即完成为 `CANCELLED` 并进入硬件结果未确认隔离，后续 DJI 回调只用于解除隔离，不得重复通知调用方。
-- 超时后立即完成为 `TIMED_OUT` 并进入硬件结果未确认隔离；不得在该回调前启动下一项 DJI 操作。
+- 超时后立即完成为 `TIMED_OUT` 并进入硬件结果未确认隔离；不得在该回调前启动下一项 DJI 操作，除非下一项是与隔离 action 具有同一非空 `unconfirmedRetryMarker()` 的声明式等价收尾重试。
 - action 在调用 DJI 前无法调度或初始化时，完成为 `FAILED` 并继续下一项；action 已开始后抛异常也进入硬件结果未确认隔离，因为无法证明 DJI 没有收到调用。
 
 ## 4. 测试要求

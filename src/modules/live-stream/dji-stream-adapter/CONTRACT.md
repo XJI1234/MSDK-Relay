@@ -14,6 +14,8 @@ adapter.stop() -> Accepted(cancellation) | Rejected(reason)
 
 `DjiStreamPort` 是唯一 DJI 接缝：`start` 接收已校验配置、原始 MSDK 推流状态回调、运行期失效回调和终态完成回调；`stop` 接收终态完成回调。状态回调的 `isStreaming` 必须逐值转交给状态仓库：`true` 允许更新指标，`false` 记录为 MSDK 明确未推流并使对应代次失败；运行期错误不伪造 `false`。旧代次回调不得污染新图传。`Accepted` 只表示操作提交，协调器的成功终态只允许将生命周期推进到“开始已接受”，不得将 MSDK 推流状态写为 true。两个请求可接受 `StreamDjiTerminalListener`；对已接受操作，它在对应状态迁移尝试后恰好接收一次安全结果 `SUCCEEDED|FAILED|TIMED_OUT|CANCELLED`；前置条件或提交拒绝同步返回且不调用它。
 
+端口报告的 `StreamDjiFailure` 只可来自真实 MSDK `onFailure(IDJIError)` 或图传监听器 `onError(IDJIError)`，其中的 `errorCode` / `errorDescription` 是 DJI 原值的受限副本。终态 `FAILED + failure` 必须通过监听器到命令处理器，最终成为 `ACTION_REJECTED`；`FAILED` 但没有 failure 只能是 `INVOCATION_FAILED`，`TIMED_OUT` 或 `CANCELLED` 只能是 `RESULT_UNCONFIRMED`。运行期错误必须保存到 `StreamSnapshot.runtimeFailure` 并触发既有恢复停止排队，但绝不修改已经产生的开始/停止终态回执。
+
 状态前置条件失败和协调器拒绝返回稳定枚举。适配器异常、DJI 失败、超时、取消、重复完成、延迟指标及延迟回调均转为安全状态迁移。协调器串行化 DJI 调用并提供取消/超时；每个回调携带状态存储返回的操作代际，旧启动/停止不得影响新操作。模块 JVM 线程安全且不持有可变业务状态；公开结果不得暴露 URL 凭据、DJI 对象、原始异常或堆栈。
 
 运行时错误、停止失败和设备不可用时的残余图传清理也只能作为同一协调器中的 `stop` 操作提交。适配器不得使用端口旁路直接调用 DJI。若启动在超时或取消后才报告成功，或随后才收到该代次的 DJI 状态/运行失败事实，适配器必须先用对应 `OperationCompletion.confirmHardwareSettled()` 释放协调器槽位，再排入一次清理停止；超时本身不能直接并发停止。

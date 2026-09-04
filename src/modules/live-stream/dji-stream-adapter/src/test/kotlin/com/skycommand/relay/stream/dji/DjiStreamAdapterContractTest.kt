@@ -9,6 +9,7 @@ import com.skycommand.relay.device.operation.OperationScheduler
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamMetrics
+import com.skycommand.relay.stream.state.StreamRuntimeFailure
 import com.skycommand.relay.stream.state.StreamStateStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -130,16 +131,33 @@ class DjiStreamAdapterContractTest {
         fixture.port.startCompletion!!.succeed()
         val staleFailure = fixture.port.runtimeFailure!!
 
-        staleFailure()
+        staleFailure(null)
         assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
 
         fixture.adapter.start(config())
         assertEquals(StreamLifecycleState.STARTING, fixture.store.snapshot().state)
-        staleFailure()
+        staleFailure(null)
         assertEquals(StreamLifecycleState.STARTING, fixture.store.snapshot().state)
         fixture.port.stopCompletion!!.succeed()
         fixture.port.startCompletion!!.succeed()
         assertEquals(StreamLifecycleState.STREAMING, fixture.store.snapshot().state)
+    }
+
+    @Test
+    fun preservesTheOriginalDjiRuntimeFailureInTheStreamSnapshot() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+        fixture.port.startCompletion!!.succeed()
+        val failure = StreamDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The live stream manager is busy")
+
+        fixture.port.runtimeFailure!!.invoke(failure)
+
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+        assertEquals("DJI live stream runtime error", fixture.store.snapshot().notice)
+        assertEquals(
+            StreamRuntimeFailure("COMMON_SYSTEM_BUSY", "The live stream manager is busy"),
+            fixture.store.snapshot().runtimeFailure,
+        )
     }
 
     @Test
@@ -150,7 +168,7 @@ class DjiStreamAdapterContractTest {
         val other = BlockingOperation()
         fixture.coordinator.submit(other, 1_000) { }
 
-        fixture.port.runtimeFailure!!.invoke()
+        fixture.port.runtimeFailure!!.invoke(null)
 
         assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
         assertEquals(0, fixture.port.stopCalls)
@@ -171,12 +189,12 @@ class DjiStreamAdapterContractTest {
 
     private class Port : DjiStreamPort {
         var status: ((DjiStreamStatus) -> Unit)? = null
-        var runtimeFailure: (() -> Unit)? = null
+        var runtimeFailure: ((StreamDjiFailure?) -> Unit)? = null
         var startCompletion: StreamDjiCompletion? = null
         var stopCompletion: StreamDjiCompletion? = null
         var stopCalls = 0
         var throwOnStart = false
-        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: () -> Unit, completion: StreamDjiCompletion) {
+        override fun start(config: ValidatedStreamConfig, status: (DjiStreamStatus) -> Unit, runtimeFailure: (StreamDjiFailure?) -> Unit, completion: StreamDjiCompletion) {
             if (throwOnStart) error("dji failure")
             this.status = status
             this.runtimeFailure = runtimeFailure

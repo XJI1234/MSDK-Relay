@@ -62,6 +62,8 @@ class TelemetryFrameMapperTest {
                 longitude = 121.5,
                 liveStreaming = true,
                 liveStreamNotice = "Streaming",
+                liveStreamRuntimeErrorCode = "COMMON_SYSTEM_BUSY",
+                liveStreamRuntimeErrorDescription = "The live stream manager is busy",
                 liveResolution = "1920x1080",
                 liveFps = 30.0,
                 liveVideoBitrateKbps = 4000.0,
@@ -97,6 +99,8 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("121.5"), frame.payload["longitude"])
         assertEquals(JsonBoolean(true), frame.payload["liveStreaming"])
         assertEquals(JsonString("Streaming"), frame.payload["liveStreamNotice"])
+        assertEquals(JsonString("COMMON_SYSTEM_BUSY"), frame.payload["liveStreamRuntimeErrorCode"])
+        assertEquals(JsonString("The live stream manager is busy"), frame.payload["liveStreamRuntimeErrorDescription"])
         assertEquals(JsonString("1920x1080"), frame.payload["liveResolution"])
         assertEquals(JsonNumber("30.0"), frame.payload["liveFps"])
         assertEquals(JsonNumber("4000.0"), frame.payload["liveVideoBitrateKbps"])
@@ -177,7 +181,7 @@ class TelemetryFrameMapperTest {
         listOf(
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
             "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
-            "liveStreaming", "liveStreamNotice", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
+            "liveStreaming", "liveStreamNotice", "liveStreamRuntimeErrorCode", "liveStreamRuntimeErrorDescription", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
             "missionRevision", "missionDeviceGeneration", "missionUploadProgress", "missionFileName",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
     }

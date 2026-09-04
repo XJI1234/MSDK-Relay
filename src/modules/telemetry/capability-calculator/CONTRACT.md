@@ -19,7 +19,7 @@ CapabilityCalculator.calculate(deviceCapabilities) -> TelemetryCapabilities
 
 ## 3. 规则
 
-- `liveVideo` 直接来自 `canStreamVideo`。
+- `liveVideo` 直接来自 `canStreamVideo`，表示 AirLink 与主相机在当前快照中的图传源观测，不授权或拒绝 `startStream` 请求。
 - `waypointMission` 直接来自 `canRunWayline`。
 - `waypointMissionSupport` 仅描述当前是否可执行，为 `supported` 或 `unsupported`。
 - `virtualStick` 固定为 `false`，手机端契约明确不提供虚拟摇杆。

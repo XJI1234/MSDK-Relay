@@ -9,10 +9,12 @@ import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.state.StreamMetrics
+import com.skycommand.relay.stream.state.StreamRuntimeFailure
 import com.skycommand.relay.stream.state.StreamStartResult
 import com.skycommand.relay.stream.state.StreamStateStore
 import com.skycommand.relay.stream.state.StreamStopResult
 import com.skycommand.relay.stream.state.StreamUpdateResult
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -20,6 +22,37 @@ interface StreamDjiCompletion {
     fun succeed()
 
     fun fail()
+
+    fun fail(failure: StreamDjiFailure?) = fail()
+}
+
+@ConsistentCopyVisibility
+data class StreamDjiFailure private constructor(
+    val errorCode: String,
+    val errorDescription: String,
+) {
+    companion object {
+        fun fromDjiError(errorCode: String?, errorDescription: String?): StreamDjiFailure = StreamDjiFailure(
+            normalize(errorCode, maxCodePoints = 128, fallback = "UNKNOWN_DJI_ERROR"),
+            normalize(errorDescription, maxCodePoints = 512, fallback = "DJI did not provide an error description"),
+        )
+
+        private fun normalize(value: String?, maxCodePoints: Int, fallback: String): String {
+            if (value == null) return fallback
+            val result = StringBuilder()
+            var offset = 0
+            var count = 0
+            while (offset < value.length && count < maxCodePoints) {
+                val codePoint = value.codePointAt(offset)
+                if (!Character.isISOControl(codePoint)) {
+                    result.appendCodePoint(codePoint)
+                    count += 1
+                }
+                offset += Character.charCount(codePoint)
+            }
+            return result.toString().trim().ifBlank { fallback }
+        }
+    }
 }
 
 data class DjiStreamStatus(
@@ -35,7 +68,7 @@ interface DjiStreamPort {
     fun start(
         config: ValidatedStreamConfig,
         status: (DjiStreamStatus) -> Unit,
-        runtimeFailure: () -> Unit,
+        runtimeFailure: (StreamDjiFailure?) -> Unit,
         completion: StreamDjiCompletion,
     )
 
@@ -46,6 +79,8 @@ interface DjiStreamPort {
 
 fun interface StreamDjiTerminalListener {
     fun onCompleted(outcome: StreamDjiTerminalOutcome)
+
+    fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) = onCompleted(outcome)
 }
 
 enum class StreamDjiTerminalOutcome {
@@ -87,6 +122,7 @@ class DjiStreamAdapter private constructor(
         config: ValidatedStreamConfig,
         listener: StreamDjiTerminalListener = StreamDjiTerminalListener { },
     ): DjiStreamStartResult {
+        val djiFailure = AtomicReference<StreamDjiFailure?>(null)
         val state = stateStore.requestStart(config)
         val operationId = (state as? StreamStartResult.Accepted)?.operationId
             ?: return DjiStreamStartResult.Rejected(DjiStreamRejection.ALREADY_ACTIVE)
@@ -108,15 +144,20 @@ class DjiStreamAdapter private constructor(
                                 requestRecoveryStop()
                             }
                         },
-                        runtimeFailure = {
-                            if (stateStore.markFailed(operationId, "Stream runtime failed") is StreamUpdateResult.Applied) {
+                        runtimeFailure = { failure ->
+                            if (stateStore.markFailed(
+                                    operationId,
+                                    "DJI live stream runtime error",
+                                    failure?.toRuntimeFailure(),
+                                ) is StreamUpdateResult.Applied
+                            ) {
                                 requestRecoveryStop()
                             } else if (completion.confirmHardwareSettled()) {
                                 // Runtime failure can also be the first post-timeout fact.
                                 requestRecoveryStop()
                             }
                         },
-                        completion = completion.asDjiCompletion(),
+                        completion = completion.asDjiCompletion(djiFailure),
                     )
                 }
 
@@ -127,7 +168,12 @@ class DjiStreamAdapter private constructor(
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome ->
                 completeStart(operationId, outcome)
-                runCatching { listener.onCompleted(outcome.toTerminalOutcome()) }
+                runCatching {
+                    listener.onCompleted(
+                        outcome.toTerminalOutcome(),
+                        if (outcome == OperationOutcome.FAILED) djiFailure.getAndSet(null) else null,
+                    )
+                }
             },
         )
         val accepted = submission as? SubmissionResult.Accepted
@@ -139,6 +185,7 @@ class DjiStreamAdapter private constructor(
     }
 
     fun stop(listener: StreamDjiTerminalListener = StreamDjiTerminalListener { }): DjiStreamStopResult {
+        val djiFailure = AtomicReference<StreamDjiFailure?>(null)
         val state = stateStore.requestStop()
         val operationId = (state as? StreamStopResult.Accepted)?.operationId
             ?: return DjiStreamStopResult.Rejected(
@@ -150,7 +197,7 @@ class DjiStreamAdapter private constructor(
         val submission = coordinator.submit(
             action = object : DjiOperation {
                 override fun run(completion: OperationCompletion) {
-                    djiPort.stop(completion.asDjiCompletion())
+                    djiPort.stop(completion.asDjiCompletion(djiFailure))
                 }
 
                 override fun onLateDjiCompletion(outcome: OperationOutcome) {
@@ -160,7 +207,12 @@ class DjiStreamAdapter private constructor(
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome ->
                 completeStop(operationId, outcome)
-                runCatching { listener.onCompleted(outcome.toTerminalOutcome()) }
+                runCatching {
+                    listener.onCompleted(
+                        outcome.toTerminalOutcome(),
+                        if (outcome == OperationOutcome.FAILED) djiFailure.getAndSet(null) else null,
+                    )
+                }
             },
         )
         val accepted = submission as? SubmissionResult.Accepted
@@ -199,7 +251,9 @@ class DjiStreamAdapter private constructor(
         }
         if (!shouldSubmit) return
         val submission = coordinator.submit(
-            action = DjiOperation { completion -> djiPort.stop(completion.asDjiCompletion()) },
+            action = DjiOperation { completion ->
+                djiPort.stop(completion.asDjiCompletion(AtomicReference<StreamDjiFailure?>(null)))
+            },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener {
                 recoveryLock.withLock { recoveryQueued = false }
@@ -210,11 +264,19 @@ class DjiStreamAdapter private constructor(
         }
     }
 
-    private fun OperationCompletion.asDjiCompletion(): StreamDjiCompletion = object : StreamDjiCompletion {
+    private fun OperationCompletion.asDjiCompletion(djiFailure: AtomicReference<StreamDjiFailure?>): StreamDjiCompletion = object : StreamDjiCompletion {
         override fun succeed() = this@asDjiCompletion.succeed()
 
         override fun fail() = this@asDjiCompletion.fail()
+
+        override fun fail(failure: StreamDjiFailure?) {
+            djiFailure.set(failure)
+            this@asDjiCompletion.fail()
+        }
     }
+
+    private fun StreamDjiFailure.toRuntimeFailure(): StreamRuntimeFailure =
+        StreamRuntimeFailure(errorCode, errorDescription)
 
     private fun OperationOutcome.toTerminalOutcome(): StreamDjiTerminalOutcome = when (this) {
         OperationOutcome.SUCCEEDED -> StreamDjiTerminalOutcome.SUCCEEDED

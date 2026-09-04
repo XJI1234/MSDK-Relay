@@ -12,6 +12,7 @@ import dji.v5.manager.datacenter.livestream.LiveVideoBitrateMode
 import dji.v5.manager.datacenter.livestream.StreamQuality
 import dji.v5.manager.datacenter.livestream.settings.RtmpSettings
 import dji.v5.manager.interfaces.ILiveStreamManager
+import com.skycommand.relay.stream.dji.StreamDjiFailure
 
 internal class MsdkV5LiveStreamApi(
     private val manager: ILiveStreamManager = MediaDataCenter.getInstance().liveStreamManager,
@@ -54,12 +55,22 @@ internal class MsdkV5LiveStreamApi(
                 ),
             )
         }
-        override fun onError(error: IDJIError) = this@toSdkListener.onError()
+        override fun onError(error: IDJIError) = this@toSdkListener.onError(
+            StreamDjiFailure.fromDjiError(
+                runCatching { error.errorCode() }.getOrNull(),
+                runCatching { error.description() }.getOrNull(),
+            ),
+        )
     }
 
     private fun DjiLiveStreamCompletion.toSdkCompletion() = object : CommonCallbacks.CompletionCallback {
         override fun onSuccess() = succeed()
-        override fun onFailure(error: IDJIError) = fail()
+        override fun onFailure(error: IDJIError) = fail(
+            StreamDjiFailure.fromDjiError(
+                runCatching { error.errorCode() }.getOrNull(),
+                runCatching { error.description() }.getOrNull(),
+            ),
+        )
     }
 
     private object ListenerRegistry {
