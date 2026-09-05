@@ -11,6 +11,7 @@ import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import com.skycommand.relay.wayline.state.UploadState
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 
 enum class LowBatteryRthState {
     IDLE,
@@ -104,6 +105,7 @@ data class TelemetrySnapshot(
     val missionRevision: Long? = null,
     val missionDeviceGeneration: Long? = null,
     val missionExecution: ExecutionState = ExecutionState.NOT_STARTED,
+    val missionDjiExecutionState: MissionExecutionRawState? = null,
     val missionUploadProgress: Int? = null,
     val missionFileName: String? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
@@ -179,6 +181,7 @@ object SnapshotAssembler {
         missionRevision = inputs.mission.missionRevision,
         missionDeviceGeneration = inputs.mission.missionRevision?.let { inputs.mission.deviceGeneration },
         missionExecution = inputs.mission.execution,
+        missionDjiExecutionState = inputs.mission.missionDjiExecutionState,
         missionUploadProgress = when (val upload = inputs.mission.upload) {
             is UploadState.Uploading -> upload.progress
             UploadState.UPLOADED -> 100

@@ -1,6 +1,7 @@
 package com.skycommand.relay.wayline.state
 
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -45,6 +46,27 @@ class MissionStateStoreContractTest {
         assertEquals("replacement.kmz", replacement.file?.fileName)
         assertEquals(UploadState.NOT_UPLOADED, replacement.upload)
         assertEquals(ExecutionState.NOT_STARTED, replacement.execution)
+    }
+
+    @Test
+    fun recordsTheCurrentMissionRawDjiExecutionObservationWithoutChangingWorkflowExecution() {
+        val store = MissionStateStore.create()
+        val staged = staged(store, 1)
+        val mission = requireNotNull(staged.missionRevision)
+
+        val result = assertIs<ApplyResult.Applied>(
+            store.apply(
+                MissionStateEvent.ExecutionObserved(
+                    sourceRevision = 1,
+                    missionRevision = mission,
+                    deviceGeneration = staged.deviceGeneration,
+                    state = MissionExecutionRawState.RETURN_TO_START_POINT,
+                ),
+            ),
+        )
+
+        assertEquals(MissionExecutionRawState.RETURN_TO_START_POINT, result.snapshot.missionDjiExecutionState)
+        assertEquals(ExecutionState.NOT_STARTED, result.snapshot.execution)
     }
 
     @Test

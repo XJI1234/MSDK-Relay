@@ -160,6 +160,17 @@ class MobileRelayGraphContractTest {
         assertFalse(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
         assertFalse(strings.contains("飞机连接 [ProductKey.KeyConnection]"))
     }
+
+    @Test
+    fun everyRegisteredCommandUsesTheUnifiedCommandDiagnosticRecorder() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("CommandDiagnosticRecorder(journal).wrap(handler)"))
+        assertFalse(source.contains("private fun recorded("))
+    }
 }
 
 class MainActivityRetentionContractTest {

@@ -28,7 +28,6 @@ import com.skycommand.relay.gateway.session.ScheduledCancellation
 import com.skycommand.relay.gateway.session.SessionEndKind
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
-import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.diagnostics.DiagnosticClock
 import com.skycommand.relay.diagnostics.DiagnosticJournal
@@ -764,7 +763,7 @@ class MobileRelayGraph private constructor(
         }
 
         private fun register(gateway: RelayGateway, journal: DiagnosticJournal, name: String, handler: CommandHandler) {
-            check(gateway.registerCommandHandler(name, recorded(journal, handler)) == RegistrationResult.Registered) {
+            check(gateway.registerCommandHandler(name, CommandDiagnosticRecorder(journal).wrap(handler)) == RegistrationResult.Registered) {
                 "Command registration failed"
             }
         }
@@ -793,17 +792,6 @@ private class TelemetryFrameSequence {
     }
 }
 
-private fun commandModule(name: String): String = when {
-    name.startsWith("wayline.") -> "wayline-mission"
-    name.startsWith("live-stream-webrtc.") -> "live-stream-webrtc"
-    name.startsWith("live-stream.") -> "live-stream"
-    name.startsWith("flight.") -> "flight-control"
-    name.startsWith("device.settings.") -> "device-settings"
-    name.startsWith("pairing.") -> "device-connection"
-    name.startsWith("telemetry.") -> "telemetry"
-    else -> "relay-gateway"
-}
-
 private fun FlightTelemetrySnapshot.toFlightActionState() = FlightActionState(
     sourceGeneration = sourceGeneration,
     sourceRevision = sourceRevision,
@@ -813,11 +801,6 @@ private fun FlightTelemetrySnapshot.toFlightActionState() = FlightActionState(
     landingConfirmationNeeded = landingConfirmationNeeded,
 )
 
-private fun commandEventCode(name: String, ok: Boolean): String {
-    val stem = name.uppercase().replace('.', '_').replace('-', '_')
-    return if (ok) "${stem}_OK" else "${stem}_REJECTED"
-}
-
 private fun sdkLifecycleDiagnosticDetail(kind: SdkLifecycleDiagnosticKind): String = when (kind) {
     SdkLifecycleDiagnosticKind.PORT_FAILURE -> "DJI SDK adapter or registration reported a failure"
     SdkLifecycleDiagnosticKind.START_TIMEOUT ->
@@ -825,34 +808,3 @@ private fun sdkLifecycleDiagnosticDetail(kind: SdkLifecycleDiagnosticKind): Stri
     SdkLifecycleDiagnosticKind.LISTENER_FAILURE -> "A DJI SDK lifecycle state listener failed"
     SdkLifecycleDiagnosticKind.STALE_CALLBACK -> "Ignored a stale DJI SDK lifecycle callback"
 }
-
-private fun recorded(journal: DiagnosticJournal, handler: CommandHandler): CommandHandler =
-    CommandHandler { command, completion ->
-        handler.handle(command, object : CommandCompletion {
-            private fun write(ok: Boolean, detail: String) {
-                if (ok && command.name == "telemetry.read") return
-                journal.record(
-                    if (ok) DiagnosticLevel.INFO else DiagnosticLevel.WARN,
-                    commandModule(command.name),
-                    commandEventCode(command.name, ok),
-                    command.id,
-                    "${command.name} $detail",
-                )
-            }
-
-            override fun succeed(detail: String) {
-                write(true, detail)
-                completion.succeed(detail)
-            }
-
-            override fun succeed(detail: String, result: JsonObject?) {
-                write(true, detail)
-                completion.succeed(detail, result)
-            }
-
-            override fun reject(detail: String) {
-                write(false, detail)
-                completion.reject(detail)
-            }
-        })
-    }

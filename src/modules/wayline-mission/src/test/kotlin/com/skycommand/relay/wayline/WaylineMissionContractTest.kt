@@ -17,6 +17,9 @@ import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
+import com.skycommand.relay.wayline.phase.MissionExecutionObservation
+import com.skycommand.relay.wayline.phase.MissionExecutionObservationListener
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.phase.MissionPhase
 import com.skycommand.relay.wayline.phase.MissionPhaseFact
 import com.skycommand.relay.wayline.state.ExecutionState
@@ -34,6 +37,20 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class WaylineMissionContractTest {
+    @Test
+    fun recordsTheIdentityMatchedRawDjiObservationForTheCurrentMission() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+
+        fixture.signals.emit(MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.RETURN_TO_START_POINT))
+
+        assertEquals(MissionExecutionRawState.RETURN_TO_START_POINT, fixture.mission.snapshot().missionDjiExecutionState)
+    }
+
     @Test
     fun rejectsReplacementTransferWhileTheCurrentMissionIsExecuting() {
         val fixture = Fixture()
@@ -617,14 +634,23 @@ class WaylineMissionContractTest {
 
     private class SignalSource : MissionExecutionSignalSource {
         private var listener: MissionExecutionSignalListener? = null
+        private var observationListener: MissionExecutionObservationListener? = null
         override fun onSignal(listener: MissionExecutionSignalListener): MissionExecutionSignalRegistration {
             this.listener = listener
             return MissionExecutionSignalRegistration { this.listener = null }
         }
+        override fun onObservation(listener: MissionExecutionObservationListener): MissionExecutionSignalRegistration {
+            observationListener = listener
+            return MissionExecutionSignalRegistration { observationListener = null }
+        }
         override fun beginStartAttempt() = Unit
         override fun confirmStartAttempt() = Unit
         override fun invalidateStartAttempt() = Unit
-        fun emit(signal: MissionExecutionSignal) { listener?.onSignal(signal) }
+        fun emit(signal: MissionExecutionSignal) = emit(MissionExecutionObservation(signal, MissionExecutionRawState.UNKNOWN))
+        fun emit(observation: MissionExecutionObservation) {
+            listener?.onSignal(observation.signal)
+            observationListener?.onObservation(observation)
+        }
     }
 
     private class Scheduler : OperationScheduler {

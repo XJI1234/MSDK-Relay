@@ -14,6 +14,7 @@ import com.skycommand.relay.telemetry.capability.WaypointMissionSupport
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import com.skycommand.relay.wayline.state.ExecutionState
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -73,6 +74,7 @@ class TelemetryFrameMapperTest {
                 missionRevision = 7,
                 missionDeviceGeneration = 3,
                 missionExecution = ExecutionState.EXECUTING,
+                missionDjiExecutionState = MissionExecutionRawState.RETURN_TO_START_POINT,
                 missionUploadProgress = 100,
                 missionFileName = "survey.kmz",
             ),
@@ -110,6 +112,7 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("7"), frame.payload["missionRevision"])
         assertEquals(JsonNumber("3"), frame.payload["missionDeviceGeneration"])
         assertEquals(JsonString("EXECUTING"), frame.payload["missionExecution"])
+        assertEquals(JsonString("RETURN_TO_START_POINT"), frame.payload["missionDjiExecutionState"])
         assertEquals(JsonNumber("100"), frame.payload["missionUploadProgress"])
         assertEquals(JsonString("survey.kmz"), frame.payload["missionFileName"])
         assertEquals(JsonBoolean(true), frame.capabilities["liveVideo"])
@@ -182,7 +185,7 @@ class TelemetryFrameMapperTest {
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
             "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
             "liveStreaming", "liveStreamNotice", "liveStreamRuntimeErrorCode", "liveStreamRuntimeErrorDescription", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
-            "missionRevision", "missionDeviceGeneration", "missionUploadProgress", "missionFileName",
+            "missionRevision", "missionDeviceGeneration", "missionDjiExecutionState", "missionUploadProgress", "missionFileName",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
     }
 

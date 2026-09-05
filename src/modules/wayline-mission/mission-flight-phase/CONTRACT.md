@@ -1,6 +1,6 @@
 # mission-flight-phase 模块契约
 
-状态：已实现并验证；版本：1.0.0；所属一级模块：wayline-mission；Gradle 路径：`:wayline-mission:mission-flight-phase`
+状态：已实现并验证；版本：1.1.0；所属一级模块：wayline-mission；Gradle 路径：`:wayline-mission:mission-flight-phase`
 
 ## 唯一职责
 
@@ -21,6 +21,8 @@ phaseTracker.invalidate(missionRevision?, deviceGeneration) -> Unit
 `sink` 只能是一级模块门面提供的阶段事件入口，不能是 WebSocket、协议帧写入器或电脑端回调。`prepareStart` 只能由已提交 `wayline.start` 的当前任务调用一次，并接收当前任务的 1..128 个 Unicode 码点安全 `.kmz` 基名；该上限与中继协议一致。开始命令尚未收到成功回执时，`ENTER_WAYLINE` 与 `EXECUTING` 只被暂存，不能发布阶段事实；只有同一任务身份的 `confirmStart` 才按接收顺序释放它们。失败、超时、取消、停止、设备失效或任务替换必须先 `invalidate`，从而丢弃暂存信号。`accept` 的输入是经过 Android DJI 适配器归一化后的封闭信号集：`PREPARING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED` 与 `UNKNOWN`。输入必须携带任务代际和设备运行代际；不匹配当前已武装任务的输入返回 `IgnoredStale`，不通知、不诊断。
 
 `MissionExecutionSignalSource` 的每一个实现都必须显式实现 `beginStartAttempt()`、`confirmStartAttempt()` 和 `invalidateStartAttempt()` 三个时点的行为；可携带任务身份的模拟源可以明确实现为空操作，真实 DJI 适配器必须在门面准备新任务前关闭状态投递，只在相同启动请求收到成功回执后恢复投递，并在失败、停止、任务替换或设备失效时再次关闭。这样，前一任务的迟到原始状态不能被新任务暂存或归属；被隔离的状态不得补发，宁可等待新的 DJI 状态。
+
+除既有的归一化 `MissionExecutionSignal` 外，来源还必须发布 `MissionExecutionObservation(signal, rawState)`。`rawState` 是受限的、逐项保留的 `WaypointMissionExecuteStateListener` 观察值：`IDLE`、`READY`、`UPLOADING`、`PREPARING`、`RECOVERING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`INTERRUPTED`、`FINISHED`、`RETURN_TO_START_POINT`、`DISCONNECTED`、`NOT_SUPPORTED`、`UNKNOWN`。它不是桌面工作流阶段、不是按钮 `onSuccess` 回执，也不是由坐标或时间推导的航点进度。真实 DJI 实现必须同时提供归一化信号和原始观察；旧的仅信号实现可由默认观察映射保持兼容，但不得伪造 DJI 未提供的更具体原始状态。
 
 输出的阶段事实是：
 

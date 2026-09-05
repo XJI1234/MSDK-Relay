@@ -518,6 +518,7 @@ private object HarnessTelemetryMapper {
         "liveFps" to snapshot.liveFps.json(), "liveVideoBitrateKbps" to snapshot.liveVideoBitrateKbps.json(),
         "liveRttMillis" to snapshot.liveRttMillis.json(), "missionRevision" to snapshot.missionRevision.json(),
         "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(), "missionExecution" to JsonString(snapshot.missionExecution.name),
+        "missionDjiExecutionState" to snapshot.missionDjiExecutionState?.name.json(),
         "missionUploadProgress" to snapshot.missionUploadProgress.json(), "missionFileName" to snapshot.missionFileName.json(),
     )
 

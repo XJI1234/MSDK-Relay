@@ -15,8 +15,38 @@ enum class MissionExecutionSignal {
     UNKNOWN,
 }
 
+/**
+ * Bounded names of the DJI WaypointMissionExecuteStateListener observations.
+ * This is display evidence, distinct from the normalized control signal above.
+ */
+enum class MissionExecutionRawState {
+    IDLE,
+    READY,
+    UPLOADING,
+    PREPARING,
+    RECOVERING,
+    ENTER_WAYLINE,
+    EXECUTING,
+    PAUSED,
+    INTERRUPTED,
+    FINISHED,
+    RETURN_TO_START_POINT,
+    DISCONNECTED,
+    NOT_SUPPORTED,
+    UNKNOWN,
+}
+
+data class MissionExecutionObservation(
+    val signal: MissionExecutionSignal,
+    val rawState: MissionExecutionRawState,
+)
+
 fun interface MissionExecutionSignalListener {
     fun onSignal(signal: MissionExecutionSignal)
+}
+
+fun interface MissionExecutionObservationListener {
+    fun onObservation(observation: MissionExecutionObservation)
 }
 
 fun interface MissionExecutionSignalRegistration {
@@ -25,6 +55,13 @@ fun interface MissionExecutionSignalRegistration {
 
 interface MissionExecutionSignalSource {
     fun onSignal(listener: MissionExecutionSignalListener): MissionExecutionSignalRegistration
+
+    /**
+     * Legacy signal-only sources cannot honestly reconstruct a specific DJI enum. They retain
+     * their signal while exposing UNKNOWN as the raw state until a DJI implementation overrides it.
+     */
+    fun onObservation(listener: MissionExecutionObservationListener): MissionExecutionSignalRegistration =
+        onSignal { signal -> listener.onObservation(MissionExecutionObservation(signal, MissionExecutionRawState.UNKNOWN)) }
 
     /**
      * Identity-free platform sources close this fence before a new start attempt so a delayed

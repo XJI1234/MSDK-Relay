@@ -2,6 +2,7 @@ plugins { kotlin("jvm"); `java-library` }
 kotlin { jvmToolchain(17) }
 dependencies {
     api(project(":wayline-mission:mission-staging"))
+    api(project(":wayline-mission:mission-flight-phase"))
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }

@@ -31,6 +31,7 @@ import com.skycommand.relay.wayline.executor.MissionExecutor
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
+import com.skycommand.relay.wayline.phase.MissionExecutionObservation
 import com.skycommand.relay.wayline.phase.MissionFlightPhase
 import com.skycommand.relay.wayline.phase.MissionPhase
 import com.skycommand.relay.wayline.phase.MissionPhaseFact
@@ -99,7 +100,7 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private val flightPhase = MissionFlightPhase.create(MissionPhaseSink(::acceptPhaseFact))
     @Suppress("unused")
     private val executionSignalRegistration: MissionExecutionSignalRegistration =
-        dependencies.executionSignalSource.onSignal(::acceptExecutionSignal)
+        dependencies.executionSignalSource.onObservation(::acceptExecutionObservation)
     private val commands = WaylineCommandHandler.create(Actions())
     private val contentReader = dependencies.contentReader
 
@@ -272,14 +273,22 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         lifecycleLock.withLock { activeOperations.remove(tracked) }
     }
 
-    private fun acceptExecutionSignal(signal: MissionExecutionSignal) {
+    private fun acceptExecutionObservation(observation: MissionExecutionObservation) {
         val snapshot = state.snapshot()
         val missionRevision = snapshot.missionRevision ?: return
-        val accepted = flightPhase.accept(signal, missionRevision, snapshot.deviceGeneration)
+        val accepted = flightPhase.accept(observation.signal, missionRevision, snapshot.deviceGeneration)
         if (accepted !is com.skycommand.relay.wayline.phase.MissionSignalAcceptance.Accepted) return
 
-        applyAcceptedExecutionSignal(signal, missionRevision, snapshot.deviceGeneration)
-        when (signal) {
+        state.apply(
+            MissionStateEvent.ExecutionObserved(
+                sourceRevision = executionStateRevision.incrementAndGet(),
+                missionRevision = missionRevision,
+                deviceGeneration = snapshot.deviceGeneration,
+                state = observation.rawState,
+            ),
+        )
+        applyAcceptedExecutionSignal(observation.signal, missionRevision, snapshot.deviceGeneration)
+        when (observation.signal) {
             MissionExecutionSignal.PAUSED ->
                 executor.observeExecutionState(ExecutionState.PAUSED, missionRevision, snapshot.deviceGeneration)
             MissionExecutionSignal.EXECUTING ->

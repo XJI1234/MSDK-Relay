@@ -1,7 +1,7 @@
 # android-dji-wayline-adapter 模块契约
 
 状态：原始航线状态适配已按此契约实现并验证
-版本：2.1.0
+版本：2.2.0
 所属一级模块：wayline-mission
 逻辑 Gradle 路径：`:wayline-mission:android-dji-wayline-adapter`
 
@@ -23,11 +23,13 @@ adapter.close() -> Unit
 
 输入文件名必须是单一 `.kmz` basename，禁止绝对路径、父目录、分隔符、空白、控制字符和超过 128 个 Unicode 码点的名称；该上限与中继协议一致，保证上传后的任务状态能够回传桌面端。每次上传写入 `cacheDir/dji-waylines/<唯一代次>/<原始文件名>`，上传路径的 basename 必须与后续控制使用的任务名完全一致。写入失败必须删除该代次的目录和部分文件。
 
-输入 KMZ 必须恰好包含一个 `wpmz/waylines.wpml`，且其中恰好包含一个 DJI WPML 命名空间的 `waylineId`。`SingleWaylineKmzGuard` 必须以禁止外部实体的解析器、受限的解压读取量检查这一事实；它只确认执行对象不歧义，不能替代 DJI 对 WPML 语义、机型适配或飞行安全的完整校验。归档损坏、缺少 WPML、重复 WPML、零条或多条航线均必须在写缓存和调用 DJI 上传前失败，且不得修改此前成功上传的文件名。
+输入 KMZ 必须恰好包含一个 `wpmz/waylines.wpml`，且其中恰好包含一个 DJI WPML 命名空间的 `waylineId`。安全文件名检查通过后，KMZ 可暂存于应用私有缓存；`SingleWaylineKmzGuard` 必须在调用 DJI 上传前用 Android `ZipFile` 的中央目录读取该暂存文件，以禁止外部实体的解析器和受限的解压读取量检查这一事实。不得用 Android `ZipInputStream` 顺序扫描，因为某些合法的 `Stored` 条目会被其错误报告为 EOF，造成后续 `waylines.wpml` 不可见。所有条目的声明解压总量和被读取 WPML 的实际解压量均不得超过上限；不合格文件必须在本次调用内删除。它只确认执行对象不歧义，不能替代 DJI 对 WPML 语义、机型适配或飞行安全的完整校验。归档损坏、缺少 WPML、重复 WPML、零条或多条航线均必须在调用 DJI 上传前失败，且不得修改此前成功上传的文件名。
 
 DJI 上传没有取消接口，因此新上传不得删除仍可能被旧上传读取的输入文件；每个上传终态只清理自己的目录，只有最新上传代次的成功终态可以替换当前文件名。上传进度 `Double` 四舍五入并限制到 `0..100`，非有限值忽略。控制提交、关闭和代次变更必须串行化；关闭后迟到控制回调不得完成上层。每个回调至多一次；`close()` 幂等，使全部迟到回调失效并清理所有剩余目录。
 
-`MissionExecutionSignalSource` 只发布归一化后的封闭信号集 `PREPARING|ENTER_WAYLINE|EXECUTING|PAUSED|COMPLETED|INTERRUPTED|IDLE|DISCONNECTED|UNKNOWN`，不发布 DJI 枚举或异常。监听必须在 `startMission` 调用前完成注册，关闭时必须取消注册；关闭、任务替换或设备代际失效后的回调不得投递。适配器不得把 `startMission` 成功回调转换为 `ENTER_WAYLINE` 或 `EXECUTING`，也不得从遥测位置推测信号。
+上传失败的来源必须保留，不能把本地失败伪装成 DJI 拒绝。适配器必须经 `WaylineAdapterDiagnosticSink` 记录下列封闭事件：`UPLOAD_INPUT_REJECTED`（文件名或单航线 KMZ 检查未通过）、`UPLOAD_FILE_WRITE_FAILED`（应用缓存写入失败）、`UPLOAD_DJI_INVOCATION_FAILED`（`WaypointMissionManager.init()` 或 `pushKMZFileToAircraft(...)` 在回调前同步抛出）和 `UPLOAD_DJI_REJECTED`（DJI 已调用 `onFailure(IDJIError)`）。`UPLOAD_INPUT_REJECTED` 必须携带受限原因码 `UNSAFE_FILE_NAME` 或 `KMZ_GUARD_REJECTED`，以区分传输元数据和本地 WPML 守卫，不得泄露文件名、路径或字节。`UPLOAD_DJI_REJECTED` 必须携带与公开命令结果完全相同、已经 Android 边界归一化的 `djiErrorCode`（最多 128 个 Unicode 码点）和 `djiErrorDescription`（最多 512 个 Unicode 码点）；二者均不得含控制字符、路径、KMZ 字节、堆栈或 DJI 异常对象。诊断只保留这些受限字段或受限的异常类型名和说明，不将异常对象、堆栈、KMZ 字节、绝对路径或 DJI 对象泄漏出模块。该诊断不改变公开命令结果：只有 `onFailure(IDJIError)` 才是带 DJI 错误码与说明的 `ACTION_REJECTED`；其它三种情况仍是“DJI 未报告结果”的调用失败。
+
+`MissionExecutionSignalSource` 同时发布归一化后的封闭信号集 `PREPARING|ENTER_WAYLINE|EXECUTING|PAUSED|COMPLETED|INTERRUPTED|IDLE|DISCONNECTED|UNKNOWN` 和受限的原始观察 `MissionExecutionRawState`。原始观察一对一保存官方 `WaypointMissionExecuteStateListener` 的枚举名称：`IDLE|READY|UPLOADING|PREPARING|RECOVERING|ENTER_WAYLINE|EXECUTING|PAUSED|INTERRUPTED|FINISHED|RETURN_TO_START_POINT|DISCONNECTED|NOT_SUPPORTED|UNKNOWN`。它不泄露 DJI 枚举对象或异常，也不得压缩 `RETURN_TO_START_POINT`、`READY`、`UPLOADING`、`RECOVERING`、`PAUSED` 或 `NOT_SUPPORTED`。监听必须在 `startMission` 调用前完成注册，关闭时必须取消注册；关闭、任务替换或设备代际失效后的回调不得投递。适配器不得把 `startMission` 成功回调转换为 `ENTER_WAYLINE` 或 `EXECUTING`，也不得从遥测位置推测信号。
 
 DJI 原始状态不携带本项目任务身份，因此适配器必须实现 `beginStartAttempt`、`confirmStartAttempt` 和 `invalidateStartAttempt` 状态隔离：门面准备启动新任务时先关闭投递，监听注册和 `startMission` 调用期间的任何状态都丢弃；仅在同一启动请求收到 DJI 成功回执后才打开投递。回执失败、超时、取消、停止、任务替换、设备失效或关闭时再次关闭。禁止缓存或补发被隔离状态，避免把上一任务的迟到回调归属给新任务。
 

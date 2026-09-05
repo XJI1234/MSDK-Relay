@@ -9,6 +9,7 @@ import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamMetrics
 import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import com.skycommand.relay.wayline.state.UploadState
@@ -107,6 +108,7 @@ class SnapshotAssemblerContractTest {
                     file = MissionMetadata("survey.kmz", 10, "a".repeat(64)),
                     upload = UploadState.Uploading(65),
                     execution = ExecutionState.EXECUTING,
+                    missionDjiExecutionState = MissionExecutionRawState.RETURN_TO_START_POINT,
                 ),
             ),
         )
@@ -123,6 +125,7 @@ class SnapshotAssemblerContractTest {
         assertEquals(0, result.missionDeviceGeneration)
         assertEquals(ExecutionState.EXECUTING, result.missionExecution)
         assertEquals(65, result.missionUploadProgress)
+        assertEquals(MissionExecutionRawState.RETURN_TO_START_POINT, result.missionDjiExecutionState)
         assertEquals("survey.kmz", result.missionFileName)
     }
 

@@ -2,20 +2,44 @@ package com.skycommand.relay.wayline.android
 
 import com.skycommand.relay.wayline.executor.ControlCompletion
 import com.skycommand.relay.wayline.executor.MissionControlFailure
+import com.skycommand.relay.wayline.phase.MissionExecutionObservation
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
+import java.io.File
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.nio.file.Files
 
 class AndroidDjiWaylineAdapterContractTest {
+    @Test fun preservesTheRawDjiExecutionStateAlongsideItsNormalizedTaskSignal() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        val observations = mutableListOf<MissionExecutionObservation>()
+
+        adapter.onObservation { observations += it }
+        adapter.beginStartAttempt()
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.start(ControlDone())
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.RETURN_TO_START_POINT)
+
+        assertEquals(
+            listOf(MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.RETURN_TO_START_POINT)),
+            observations,
+        )
+    }
+
     @Test fun registersForDjiStateBeforeStartAndStopsDeliveringAfterClose() {
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
@@ -51,6 +75,29 @@ class AndroidDjiWaylineAdapterContractTest {
         val start=ControlDone(); adapter.start(start); assertEquals("one.kmz",dji.controlName); requireNotNull(dji.controlCompletion).succeed(); assertEquals(listOf("success"),start.events)
     }
 
+    @Test fun acceptsAWaylineDocumentAfterAnUnrelatedKmzEntry() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+
+        adapter.upload(metadata("route.kmz"), wpmlMissionWithLeadingTemplate(0), {}, UploadDone())
+
+        assertEquals(1, files.writes)
+        assertEquals(1, dji.uploadCompletions.size)
+    }
+
+    @Test fun acceptsAStagedWaylineDocumentAfterAnUnrelatedKmzEntry() {
+        val root = Files.createTempDirectory("wayline-kmz-guard").toFile()
+        try {
+            val kmz = File(root, "route.kmz")
+            kmz.writeBytes(wpmlMissionWithLeadingTemplate(0))
+
+            assertTrue(SingleWaylineKmzGuard.inspect(kmz).accepted)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun forwardsDjiControlFailureWithoutDroppingItsNormalizedDetails() {
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
@@ -79,7 +126,124 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(failure, completion.failure)
     }
 
-    @Test fun rejectsMultipleWaylinesBeforeWritingOrCallingDji() {
+    @Test fun recordsDjiUploadCallbackRejectionWithTheSameDetailsItForwards() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+        val completion = UploadDone()
+
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+        val failure = MissionUploadFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy")
+        requireNotNull(dji.uploadCompletion).fail(failure)
+
+        assertEquals(listOf("failure"), completion.events)
+        assertEquals(failure, completion.failure)
+        assertEquals(1, diagnostics.size)
+        assertEquals(WaylineAdapterDiagnosticKind.UPLOAD_DJI_REJECTED, diagnostics.single().kind)
+        assertEquals("WAYPOINT_MISSION_BUSY", diagnostics.single().djiErrorCode)
+        assertEquals("The mission manager is busy", diagnostics.single().djiErrorDescription)
+    }
+
+    @Test fun recordsSynchronousDjiUploadInvocationFailureSeparatelyFromDjiCallbackFailure() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val dji = FakeDji().apply { uploadFailure = IllegalStateException("Waypoint manager is unavailable") }
+        val files = FakeFiles()
+        val adapter = AndroidDjiWaylineAdapter(files, dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+        val completion = UploadDone()
+
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+
+        assertEquals(listOf("failure"), completion.events)
+        assertNull(completion.failure)
+        assertEquals(1, files.writes)
+        assertEquals(1, files.deletes)
+        assertEquals(
+            listOf(WaylineAdapterDiagnosticKind.UPLOAD_DJI_INVOCATION_FAILED),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals("IllegalStateException", diagnostics.single().exceptionType)
+    }
+
+    @Test fun recordsInputRejectionWithoutCallingDjiOrWritingTheUploadFile() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+
+        adapter.upload(metadata("../unsafe.kmz"), singleWaylineKmz(), {}, UploadDone())
+
+        assertEquals(0, files.writes)
+        assertTrue(dji.uploadCompletions.isEmpty())
+        assertEquals(
+            listOf(WaylineAdapterDiagnosticKind.UPLOAD_INPUT_REJECTED),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals(WaylineUploadInputRejection.UNSAFE_FILE_NAME, diagnostics.single().inputRejection)
+    }
+
+    @Test fun recordsTheKmzGuardRejectionWithoutCallingDjiAndRemovesTheStagedFile() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+
+        adapter.upload(metadata("route.kmz"), byteArrayOf(1), {}, UploadDone())
+
+        assertEquals(1, files.writes)
+        assertEquals(1, files.deletes)
+        assertTrue(dji.uploadCompletions.isEmpty())
+        assertEquals(
+            listOf(WaylineAdapterDiagnosticKind.UPLOAD_INPUT_REJECTED),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals(WaylineUploadInputRejection.KMZ_GUARD_REJECTED, diagnostics.single().inputRejection)
+    }
+
+    @Test fun identifiesAMissingWaylinesDocumentWithoutTreatingItAsADjiFailure() {
+        val emptyKmz = Files.createTempFile("empty-wayline", ".kmz").toFile()
+        try {
+            emptyKmz.writeBytes(kmzWithoutWaylinesWpml())
+            assertEquals(
+                SingleWaylineKmzRejection.MISSING_OR_DUPLICATE_WAYLINES_WPML,
+                SingleWaylineKmzGuard.inspect(emptyKmz).rejection,
+            )
+        } finally {
+            emptyKmz.delete()
+        }
+    }
+
+    @Test fun identifiesAnUnreadableKmzWithoutTreatingItAsADjiFailure() {
+        val invalidKmz = Files.createTempFile("invalid-wayline", ".kmz").toFile()
+        try {
+            invalidKmz.writeBytes(byteArrayOf(1))
+            assertEquals(
+                SingleWaylineKmzRejection.UNREADABLE_OR_OVERSIZED_KMZ,
+                SingleWaylineKmzGuard.inspect(invalidKmz).rejection,
+            )
+        } finally {
+            invalidKmz.delete()
+        }
+    }
+
+    @Test fun recordsCacheWriteFailureWithoutCallingDji() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val files = FakeFiles().apply { writeFailure = java.io.IOException("Cache volume is unavailable") }
+        val dji = FakeDji()
+        val completion = UploadDone()
+        val adapter = AndroidDjiWaylineAdapter(files, dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+
+        assertEquals(listOf("failure"), completion.events)
+        assertTrue(dji.uploadCompletions.isEmpty())
+        assertEquals(
+            listOf(WaylineAdapterDiagnosticKind.UPLOAD_FILE_WRITE_FAILED),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals("IOException", diagnostics.single().exceptionType)
+    }
+
+    @Test fun rejectsMultipleWaylinesBeforeCallingDjiAndRemovesTheStagedFile() {
         val files = FakeFiles()
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(files, dji)
@@ -88,11 +252,12 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.upload(metadata("two-routes.kmz"), wpmlMission(0, 1), {}, done)
 
         assertEquals(listOf("failure"), done.events)
-        assertEquals(0, files.writes)
+        assertEquals(1, files.writes)
+        assertEquals(1, files.deletes)
         assertTrue(dji.uploadCompletions.isEmpty())
     }
 
-    @Test fun rejectsKmzWithoutAWaylineBeforeWritingOrCallingDji() {
+    @Test fun rejectsKmzWithoutAWaylineBeforeCallingDjiAndRemovesTheStagedFile() {
         val files = FakeFiles()
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(files, dji)
@@ -101,11 +266,12 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.upload(metadata("empty-route.kmz"), wpmlMission(), {}, done)
 
         assertEquals(listOf("failure"), done.events)
-        assertEquals(0, files.writes)
+        assertEquals(1, files.writes)
+        assertEquals(1, files.deletes)
         assertTrue(dji.uploadCompletions.isEmpty())
     }
 
-    @Test fun rejectsWpmlWithADoctypeBeforeWritingOrCallingDji() {
+    @Test fun rejectsWpmlWithADoctypeBeforeCallingDjiAndRemovesTheStagedFile() {
         val files = FakeFiles()
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(files, dji)
@@ -114,7 +280,8 @@ class AndroidDjiWaylineAdapterContractTest {
         adapter.upload(metadata("unsafe-xml.kmz"), wpmlMissionWithDoctype(), {}, done)
 
         assertEquals(listOf("failure"), done.events)
-        assertEquals(0, files.writes)
+        assertEquals(1, files.writes)
+        assertEquals(1, files.deletes)
         assertTrue(dji.uploadCompletions.isEmpty())
     }
 
@@ -211,7 +378,33 @@ class AndroidDjiWaylineAdapterContractTest {
     }
 
     private fun metadata(name:String)=MissionMetadata(name,1,"a".repeat(64))
+
     private fun singleWaylineKmz(): ByteArray = wpmlMission(0)
+
+    private fun wpmlMissionWithLeadingTemplate(vararg ids: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("wpmz/template.kml"))
+            zip.write("<kml/>".encodeToByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("wpmz/waylines.wpml"))
+            val folders = ids.joinToString("") { id -> "<Folder><wpml:waylineId>$id</wpml:waylineId></Folder>" }
+            zip.write(("<kml xmlns=\"http://www.opengis.net/kml/2.2\" xmlns:wpml=\"http://www.dji.com/wpmz/1.0.2\"><Document>$folders</Document></kml>").encodeToByteArray())
+            zip.closeEntry()
+        }
+        return output.toByteArray()
+    }
+
+    private fun kmzWithoutWaylinesWpml(): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry("wpmz/template.kml"))
+            zip.write("<kml/>".encodeToByteArray())
+            zip.closeEntry()
+        }
+        return output.toByteArray()
+    }
+
     private fun wpmlMission(vararg ids: Int): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { zip ->
@@ -247,10 +440,10 @@ class AndroidDjiWaylineAdapterContractTest {
         override fun fail(){fail(null)}
         override fun fail(value: MissionControlFailure?){failure=value;events+="failure"}
     }
-    private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>()
-        override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;val index=deleteCounts.size;deleteCounts+=0;val path="C:/cache/$index/$fileName";paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++}}}
-    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null
-        override fun upload(path:String,completion:DjiUploadCompletion){uploadPath=path;uploadCompletion=completion;uploadCompletions+=completion}
+    private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;var writeFailure:Throwable?=null;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>();private val root=Files.createTempDirectory("wayline-fake-files").toFile().apply{deleteOnExit()}
+        override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;writeFailure?.let { throw it };val index=deleteCounts.size;deleteCounts+=0;val directory=File(root,index.toString()).apply{check(mkdirs())};val file=File(directory,fileName).apply{writeBytes(content)};val path=file.absolutePath;paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++;directory.deleteRecursively()}}}
+    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var uploadFailure:Throwable?=null;var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null
+        override fun upload(path:String,completion:DjiUploadCompletion){uploadFailure?.let { throw it };uploadPath=path;uploadCompletion=completion;uploadCompletions+=completion}
         override fun start(name:String,completion:DjiControlCompletion){calls+="start";command="start";controlName=name;controlCompletion=completion}
         override fun pause(completion:DjiControlCompletion){command="pause";controlCompletion=completion}
         override fun resume(completion:DjiControlCompletion){command="resume";controlCompletion=completion}

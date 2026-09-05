@@ -1,6 +1,6 @@
 # mission-state-store 模块契约
 
-状态：阶段事件与执行状态交接待按此契约修正；版本：2.0.0；所属一级模块：wayline-mission；Gradle 路径：:wayline-mission:mission-state-store
+状态：阶段事件与执行状态交接待按此契约修正；版本：2.1.0；所属一级模块：wayline-mission；Gradle 路径：:wayline-mission:mission-state-store
 
 ## 唯一职责与接口
 
@@ -14,7 +14,9 @@ store.markDeviceUnavailable() -> Applied(snapshot)
 store.onChanged(listener) -> Registration
 ```
 
-`MissionSnapshot` 含严格递增 revision、当前暂存文件代际 `missionRevision`（无文件为 null）、严格递增的设备运行代际 `deviceGeneration`、只含文件名/期望大小/SHA-256 的 `MissionMetadata`、上传状态 `NOT_UPLOADED|UPLOADING(0..100)|UPLOADED|FAILED` 和执行状态 `NOT_STARTED|STARTING|EXECUTING|PAUSED|STOPPING|FINISHED|FAILED`。文件名必须是 1..128 个 Unicode 码点的安全 `.kmz` 基名，确保快照可被中继协议编码。它不包含 `START_POINT_REACHED`，因为该事实是一次性阶段事件，随后可能由独立的 `EXECUTING` 信号紧接着产生 `ROUTE_EXECUTION_STARTED`；阶段事实由 `mission-flight-phase` 的独立事件流保存顺序。封闭事件集为 `FileStaged`、`FileCleared`、`UploadChanged`、`ExecutionChanged`，来源分别是 STAGING、UPLOAD、EXECUTION；上传和执行事件必须携带命令提交时捕获的 `deviceGeneration`。
+`MissionSnapshot` 含严格递增 revision、当前暂存文件代际 `missionRevision`（无文件为 null）、严格递增的设备运行代际 `deviceGeneration`、只含文件名/期望大小/SHA-256 的 `MissionMetadata`、上传状态 `NOT_UPLOADED|UPLOADING(0..100)|UPLOADED|FAILED` 和执行状态 `NOT_STARTED|STARTING|EXECUTING|PAUSED|STOPPING|FINISHED|FAILED`。文件名必须是 1..128 个 Unicode 码点的安全 `.kmz` 基名，确保快照可被中继协议编码。它不包含 `START_POINT_REACHED`，因为该事实是一次性阶段事件，随后可能由独立的 `EXECUTING` 信号紧接着产生 `ROUTE_EXECUTION_STARTED`；阶段事实由 `mission-flight-phase` 的独立事件流保存顺序。封闭事件集为 `FileStaged`、`FileCleared`、`UploadChanged`、`ExecutionChanged`、`ExecutionObserved`，来源分别是 STAGING、UPLOAD、EXECUTION；上传和执行事件必须携带命令提交时捕获的 `deviceGeneration`。
+
+`missionDjiExecutionState` 是当前任务身份已确认后的最后一个原始 DJI 航线执行观察，取值只能是 `MissionExecutionRawState` 或 null。它只由 `ExecutionObserved` 写入，不能由按钮回执、桌面工作流或本模块推测生成。新暂存、清除或设备不可用时必须清为 null；仅在事件的 `missionRevision` 与 `deviceGeneration` 同时匹配当前快照时可写入。`FINISHED`、`INTERRUPTED`、`DISCONNECTED` 等已确认末态可保留到任务被替换或设备代际失效，使操作员能看见 DJI 最后真实报告；原始状态仅用于显示，绝不放宽或新增任一命令门禁。
 
 ## 提交规则与测试
 

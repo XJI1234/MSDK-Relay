@@ -1,6 +1,7 @@
 package com.skycommand.relay.wayline.state
 
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import java.util.ArrayDeque
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -35,6 +36,7 @@ data class MissionSnapshot(
     val file: MissionMetadata?,
     val upload: UploadState,
     val execution: ExecutionState,
+    val missionDjiExecutionState: MissionExecutionRawState? = null,
 )
 
 sealed interface MissionStateEvent {
@@ -61,6 +63,13 @@ sealed interface MissionStateEvent {
         val missionRevision: Long,
         val deviceGeneration: Long,
         val state: ExecutionState,
+    ) : MissionStateEvent
+
+    data class ExecutionObserved(
+        override val sourceRevision: Long,
+        val missionRevision: Long,
+        val deviceGeneration: Long,
+        val state: MissionExecutionRawState,
     ) : MissionStateEvent
 }
 
@@ -127,6 +136,7 @@ class MissionStateStore private constructor(
                         file = event.metadata,
                         upload = UploadState.NOT_UPLOADED,
                         execution = ExecutionState.NOT_STARTED,
+                        missionDjiExecutionState = null,
                     )
                 }
                 is MissionStateEvent.FileCleared -> {
@@ -139,6 +149,7 @@ class MissionStateStore private constructor(
                         file = null,
                         upload = UploadState.NOT_UPLOADED,
                         execution = ExecutionState.NOT_STARTED,
+                        missionDjiExecutionState = null,
                     )
                 }
                 is MissionStateEvent.UploadChanged -> {
@@ -156,6 +167,12 @@ class MissionStateStore private constructor(
                         return ApplyResult.IgnoredStale(event.sourceRevision)
                     }
                     current.copy(revision = current.revision + 1, execution = event.state)
+                }
+                is MissionStateEvent.ExecutionObserved -> {
+                    if (event.missionRevision != current.missionRevision || event.deviceGeneration != current.deviceGeneration) {
+                        return ApplyResult.IgnoredStale(event.sourceRevision)
+                    }
+                    current.copy(revision = current.revision + 1, missionDjiExecutionState = event.state)
                 }
             }
             val previous = current
@@ -181,6 +198,7 @@ class MissionStateStore private constructor(
                 deviceGeneration = current.deviceGeneration + 1,
                 upload = if (hasMission) UploadState.FAILED else UploadState.NOT_UPLOADED,
                 execution = if (hasMission) ExecutionState.FAILED else ExecutionState.NOT_STARTED,
+                missionDjiExecutionState = null,
             )
             current = next
             appliedSnapshot = next
@@ -321,6 +339,10 @@ class MissionStateStore private constructor(
                     require(event.missionRevision > 0) { "Mission revision must be positive" }
                     require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
                 }
+                is MissionStateEvent.ExecutionObserved -> {
+                    require(event.missionRevision > 0) { "Mission revision must be positive" }
+                    require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
+                }
             }
         }
 
@@ -340,7 +362,9 @@ class MissionStateStore private constructor(
         private fun MissionStateEvent.source(): MissionStateSource = when (this) {
             is MissionStateEvent.FileStaged, is MissionStateEvent.FileCleared -> MissionStateSource.STAGING
             is MissionStateEvent.UploadChanged -> MissionStateSource.UPLOAD
-            is MissionStateEvent.ExecutionChanged -> MissionStateSource.EXECUTION
+            is MissionStateEvent.ExecutionChanged,
+            is MissionStateEvent.ExecutionObserved,
+            -> MissionStateSource.EXECUTION
         }
     }
 }

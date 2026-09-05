@@ -62,13 +62,19 @@ internal class MsdkV5WaypointMissionApi(
 
 /** DJI enum names are converted here so the terminal-state policy is unit-testable without a flight stack. */
 internal fun mapWaypointMissionStateName(name: String): DjiMissionExecutionState = when (name) {
-    "PREPARING", "UPLOADING", "RECOVERING" -> DjiMissionExecutionState.PREPARING
+    "IDLE" -> DjiMissionExecutionState.IDLE
+    "READY" -> DjiMissionExecutionState.READY
+    "UPLOADING" -> DjiMissionExecutionState.UPLOADING
+    "PREPARING" -> DjiMissionExecutionState.PREPARING
+    "RECOVERING" -> DjiMissionExecutionState.RECOVERING
     "ENTER_WAYLINE" -> DjiMissionExecutionState.ENTER_WAYLINE
-    "EXECUTING", "RETURN_TO_START_POINT" -> DjiMissionExecutionState.EXECUTING
+    "EXECUTING" -> DjiMissionExecutionState.EXECUTING
+    "PAUSED" -> DjiMissionExecutionState.PAUSED
     "INTERRUPTED" -> DjiMissionExecutionState.INTERRUPTED
-    "FINISHED" -> DjiMissionExecutionState.COMPLETED
+    "FINISHED" -> DjiMissionExecutionState.FINISHED
+    "RETURN_TO_START_POINT" -> DjiMissionExecutionState.RETURN_TO_START_POINT
     "DISCONNECTED" -> DjiMissionExecutionState.DISCONNECTED
-    "IDLE", "READY" -> DjiMissionExecutionState.IDLE
-    "NOT_SUPPORTED", "UNKNOWN" -> DjiMissionExecutionState.UNKNOWN
+    "NOT_SUPPORTED" -> DjiMissionExecutionState.NOT_SUPPORTED
+    "UNKNOWN" -> DjiMissionExecutionState.UNKNOWN
     else -> DjiMissionExecutionState.UNKNOWN
 }

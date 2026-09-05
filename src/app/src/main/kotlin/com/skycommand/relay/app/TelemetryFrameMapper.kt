@@ -92,6 +92,7 @@ object TelemetryFrameMapper {
         "missionRevision" to snapshot.missionRevision.json(),
         "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(),
         "missionExecution" to JsonString(snapshot.missionExecution.name),
+        "missionDjiExecutionState" to snapshot.missionDjiExecutionState?.name.json(),
         "missionUploadProgress" to snapshot.missionUploadProgress.json(),
         "missionFileName" to snapshot.missionFileName.json(),
     )
