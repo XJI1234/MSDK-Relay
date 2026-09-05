@@ -127,6 +127,25 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
+    fun permitsOnlyAnExplicitContainmentActionToReplaceAnUnconfirmedDifferentOperation() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val containment = ContainmentAction()
+
+        coordinator.submit(first, 1_000) { }
+        executor.runNext()
+        scheduler.fireNext()
+
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(containment, 1_000) { })
+        executor.runNext()
+        assertEquals(1, containment.starts)
+        first.succeed()
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+    }
+
+    @Test
     fun notifiesOnlyTheTimedOutActionAfterReportingItsTerminalOutcome() {
         val executor = ManualExecutor()
         val scheduler = ManualScheduler()
@@ -202,6 +221,19 @@ class DjiOperationCoordinatorContractTest {
         override fun onLateDjiCompletion(outcome: OperationOutcome) { lateOutcomes += outcome }
 
         fun succeed() = checkNotNull(completion).succeed()
+    }
+
+    private class ContainmentAction : DjiOperation {
+        var starts = 0
+        private var completion: OperationCompletion? = null
+
+        override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
+            UnconfirmedOutcomeAdmission.CONTAINMENT
+
+        override fun run(completion: OperationCompletion) {
+            starts += 1
+            this.completion = completion
+        }
     }
 
     private class ManualExecutor : OperationExecutor {

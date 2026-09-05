@@ -7,6 +7,7 @@ import com.skycommand.relay.device.operation.OperationCompletion
 import com.skycommand.relay.device.operation.OperationOutcome
 import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
+import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.flight.command.FlightAction
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -115,6 +116,15 @@ class DjiFlightAdapter private constructor(
         val djiFailure = AtomicReference<FlightDjiFailure?>(null)
         val submission = coordinator.submit(
             object : DjiOperation {
+                override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission = when (action) {
+                    FlightAction.TAKEOFF -> UnconfirmedOutcomeAdmission.STANDARD
+                    FlightAction.LAND,
+                    FlightAction.CONFIRM_LANDING,
+                    FlightAction.RETURN_HOME,
+                    FlightAction.STOP_TAKEOFF,
+                    FlightAction.STOP_AUTO_LANDING -> UnconfirmedOutcomeAdmission.CONTAINMENT
+                }
+
                 override fun run(completion: OperationCompletion) {
                     beginRecovery(recovery, completion)
                     beforeInvocation()
@@ -124,6 +134,10 @@ class DjiFlightAdapter private constructor(
 
                 override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) {
                     recovery.onHardwareOutcomeUnconfirmed()
+                }
+
+                override fun onLateDjiCompletion(outcome: OperationOutcome) {
+                    clearRecovery(recovery)
                 }
             },
             timeoutMillis,

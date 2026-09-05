@@ -138,6 +138,19 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
+    fun rtmpStartUsesTheVideoSourceGateAndItsOwnSerializedOperationQueue() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val streamWiring = source.substringAfter("val stream = LiveStream.create(")
+            .substringBefore("val whipStream = WhipLiveStream.create(")
+
+        assertTrue(streamWiring.contains("device.streamOperations()"))
+        assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo }"))
+    }
+
+    @Test
     fun productConnectionIsNotShownAsAnAircraftConnectionFact() {
         val strings = listOf(
             Path("src/main/res/values/strings.xml"),

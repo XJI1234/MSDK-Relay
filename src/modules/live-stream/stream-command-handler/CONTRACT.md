@@ -13,6 +13,6 @@ handler.handle(command, completion) -> Accepted | Succeeded | Rejected(reason)
 
 启动只接受一个字符串字段 `rtmpUrl`，停止不接受字段。调用 `StreamCommandActions.start` 前必须完成配置校验。接受只表示已提交；其 `StreamActionCompletion` 向父门面报告 `SUCCEEDED`、`FAILED`、`TIMED_OUT` 或 `CANCELLED`。提交时不得生成成功结果。
 
-未知命令、错误/缺失字段、无效 RTMP 配置、能力前置条件失败和畸形动作结果必须映射为稳定枚举原因。拒绝不得包含原 URL、密码/令牌、异常或 DJI 值。处理器无状态、线程安全；操作串行化属于 `dji-stream-adapter` 和共享协调器。
+未知命令、错误/缺失字段、无效 RTMP 配置、能力前置条件失败和畸形动作结果必须映射为稳定枚举原因。拒绝不得包含原 URL、密码/令牌、异常或 DJI 值。处理器无状态、线程安全；操作串行化属于 `dji-stream-adapter` 和图传专用协调器。
 
 测试必须覆盖两个命令、精确字段/类型校验、全部校验失败类别、动作委托与拒绝、接受和终态的时机区别、组合边界的重复终态回调、未知命令及并发独立读取。

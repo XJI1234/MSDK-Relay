@@ -31,7 +31,7 @@ class DjiFlightAdapterContractTest {
     }
 
     @Test
-    fun blocksFurtherDjiWritesUntilTimedOutFlightActionIsResolved() {
+    fun blocksFurtherNormalFlightActionsUntilTimedOutFlightActionIsResolved() {
         val scheduler = Scheduler()
         val executor = ManualExecutor()
         val port = Port()
@@ -42,7 +42,7 @@ class DjiFlightAdapterContractTest {
         scheduler.fire()
         assertEquals(listOf(FlightDjiTerminalResult(FlightDjiTerminalOutcome.TIMED_OUT)), outcomes)
 
-        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.LAND) { outcomes += it })
+        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.TAKEOFF) { outcomes += it })
         assertEquals(listOf(FlightDjiTerminalResult(FlightDjiTerminalOutcome.TIMED_OUT)), outcomes)
         port.succeed()
         assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND) { outcomes += it })
@@ -50,7 +50,50 @@ class DjiFlightAdapterContractTest {
     }
 
     @Test
-    fun releasesOnlyATimedOutTakeoffAfterANewerFactInTheSameObservationGenerationConfirmsFlight() {
+    fun submitsLandingAfterAnUnconfirmedEarlierFlightActionWithoutLettingItsLateCompletionOverwriteLanding() {
+        val scheduler = Scheduler()
+        val executor = ManualExecutor()
+        val port = Port()
+        val adapter = DjiFlightAdapter.create(port, DjiOperationCoordinator.create(executor, scheduler), 1_000)
+        val outcomes = mutableListOf<FlightDjiTerminalResult>()
+
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.TAKEOFF) { outcomes += it })
+        executor.runNext()
+        scheduler.fire()
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND) { outcomes += it })
+        executor.runNext()
+
+        assertEquals(listOf(FlightAction.TAKEOFF, FlightAction.LAND), port.actions)
+        port.succeed(0)
+        assertEquals(listOf(FlightDjiTerminalResult(FlightDjiTerminalOutcome.TIMED_OUT)), outcomes)
+        port.succeed(1)
+        assertEquals(
+            listOf(
+                FlightDjiTerminalResult(FlightDjiTerminalOutcome.TIMED_OUT),
+                FlightDjiTerminalResult(FlightDjiTerminalOutcome.SUCCEEDED),
+            ),
+            outcomes,
+        )
+    }
+
+    @Test
+    fun submitsReturnHomeAfterAnUnconfirmedEarlierFlightAction() {
+        val scheduler = Scheduler()
+        val executor = ManualExecutor()
+        val port = Port()
+        val adapter = DjiFlightAdapter.create(port, DjiOperationCoordinator.create(executor, scheduler), 1_000)
+
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.TAKEOFF))
+        executor.runNext()
+        scheduler.fire()
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.RETURN_HOME))
+        executor.runNext()
+
+        assertEquals(listOf(FlightAction.TAKEOFF, FlightAction.RETURN_HOME), port.actions)
+    }
+
+    @Test
+    fun releasesATimedOutTakeoffAfterANewerFactInTheSameObservationGenerationConfirmsFlight() {
         val scheduler = Scheduler()
         val executor = ManualExecutor()
         val port = Port()
@@ -62,11 +105,11 @@ class DjiFlightAdapterContractTest {
         scheduler.fire()
         adapter.observeState(FlightActionState(4, 19, isFlying = true, motorsOn = true, flightMode = "AUTO_TAKE_OFF"))
 
-        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND))
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.TAKEOFF))
     }
 
     @Test
-    fun refusesToReleaseTimedOutTakeoffFromAnOldObservationGenerationOrPreexistingFact() {
+    fun doesNotReleaseTimedOutTakeoffFromAnOldObservationGeneration() {
         val scheduler = Scheduler()
         val executor = ManualExecutor()
         val port = Port()
@@ -78,11 +121,11 @@ class DjiFlightAdapterContractTest {
         scheduler.fire()
         adapter.observeState(FlightActionState(3, 19, isFlying = true, motorsOn = true, flightMode = "AUTO_TAKE_OFF"))
 
-        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.LAND))
+        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.TAKEOFF))
     }
 
     @Test
-    fun refusesToReleaseTimeoutFromAFactObservedBeforeTheInvocationBoundary() {
+    fun doesNotReleaseTimeoutFromAFactObservedBeforeTheInvocationBoundary() {
         val scheduler = Scheduler()
         val executor = ManualExecutor()
         val port = Port()
@@ -100,7 +143,7 @@ class DjiFlightAdapterContractTest {
         executor.runNext()
         scheduler.fire()
 
-        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.LAND))
+        assertIs<FlightSubmissionResult.Rejected>(adapter.execute(FlightAction.TAKEOFF))
     }
 
     @Test
@@ -132,10 +175,11 @@ class DjiFlightAdapterContractTest {
     }
 
     private class Port : DjiFlightPort {
-        val actions = mutableListOf<FlightAction>(); private var completion: FlightDjiCompletion? = null
-        override fun execute(action: FlightAction, completion: FlightDjiCompletion) { actions += action; this.completion = completion }
-        fun succeed() = checkNotNull(completion).succeed()
-        fun fail(failure: FlightDjiFailure) = checkNotNull(completion).fail(failure)
+        val actions = mutableListOf<FlightAction>()
+        private val completions = mutableListOf<FlightDjiCompletion>()
+        override fun execute(action: FlightAction, completion: FlightDjiCompletion) { actions += action; completions += completion }
+        fun succeed(index: Int = completions.lastIndex) = completions[index].succeed()
+        fun fail(failure: FlightDjiFailure) = completions.last().fail(failure)
     }
     private class ManualExecutor : OperationExecutor {
         private val tasks = ArrayDeque<() -> Unit>(); override fun execute(task: () -> Unit) { tasks += task }; fun runNext() = tasks.removeFirst()()

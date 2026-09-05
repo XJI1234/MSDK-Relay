@@ -38,6 +38,24 @@ import kotlin.test.assertTrue
 
 class DeviceConnectionContractTest {
     @Test
+    fun exposesIndependentControlAndRtmpOperationQueues() {
+        val events = mutableListOf<String>()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+        )
+
+        assertFalse(connection.operations() === connection.streamOperations())
+    }
+
+    @Test
     fun forwardsDeviceStateListenerFailuresToConfiguredDiagnosticSink() {
         val events = mutableListOf<String>()
         val diagnostics = mutableListOf<DeviceStateDiagnosticKind>()

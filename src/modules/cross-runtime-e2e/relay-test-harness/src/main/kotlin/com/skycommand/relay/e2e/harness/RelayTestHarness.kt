@@ -3,6 +3,7 @@ package com.skycommand.relay.e2e.harness
 import com.skycommand.relay.device.DeviceConnection
 import com.skycommand.relay.device.DeviceConnectionDependencies
 import com.skycommand.relay.device.state.LinkState
+import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.device.operation.OperationCancellation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
@@ -304,8 +305,8 @@ class RelayTestHarness private constructor(
             val stream = LiveStream.create(
                 LiveStreamDependencies(
                     ports.stream,
-                    device.operations(),
-                    StreamStartGate { device.capabilities().canStreamVideo },
+                    device.streamOperations(),
+                    StreamStartGate { device.snapshot().sdkAvailability == SdkAvailability.READY },
                     timeoutMillis = 1_000,
                 ),
             )

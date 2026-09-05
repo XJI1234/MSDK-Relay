@@ -487,7 +487,7 @@ class MobileRelayGraph private constructor(
             val stream = LiveStream.create(
                 LiveStreamDependencies(
                     AndroidDjiStreamPort.create(),
-                    device.operations(),
+                    device.streamOperations(),
                     StreamStartGate { device.capabilities().canStreamVideo },
                     diagnosticSink = { kind ->
                         journal.record(

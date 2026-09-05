@@ -33,7 +33,7 @@ flightControl.close() -> Unit
 
 ## 所有权和失败规则
 
-只有 `android-dji-flight-adapter` 接触 `FlightControllerKey` 和 `KeyManager`；所有飞行操作必须通过 `device-connection:dji-operation-coordinator`，因此不会与航线和图传 SDK 操作并发重叠。组合根在收到飞行遥测模块的每个 MSDK 监听事实时调用 `observeDjiFlightState(fact)`；门面只转交该纯 Kotlin 事实，不能读取 Android、桌面状态或缓存。设备不可用或应用关闭时门面必须取消尚未完成的操作；迟到回调不得恢复或完成已失效的命令。若一个已开始飞行调用超时或取消，协调器保留操作槽位并拒绝任何新的 DJI 写调用，直至 DJI 回执或该动作的权威状态观察确认硬件已稳定。
+只有 `android-dji-flight-adapter` 接触 `FlightControllerKey` 和 `KeyManager`；所有飞行操作必须通过 `device-connection` 的控制 `dji-operation-coordinator`，因此会与航线、配对和设备设置严格串行，但不阻塞图传专用队列。组合根在收到飞行遥测模块的每个 MSDK 监听事实时调用 `observeDjiFlightState(fact)`；门面只转交该纯 Kotlin 事实，不能读取 Android、桌面状态或缓存。设备不可用或应用关闭时门面必须取消尚未完成的操作；迟到回调不得恢复或完成已失效的命令。若一个已开始飞行调用超时或取消，协调器保留操作槽位并拒绝普通新 DJI 写调用，直至 DJI 回执或该动作的权威状态观察确认硬件已稳定；明确的降落、返航与停止类收尾命令按协调器的 `CONTAINMENT` 规则仍可尝试送达 MSDK。
 
 ## 验证要求
 

@@ -4,8 +4,19 @@ import java.util.ArrayDeque
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
+enum class UnconfirmedOutcomeAdmission {
+    STANDARD,
+    CONTAINMENT,
+}
+
 fun interface DjiOperation {
     fun run(completion: OperationCompletion)
+
+    /**
+     * Only a one-way containment action may replace an unresolved earlier DJI call.
+     * Normal actions retain the default and remain quarantined until the old call settles.
+     */
+    fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission = UnconfirmedOutcomeAdmission.STANDARD
 
     /**
      * A stable, non-null marker permits this containment operation to replace a
@@ -96,12 +107,14 @@ class DjiOperationCoordinator private constructor(
                 val unresolved = running ?: return SubmissionResult.Rejected
                 val replacementMarker = runCatching { action.unconfirmedRetryMarker() }.getOrNull()
                 val unresolvedMarker = runCatching { unresolved.action.unconfirmedRetryMarker() }.getOrNull()
-                if (replacementMarker == null || replacementMarker != unresolvedMarker) {
+                val matchingRetry = replacementMarker != null && replacementMarker == unresolvedMarker
+                val containment = runCatching { action.unconfirmedOutcomeAdmission() }
+                    .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.CONTAINMENT
+                if (!matchingRetry && !containment) {
                     return SubmissionResult.Rejected
                 }
-                // This is deliberately limited to an equivalent containment command.
-                // Its prior terminal result was already reported as unconfirmed;
-                // a late DJI callback remains isolated from the replacement request.
+                // The original caller was already told its result is unconfirmed. A late callback
+                // remains isolated from the replacement action, which can now attempt containment.
                 unresolved.hardwareSettled = true
                 unresolved.superseded = true
                 running = null
