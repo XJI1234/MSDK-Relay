@@ -23,7 +23,7 @@ liveStream.markDeviceUnavailable() -> StreamSnapshot
 liveStream.markSourceUnavailable() -> StreamSnapshot
 ```
 
-`LiveStreamDependencies` 接受 `DjiStreamPort`、只读 `StreamStartGate`、图传专用 `DjiOperationCoordinator`、范围为 1,000..60,000 毫秒的操作超时和可选诊断接收器。`StreamStartGate` 只能回答当前生产 RTMP 图传源是否允许调用 MSDK，不能暴露 DJI 类型或修改设备状态；组合根必须把它连接到同一份 `DeviceSnapshot` 的 `canStreamVideo`，即 `SdkAvailability.READY`、`AirLinkKey.KeyConnection` 和 `CameraKey.KeyConnection(LEFT_OR_MAIN)` 均为 `CONNECTED`。注入对象仍归调用方所有；门面创建并唯一拥有 `StreamStateStore`、`DjiStreamAdapter` 和 `StreamCommandHandler`。
+`LiveStreamDependencies` 接受 `DjiStreamPort`、只读 `StreamStartGate`、图传专用 `DjiOperationCoordinator`、范围为 1,000..60,000 毫秒的操作超时、可选诊断接收器和可选只读 `CameraFrameObserver`。`StreamStartGate` 只能回答当前生产 RTMP 图传源是否允许调用 MSDK，不能暴露 DJI 类型或修改设备状态；组合根必须把它连接到同一份 `DeviceSnapshot` 的 `canStreamVideo`，即 `SdkAvailability.READY`、`AirLinkKey.KeyConnection` 和 `CameraKey.KeyConnection(LEFT_OR_MAIN)` 均为 `CONNECTED`。注入对象仍归调用方所有；门面创建并唯一拥有 `StreamStateStore`、`DjiStreamAdapter` 和 `StreamCommandHandler`。
 
 `live-stream.start` 与 `live-stream.stop` 只有在对应 DJI 操作成功终态到达后才向 gateway 报告成功。接受提交、同步拒绝、失败、超时、取消、重复或延迟回调必须各自产生至多一个不泄漏 DJI 细节的安全结果。
 
@@ -32,6 +32,8 @@ liveStream.markSourceUnavailable() -> StreamSnapshot
 MSDK `CompletionCallback.onSuccess` 只能产生 `SUCCEEDED`：它仅表示 DJI 已接受/完成该 API 调用，不表示手机已经推流、桌面已出画、飞机已经起飞或任务已经进入执行。MSDK `CompletionCallback.onFailure(IDJIError)` 必须保留其实际 `errorCode()` 与 `description()` 的安全、有界副本，并以结构化 `{ domain: "live-stream", outcome: "ACTION_REJECTED", errorCode, errorDescription }` 交给 gateway。手机本地异常或调用失败使用 `INVOCATION_FAILED`；超时、取消、断线使用 `RESULT_UNCONFIRMED`。后三者绝不能伪装成 DJI 拒绝。
 
 `LiveStreamStatusListener.onError(IDJIError)` 是独立于按钮操作的运行期 MSDK 回调。它必须以 `liveStreamRuntimeErrorCode` 和 `liveStreamRuntimeErrorDescription` 两个遥测字段持续交给桌面，即使它导致 `liveStreaming=false` 也不得丢失；新开始、明确停止、设备不可用或源不可用会清除上一轮运行期错误。它不能覆盖已显示的开始/停止命令回执，也不能被显示为某次命令的 `onFailure`。
+
+`CameraFrameObserver` 是生产 RTMP 会话的只读旁路观察，不是第二条视频传输链路。图传启动请求被本地队列接受后，它注册 `ICameraStreamManager.ReceiveStreamListener`；停止、启动失败、设备不可用、图传源不可用和关闭时解除注册。它只上报代次、是否收帧、数量、帧龄和 `StreamInfo` 元数据，绝不保留或转发 `ByteArray`，不创建 `Surface`，不调用 `ILiveStreamManager`，不改变 `LiveStreamStatus.isStreaming`，也不参与图传门禁。观察注册失败只记录诊断，绝不阻断已经验证的 RTMP 启动路径。
 
 ## 3. 所有权与行为规则
 

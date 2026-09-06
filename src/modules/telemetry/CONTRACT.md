@@ -13,7 +13,7 @@ Gradle 路径：`:telemetry`
 
 | 二级模块 | 唯一职责 |
 | --- | --- |
-| `snapshot-assembler` | 从同一次采样的设备、飞行、直播和航线快照产生安全遥测值，并组合公开能力值 |
+| `snapshot-assembler` | 从同一次采样的设备、飞行、直播、航线和相机编码帧观察快照产生安全遥测值，并组合公开能力值 |
 | `capability-calculator` | 将内部设备能力转换为电脑端稳定能力字段 |
 | `telemetry-command-handler` | 提供一次性 `telemetry.read` 结果 |
 | `telemetry-publisher` | 去重、失败重试和发送顺序 |
@@ -32,7 +32,7 @@ telemetry.publishCurrent() -> Published | SkippedUnchanged | Rejected
 
 ## 4. 规则
 
-- `source` 是组合根提供的只读 `TelemetryStateSource`，负责在一个采样边界返回设备、飞行、直播和航线快照，并在任一来源变化时通知。telemetry 不持有或修改这些事实。
+- `source` 是组合根提供的只读 `TelemetryStateSource`，负责在一个采样边界返回设备、飞行、直播、航线和相机编码帧观察快照，并在任一来源变化时通知。相机帧观察只上报元数据与连续性事实，既不是视频传输，也不改变 DJI Key、图传命令状态或任何控制门禁。telemetry 不持有或修改这些事实。
 - `start()` 订阅统一状态源，并对每次有效状态事件重新采样后尝试发布；重复启动不得重复订阅。
 - `stop()` 注销订阅并重置发布去重基线；停止后不得因已经排队的旧事件发布。
 - `resetPublicationBaseline()` 只清除已发送快照的去重基线，不订阅、注销、读取或修改任何状态源。每次电脑 WebSocket 进入一个新的 `ACTIVE` 会话，组合根必须在发布该会话首帧前调用它；因此相同的当前快照也必须发送给新会话。

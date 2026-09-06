@@ -15,6 +15,8 @@ import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.phase.MissionExecutionRawState
+import com.skycommand.relay.stream.camera.observer.CameraFrameCodec
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -71,6 +73,14 @@ class TelemetryFrameMapperTest {
                 liveRttMillis = 42,
                 livePacketLoss = 7,
                 livePacketCacheLength = 96,
+                cameraFrameGeneration = 4,
+                cameraFrameState = CameraFrameObservationState.RECEIVING,
+                cameraFrameCount = 88,
+                cameraFrameLastAgeMillis = 17,
+                cameraFrameCodec = CameraFrameCodec.H264,
+                cameraFrameWidth = 1920,
+                cameraFrameHeight = 1080,
+                cameraFrameRate = 30,
                 missionRevision = 7,
                 missionDeviceGeneration = 3,
                 missionExecution = ExecutionState.EXECUTING,
@@ -109,6 +119,14 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("42"), frame.payload["liveRttMillis"])
         assertEquals(JsonNumber("7"), frame.payload["livePacketLoss"])
         assertEquals(JsonNumber("96"), frame.payload["livePacketCacheLength"])
+        assertEquals(JsonNumber("4"), frame.payload["cameraFrameGeneration"])
+        assertEquals(JsonString("RECEIVING"), frame.payload["cameraFrameState"])
+        assertEquals(JsonNumber("88"), frame.payload["cameraFrameCount"])
+        assertEquals(JsonNumber("17"), frame.payload["cameraFrameLastAgeMillis"])
+        assertEquals(JsonString("H264"), frame.payload["cameraFrameCodec"])
+        assertEquals(JsonNumber("1920"), frame.payload["cameraFrameWidth"])
+        assertEquals(JsonNumber("1080"), frame.payload["cameraFrameHeight"])
+        assertEquals(JsonNumber("30"), frame.payload["cameraFrameRate"])
         assertEquals(JsonNumber("7"), frame.payload["missionRevision"])
         assertEquals(JsonNumber("3"), frame.payload["missionDeviceGeneration"])
         assertEquals(JsonString("EXECUTING"), frame.payload["missionExecution"])

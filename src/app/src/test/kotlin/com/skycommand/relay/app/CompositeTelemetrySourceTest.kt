@@ -6,6 +6,8 @@ import com.skycommand.relay.device.state.PairingState
 import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamSnapshot
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationState
+import com.skycommand.relay.stream.camera.observer.CameraFrameSnapshot
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
@@ -27,19 +29,40 @@ class CompositeTelemetrySourceTest {
     }
 
     @Test fun everyFeedChangeUsesTheSameListener() {
-        val feeds = List(4) { FakeFeed<Any>() }
+        val feeds = List(5) { FakeFeed<Any>() }
         val source = CompositeTelemetrySource(
             feeds[0].typed(deviceSnapshot()),
             feeds[1].typed(FlightTelemetrySnapshot()),
             feeds[2].typed(streamSnapshot()),
             feeds[3].typed(missionSnapshot()),
+            feeds[4].typed(cameraFramesUnavailable()),
         )
         var changes = 0
         source.onChanged { changes++ }
 
         feeds.forEach { it.emit() }
 
-        assertEquals(4, changes)
+        assertEquals(5, changes)
+    }
+
+    @Test fun cameraFrameFactChangesArePublishedWithTheOtherTelemetryFacts() {
+        val cameraFrames = FakeFeed(
+            CameraFrameSnapshot(1, CameraFrameObservationState.RECEIVING, 3, 0, null, 1920, 1080, 30),
+        )
+        val source = CompositeTelemetrySource(
+            FakeFeed(deviceSnapshot()).feed(),
+            FakeFeed(FlightTelemetrySnapshot()).feed(),
+            FakeFeed(streamSnapshot()).feed(),
+            FakeFeed(missionSnapshot()).feed(),
+            cameraFrames.feed(),
+        )
+        var changes = 0
+
+        source.onChanged { changes += 1 }
+        cameraFrames.emit()
+
+        assertEquals(CameraFrameObservationState.RECEIVING, source.snapshot().cameraFrames.state)
+        assertEquals(1, changes)
     }
 
     @Test fun subscriptionFailureReleasesPreviouslyRegisteredFeedsInReverseOrder() {
@@ -48,7 +71,8 @@ class CompositeTelemetrySourceTest {
         val flight = NamedFeed("flight", FlightTelemetrySnapshot(), events)
         val stream = NamedFeed("stream", streamSnapshot(), events, failRegistration = true)
         val mission = NamedFeed("mission", missionSnapshot(), events)
-        val source = CompositeTelemetrySource(device, flight, stream, mission)
+        val cameraFrames = NamedFeed("cameraFrames", cameraFramesUnavailable(), events)
+        val source = CompositeTelemetrySource(device, flight, stream, mission, cameraFrames)
 
         assertFailsWith<IllegalStateException> { source.onChanged {} }
 
@@ -62,6 +86,7 @@ class CompositeTelemetrySourceTest {
             NamedFeed("flight", FlightTelemetrySnapshot(), events),
             NamedFeed("stream", streamSnapshot(), events),
             NamedFeed("mission", missionSnapshot(), events),
+            NamedFeed("cameraFrames", cameraFramesUnavailable(), events),
         )
         val registration = source.onChanged {}
 
@@ -69,7 +94,7 @@ class CompositeTelemetrySourceTest {
         registration.unregister()
 
         assertEquals(
-            listOf("device+", "flight+", "stream+", "mission+", "mission-", "stream-", "flight-", "device-"),
+            listOf("device+", "flight+", "stream+", "mission+", "cameraFrames+", "cameraFrames-", "mission-", "stream-", "flight-", "device-"),
             events,
         )
     }
@@ -79,6 +104,11 @@ class CompositeTelemetrySourceTest {
         FakeFeed(FlightTelemetrySnapshot()).feed(),
         FakeFeed(streamSnapshot()).feed(),
         FakeFeed(missionSnapshot()).feed(),
+        FakeFeed(cameraFramesUnavailable()).feed(),
+    )
+
+    private fun cameraFramesUnavailable() = CameraFrameSnapshot(
+        0, CameraFrameObservationState.UNAVAILABLE, 0, null, null, null, null, null,
     )
 
     private fun deviceSnapshot() = DeviceSnapshot(

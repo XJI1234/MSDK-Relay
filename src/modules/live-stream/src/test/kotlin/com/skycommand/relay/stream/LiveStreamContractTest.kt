@@ -13,6 +13,10 @@ import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.dji.StreamDjiCompletion
 import com.skycommand.relay.stream.dji.StreamDjiFailure
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationPort
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationState
+import com.skycommand.relay.stream.camera.observer.CameraFrameObserver
+import com.skycommand.relay.stream.camera.observer.CameraFrameReceiptListener
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -165,13 +169,38 @@ class LiveStreamContractTest {
         assertEquals("Video source unavailable", fixture.liveStream.snapshot().notice)
     }
 
-    private class Fixture(startAllowed: Boolean = true) {
+    @Test
+    fun bindsReadOnlyCameraFrameObservationToTheProductionRtmpGeneration() {
+        val fixture = Fixture(withCameraFrameObserver = true)
+        fixture.liveStream.commandHandler().handle(start(), Completion())
+        assertEquals(CameraFrameObservationState.UNOBSERVED, fixture.cameraFrameObserver!!.snapshot().state)
+
+        fixture.port.startCompletion!!.fail()
+        assertEquals(CameraFrameObservationState.UNAVAILABLE, fixture.cameraFrameObserver!!.snapshot().state)
+
+        fixture.liveStream.commandHandler().handle(start(), Completion())
+        fixture.port.startCompletion!!.succeed()
+        assertEquals(CameraFrameObservationState.UNOBSERVED, fixture.cameraFrameObserver!!.snapshot().state)
+        fixture.liveStream.commandHandler().handle(stop(), Completion())
+        assertEquals(CameraFrameObservationState.UNAVAILABLE, fixture.cameraFrameObserver!!.snapshot().state)
+    }
+
+    private class Fixture(startAllowed: Boolean = true, withCameraFrameObserver: Boolean = false) {
         val port = Port()
+        private val cameraPort = CameraPort()
+        val cameraFrameObserver = if (withCameraFrameObserver) CameraFrameObserver.create(cameraPort) else null
         private val coordinator = DjiOperationCoordinator.create(
             executor = OperationExecutor { it() },
             scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
         )
-        val liveStream = LiveStream.create(LiveStreamDependencies(port, coordinator, StreamStartGate { startAllowed }))
+        val liveStream = LiveStream.create(
+            LiveStreamDependencies(
+                djiPort = port,
+                operationCoordinator = coordinator,
+                startGate = StreamStartGate { startAllowed },
+                cameraFrameObserver = cameraFrameObserver,
+            ),
+        )
     }
 
     private class Completion : CommandCompletion {
@@ -198,6 +227,11 @@ class LiveStreamContractTest {
             stopCalls += 1
             stopCompletion = completion
         }
+    }
+
+    private class CameraPort : CameraFrameObservationPort {
+        override fun addReceiveStreamListener(listener: CameraFrameReceiptListener) = Unit
+        override fun removeReceiveStreamListener(listener: CameraFrameReceiptListener) = Unit
     }
 
     private fun start() = CommandFrame("start", "live-stream.start", JsonObject(mapOf("rtmpUrl" to JsonString("rtmp://computer/live/device"))))

@@ -8,6 +8,9 @@ import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.telemetry.capability.CapabilityCalculator
 import com.skycommand.relay.telemetry.capability.TelemetryCapabilities
 import com.skycommand.relay.stream.state.StreamSnapshot
+import com.skycommand.relay.stream.camera.observer.CameraFrameCodec
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationState
+import com.skycommand.relay.stream.camera.observer.CameraFrameSnapshot
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import com.skycommand.relay.wayline.state.UploadState
@@ -71,6 +74,16 @@ data class TelemetryInputs(
     val flight: FlightTelemetrySnapshot,
     val stream: StreamSnapshot,
     val mission: MissionSnapshot,
+    val cameraFrames: CameraFrameSnapshot = CameraFrameSnapshot(
+        generation = 0,
+        state = CameraFrameObservationState.UNAVAILABLE,
+        receivedFrameCount = 0,
+        lastFrameAgeMillis = null,
+        codec = null,
+        width = null,
+        height = null,
+        frameRate = null,
+    ),
 )
 
 data class TelemetrySnapshot(
@@ -102,6 +115,16 @@ data class TelemetrySnapshot(
     val liveRttMillis: Long? = null,
     val livePacketLoss: Long? = null,
     val livePacketCacheLength: Long? = null,
+    /** A separate, read-only observation of encoded camera bytes entering phone MSDK. */
+    val cameraFrameGeneration: Long = 0,
+    val cameraFrameState: CameraFrameObservationState = CameraFrameObservationState.UNAVAILABLE,
+    val cameraFrameCount: Long = 0,
+    /** Phone-local monotonic age at snapshot creation, not a desktop wall-clock timestamp. */
+    val cameraFrameLastAgeMillis: Long? = null,
+    val cameraFrameCodec: CameraFrameCodec? = null,
+    val cameraFrameWidth: Int? = null,
+    val cameraFrameHeight: Int? = null,
+    val cameraFrameRate: Int? = null,
     val missionRevision: Long? = null,
     val missionDeviceGeneration: Long? = null,
     val missionExecution: ExecutionState = ExecutionState.NOT_STARTED,
@@ -125,6 +148,15 @@ data class TelemetrySnapshot(
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
         if (remainingFlightTimeSeconds != null) require(lowBatteryRthState != null)
+        require(cameraFrameGeneration >= 0)
+        require(cameraFrameCount >= 0)
+        cameraFrameLastAgeMillis?.let { require(it >= 0) }
+        cameraFrameWidth?.let { require(it > 0) }
+        cameraFrameHeight?.let { require(it > 0) }
+        cameraFrameRate?.let { require(it in 1..240) }
+        if (cameraFrameCount == 0L) {
+            require(cameraFrameLastAgeMillis == null && cameraFrameCodec == null && cameraFrameWidth == null && cameraFrameHeight == null && cameraFrameRate == null)
+        }
     }
 }
 
@@ -178,6 +210,14 @@ object SnapshotAssembler {
         liveRttMillis = liveMetrics?.rttMillis,
         livePacketLoss = liveMetrics?.packetLoss,
         livePacketCacheLength = liveMetrics?.packetCacheLength,
+        cameraFrameGeneration = inputs.cameraFrames.generation,
+        cameraFrameState = inputs.cameraFrames.state,
+        cameraFrameCount = inputs.cameraFrames.receivedFrameCount,
+        cameraFrameLastAgeMillis = inputs.cameraFrames.lastFrameAgeMillis,
+        cameraFrameCodec = inputs.cameraFrames.codec,
+        cameraFrameWidth = inputs.cameraFrames.width,
+        cameraFrameHeight = inputs.cameraFrames.height,
+        cameraFrameRate = inputs.cameraFrames.frameRate,
         missionRevision = inputs.mission.missionRevision,
         missionDeviceGeneration = inputs.mission.missionRevision?.let { inputs.mission.deviceGeneration },
         missionExecution = inputs.mission.execution,

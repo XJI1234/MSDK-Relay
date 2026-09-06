@@ -8,6 +8,9 @@ import com.skycommand.relay.telemetry.capability.TelemetryCapabilities
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.state.StreamMetrics
 import com.skycommand.relay.stream.state.StreamSnapshot
+import com.skycommand.relay.stream.camera.observer.CameraFrameCodec
+import com.skycommand.relay.stream.camera.observer.CameraFrameObservationState
+import com.skycommand.relay.stream.camera.observer.CameraFrameSnapshot
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.state.ExecutionState
@@ -151,6 +154,35 @@ class SnapshotAssemblerContractTest {
     }
 
     @Test
+    fun preservesCameraFrameFactsSeparatelyFromLiveStreamStatus() {
+        val result = SnapshotAssembler.assemble(
+            inputs(
+                stream = StreamSnapshot(1, StreamLifecycleState.STREAMING, true, "Streaming", null, djiStreaming = true),
+                cameraFrames = CameraFrameSnapshot(
+                    generation = 4,
+                    state = CameraFrameObservationState.RECEIVING,
+                    receivedFrameCount = 88,
+                    lastFrameAgeMillis = 17,
+                    codec = CameraFrameCodec.H264,
+                    width = 1920,
+                    height = 1080,
+                    frameRate = 30,
+                ),
+            ),
+        )
+
+        assertEquals(true, result.liveStreaming)
+        assertEquals(CameraFrameObservationState.RECEIVING, result.cameraFrameState)
+        assertEquals(4, result.cameraFrameGeneration)
+        assertEquals(88, result.cameraFrameCount)
+        assertEquals(17, result.cameraFrameLastAgeMillis)
+        assertEquals(CameraFrameCodec.H264, result.cameraFrameCodec)
+        assertEquals(1920, result.cameraFrameWidth)
+        assertEquals(1080, result.cameraFrameHeight)
+        assertEquals(30, result.cameraFrameRate)
+    }
+
+    @Test
     fun rejectsInvalidFlightTelemetryAtItsConstructionBoundary() {
         listOf(-1, 101).forEach { battery ->
             assertFailsWith<IllegalArgumentException> { FlightTelemetrySnapshot(batteryPercent = battery) }
@@ -236,5 +268,6 @@ class SnapshotAssemblerContractTest {
         flight: FlightTelemetrySnapshot = FlightTelemetrySnapshot(),
         stream: StreamSnapshot = StreamSnapshot(0, StreamLifecycleState.STOPPED, false, "Stopped", null),
         mission: MissionSnapshot = MissionSnapshot(0, null, 0, null, UploadState.NOT_UPLOADED, ExecutionState.NOT_STARTED),
-    ) = TelemetryInputs(device, flight, stream, mission)
+        cameraFrames: CameraFrameSnapshot = CameraFrameSnapshot(0, CameraFrameObservationState.UNAVAILABLE, 0, null, null, null, null, null),
+    ) = TelemetryInputs(device, flight, stream, mission, cameraFrames)
 }

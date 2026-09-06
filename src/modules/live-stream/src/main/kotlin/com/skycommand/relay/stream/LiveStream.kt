@@ -16,6 +16,7 @@ import com.skycommand.relay.stream.command.StreamCommandHandler
 import com.skycommand.relay.stream.command.StreamCommandRejection
 import com.skycommand.relay.stream.command.StreamCommandResult
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
+import com.skycommand.relay.stream.camera.observer.CameraFrameObserver
 import com.skycommand.relay.stream.dji.DjiStreamAdapter
 import com.skycommand.relay.stream.dji.DjiStreamPort
 import com.skycommand.relay.stream.dji.DjiStreamStartResult
@@ -43,6 +44,8 @@ data class LiveStreamDependencies(
     val startGate: StreamStartGate,
     val timeoutMillis: Long = 30_000,
     val diagnosticSink: StreamStateDiagnosticSink = StreamStateDiagnosticSink { },
+    /** Optional, read-only observation of real DJI camera frames for the production RTMP generation. */
+    val cameraFrameObserver: CameraFrameObserver? = null,
 )
 
 class LiveStream private constructor(private val dependencies: LiveStreamDependencies) {
@@ -64,6 +67,7 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
     fun onChanged(listener: StreamStateListener): Registration = state.onChanged(listener)
 
     fun markDeviceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
+        dependencies.cameraFrameObserver?.stop()
         val requiresRecoveryStop = state.snapshot().state != com.skycommand.relay.stream.state.StreamLifecycleState.STOPPED
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
         val snapshot = (state.markDeviceUnavailable() as com.skycommand.relay.stream.state.StreamUpdateResult.Applied).snapshot
@@ -73,6 +77,7 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
 
     /** Stops the production RTMP stream when AirLink or the primary camera is unavailable. */
     fun markSourceUnavailable(): StreamSnapshot = lifecycleLock.withLock {
+        dependencies.cameraFrameObserver?.stop()
         val requiresRecoveryStop = state.snapshot().state != StreamLifecycleState.STOPPED
         if (!requiresRecoveryStop) return state.snapshot()
         activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
@@ -83,6 +88,7 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
 
     fun close() {
         lifecycleLock.withLock {
+            dependencies.cameraFrameObserver?.stop()
             activeOperations.toList().also { activeOperations.clear() }.forEach { it.cancellation.cancel() }
             state.markDeviceUnavailable()
         }
@@ -111,14 +117,20 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
                 return StreamActionResult.Rejected
             }
             val tracked = TrackedOperation()
+            val terminalOutcome = java.util.concurrent.atomic.AtomicReference<StreamDjiTerminalOutcome?>(null)
             val result = adapter.start(config, object : StreamDjiTerminalListener {
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome) = onCompleted(outcome, null)
 
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) {
+                    terminalOutcome.set(outcome)
+                    if (outcome != StreamDjiTerminalOutcome.SUCCEEDED) dependencies.cameraFrameObserver?.stop()
                     completeTrackedOperation(tracked)
                     completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
                 }
             })
+            if (result is DjiStreamStartResult.Accepted && terminalOutcome.get() != StreamDjiTerminalOutcome.FAILED && terminalOutcome.get() != StreamDjiTerminalOutcome.TIMED_OUT && terminalOutcome.get() != StreamDjiTerminalOutcome.CANCELLED) {
+                dependencies.cameraFrameObserver?.start()
+            }
             track(result, tracked)
         }
 
@@ -132,6 +144,7 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
                     completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
                 }
             })
+            if (result is DjiStreamStopResult.Accepted) dependencies.cameraFrameObserver?.stop()
             track(result, tracked)
         }
     }

@@ -56,6 +56,8 @@ import com.skycommand.relay.stream.StreamStartGate
 import com.skycommand.relay.stream.state.StreamLifecycleState
 import com.skycommand.relay.stream.camera.CameraStreamSource
 import com.skycommand.relay.stream.camera.android.AndroidCameraStreamApi
+import com.skycommand.relay.stream.camera.observer.CameraFrameObserver
+import com.skycommand.relay.stream.camera.observer.android.AndroidCameraFrameObservationPort
 import com.skycommand.relay.stream.dji.android.AndroidDjiStreamPort
 import com.skycommand.relay.stream.whip.WhipLiveStream
 import com.skycommand.relay.stream.whip.WhipLiveStreamDependencies
@@ -82,6 +84,7 @@ import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
 import com.skycommand.relay.wayline.staging.android.AndroidMissionStagingStorage
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.UUID
@@ -112,6 +115,8 @@ class MobileRelayGraph private constructor(
     private val flightControl: FlightControl,
     private val deviceSettings: DeviceSettings,
     private val stream: LiveStream,
+    private val cameraFrameObserver: CameraFrameObserver,
+    private val cameraFrameEvaluation: ScheduledFuture<*>,
     private val whipStream: WhipLiveStream,
     private val videoTransports: VideoTransportInterlock,
     private val wayline: WaylineMission,
@@ -359,6 +364,7 @@ class MobileRelayGraph private constructor(
         runCatching { cancelUsbWatch() }
         runCatching { runtime.stop() }
         runCatching { diagnostics.stop() }
+        runCatching { cameraFrameEvaluation.cancel(false) }
         registrations.asReversed().forEach { runCatching { it.unregister() } }
         registrations.clear()
         runCatching { wayline.markDeviceUnavailable() }
@@ -483,6 +489,18 @@ class MobileRelayGraph private constructor(
                     },
                 ),
             )
+            val cameraFrameObserver = CameraFrameObserver.create(
+                AndroidCameraFrameObservationPort.create(),
+                diagnosticSink = { kind ->
+                    journal.record(
+                        DiagnosticLevel.WARN,
+                        "camera-frame-observer",
+                        kind.name,
+                        null,
+                        "DJI camera frame observation could not be processed",
+                    )
+                },
+            )
             val stream = LiveStream.create(
                 LiveStreamDependencies(
                     AndroidDjiStreamPort.create(),
@@ -497,6 +515,7 @@ class MobileRelayGraph private constructor(
                             "Stream state listener failed while receiving a state update",
                         )
                     },
+                    cameraFrameObserver = cameraFrameObserver,
                 ),
             )
             val whipStream = WhipLiveStream.create(
@@ -598,6 +617,15 @@ class MobileRelayGraph private constructor(
                 feed({ wayline.snapshot() }) { changed ->
                     wayline.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
                 },
+                feed({ cameraFrameObserver.snapshot() }) { changed ->
+                    cameraFrameObserver.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
+                },
+            )
+            val cameraFrameEvaluation = executor.scheduleWithFixedDelay(
+                { cameraFrameObserver.evaluate() },
+                1,
+                1,
+                TimeUnit.SECONDS,
             )
             val telemetrySequence = TelemetryFrameSequence()
             val telemetry = Telemetry.create(
@@ -674,7 +702,7 @@ class MobileRelayGraph private constructor(
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, whipStream, videoTransports, wayline, waylineAdapter,
+                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
                 staging, foregroundPort, executor, journal, flightTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }

@@ -1,6 +1,7 @@
 package com.skycommand.relay.app
 
 import com.skycommand.relay.device.state.DeviceSnapshot
+import com.skycommand.relay.stream.camera.observer.CameraFrameSnapshot
 import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.telemetry.TelemetryRegistration
 import com.skycommand.relay.telemetry.TelemetryStateSource
@@ -19,12 +20,14 @@ class CompositeTelemetrySource(
     private val flight: SnapshotFeed<FlightTelemetrySnapshot>,
     private val stream: SnapshotFeed<StreamSnapshot>,
     private val mission: SnapshotFeed<MissionSnapshot>,
+    private val cameraFrames: SnapshotFeed<CameraFrameSnapshot>,
 ) : TelemetryStateSource {
     override fun snapshot(): TelemetryInputs = TelemetryInputs(
         device.snapshot(),
         flight.snapshot(),
         stream.snapshot(),
         mission.snapshot(),
+        cameraFrames.snapshot(),
     )
 
     override fun onChanged(listener: () -> Unit): TelemetryRegistration {
@@ -34,6 +37,7 @@ class CompositeTelemetrySource(
             registrations += flight.onChanged(listener)
             registrations += stream.onChanged(listener)
             registrations += mission.onChanged(listener)
+            registrations += cameraFrames.onChanged(listener)
         } catch (failure: Exception) {
             registrations.asReversed().forEach { runCatching { it.unregister() } }
             throw failure
