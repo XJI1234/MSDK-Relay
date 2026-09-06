@@ -71,6 +71,7 @@ import com.skycommand.relay.settings.DeviceSettings
 import com.skycommand.relay.settings.DeviceSettingsDependencies
 import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.telemetry.Telemetry
+import com.skycommand.relay.telemetry.TelemetryPublicationRequestResult
 import com.skycommand.relay.telemetry.command.TelemetryReadResult
 import com.skycommand.relay.telemetry.flight.android.AndroidFlightTelemetrySource
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
@@ -730,9 +731,9 @@ class MobileRelayGraph private constructor(
                 else {
                     when (val read = telemetry.read()) {
                     is TelemetryReadResult.ReadSucceeded -> when (telemetry.publishCurrent()) {
-                        PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
-                            completion.succeed("Telemetry published", TelemetryFrameMapper.commandResult(read.snapshot))
-                        PublishTelemetryResult.Rejected -> completion.reject("Telemetry is unavailable")
+                        TelemetryPublicationRequestResult.Queued ->
+                            completion.succeed("Telemetry publication queued", TelemetryFrameMapper.commandResult(read.snapshot))
+                        TelemetryPublicationRequestResult.Rejected -> completion.reject("Telemetry is unavailable")
                     }
                     TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
                     }

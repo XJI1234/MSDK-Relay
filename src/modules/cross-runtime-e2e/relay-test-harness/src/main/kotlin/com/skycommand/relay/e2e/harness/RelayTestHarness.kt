@@ -68,6 +68,7 @@ import com.skycommand.relay.stream.LiveStream
 import com.skycommand.relay.stream.LiveStreamDependencies
 import com.skycommand.relay.stream.StreamStartGate
 import com.skycommand.relay.telemetry.Telemetry
+import com.skycommand.relay.telemetry.TelemetryPublicationRequestResult
 import com.skycommand.relay.telemetry.TelemetryRegistration
 import com.skycommand.relay.telemetry.TelemetryStateSource
 import com.skycommand.relay.telemetry.command.TelemetryReadResult
@@ -388,9 +389,9 @@ class RelayTestHarness private constructor(
                 if (command.fields.fields.isNotEmpty()) completion.reject("Telemetry command fields are invalid")
                 else when (val read = telemetry.read()) {
                     is TelemetryReadResult.ReadSucceeded -> when (telemetry.publishCurrent()) {
-                        PublishTelemetryResult.Published, PublishTelemetryResult.SkippedUnchanged ->
-                            completion.succeed("Telemetry published", HarnessTelemetryMapper.commandResult(read.snapshot))
-                        PublishTelemetryResult.Rejected -> completion.reject("Telemetry is unavailable")
+                        TelemetryPublicationRequestResult.Queued ->
+                            completion.succeed("Telemetry publication queued", HarnessTelemetryMapper.commandResult(read.snapshot))
+                        TelemetryPublicationRequestResult.Rejected -> completion.reject("Telemetry is unavailable")
                     }
                     TelemetryReadResult.ReadUnavailable -> completion.reject("Telemetry is unavailable")
                 }

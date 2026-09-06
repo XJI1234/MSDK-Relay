@@ -36,9 +36,9 @@ class RelayTestHarnessContractTest {
         storage.beginTemporary(metadata("second.kmz", second))
         storage.append(second)
 
-        assertEquals(first.toList(), storage.read(metadata("first.kmz", first)).toList())
+        assertEquals(first.toList(), storage.open(metadata("first.kmz", first)).readBytes().toList())
         storage.replaceCurrent()
-        assertEquals(second.toList(), storage.read(metadata("second.kmz", second)).toList())
+        assertEquals(second.toList(), storage.open(metadata("second.kmz", second)).readBytes().toList())
     }
 
     @Test
