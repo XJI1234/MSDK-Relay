@@ -53,4 +53,6 @@ device.settings.transmission.write       fields: TransmissionSettingsPatch
 
 ## 失败与生命周期
 
-任何字段错误都在调用 DJI 前拒绝。写入必须等待所有目标键成功且重新读取完整快照后才成功；任一键失败、超时、取消、设备失效、同步异常、重复或迟到回调只产生一次安全失败结果。设备失效取消在途操作，且不会写入缓存或凭空恢复旧设置。
+任何字段错误都在调用 DJI 前拒绝。写入必须等待所有目标键成功且重新读取完整快照后才成功；任一键失败、超时、取消、设备失效、同步异常、重复或迟到回调只产生一次安全失败结果。设备失效取消在途操作，且不会写入缓存或凭空恢复旧设置。真实 DJI `onFailure(IDJIError)` 的错误码和说明必须在 Android 边界清除控制字符并限制为 128/512 个 Unicode 码点后，以 `{ "domain": "settings", "outcome": "ACTION_REJECTED", "errorCode", "errorDescription" }` 回传桌面；不得泄露 `IDJIError` 对象或堆栈。同步调用异常不得伪造为 DJI 拒绝，必须传播给共享协调器并由命令结果如实标为 `{ "domain": "settings", "outcome": "INVOCATION_FAILED" }`；超时或取消使用 `RESULT_UNCONFIRMED`。设置读写都是普通 DJI 操作，未确认结果期间不得绕过共享协调器重入。
+
+同一 `DeviceSettings` 门面最多保留一个已接受但未到终态的读写请求。第二个读写必须在触及共享协调器前以稳定的本地 `OPERATION_REJECTED` 拒绝；前一个请求收到成功、明确失败、超时或取消后才可接受下一项。此规则只防止陈旧设置意图排队，不检查任何硬件 Key，也不把 DJI 的异步拒绝改写为本地拒绝。

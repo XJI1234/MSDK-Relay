@@ -21,7 +21,7 @@ controller.snapshot() -> STOPPED | STARTING | RUNNING | STOPPING | FAILED
 controller.onChanged(listener) -> Registration
 ```
 
-`ForegroundServicePort.start(callback)` 与 `stop(callback)` 是唯一平台接缝。端口正常情况下最多调用一次回调，但控制器必须防御性忽略重复、延迟和跨操作回调。接受启动/停止只表示平台请求已提交；只有匹配的终态回调才能报告 `RUNNING` 或 `STOPPED`。
+`ForegroundServicePort.start(callback)` 与 `stop(callback)` 是唯一平台接缝；端口还可通过 `onUnexpectedFailure(listener)` 报告已成功启动后的平台异常终止。端口正常情况下最多调用一次操作回调，但控制器必须防御性忽略重复、延迟和跨操作回调。接受启动/停止只表示平台请求已提交；只有匹配的终态回调才能报告 `RUNNING` 或 `STOPPED`。运行中收到异常终止通知时必须进入 `FAILED`，不保留孤儿运行状态。
 
 控制器同步且线程安全，同时只能有一个迁移。端口抛出映射为 `PORT_FAILURE` 并进入 `FAILED`；后续 `start` 可重试。监听器异常必须隔离，不能回滚已提交状态。
 

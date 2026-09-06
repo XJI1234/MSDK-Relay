@@ -27,7 +27,9 @@ import com.skycommand.relay.wayline.state.UploadState
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
+import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
+import com.skycommand.relay.wayline.uploader.PreparedMissionUpload
 import com.skycommand.relay.wayline.uploader.StagedMissionContentReader
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import java.security.MessageDigest
@@ -576,7 +578,7 @@ class WaylineMissionContractTest {
             WaylineMissionDependencies(
                 stagingStorage = storage,
                 contentReader = object : StagedMissionContentReader {
-                    override fun read(metadata: MissionMetadata): ByteArray = storage.currentBytes.copyOf()
+                    override fun open(metadata: MissionMetadata) = storage.currentBytes.copyOf().inputStream()
                 },
                 uploadPort = upload,
                 controlPort = control,
@@ -612,8 +614,18 @@ class WaylineMissionContractTest {
 
     private class UploadPort : MissionUploadPort {
         private var completion: UploadCompletion? = null
-        override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
-            this.completion = completion
+        override fun prepare(
+            metadata: MissionMetadata,
+            content: java.io.InputStream,
+        ): MissionUploadPreparation {
+            content.readBytes()
+            return MissionUploadPreparation.Prepared(object : PreparedMissionUpload {
+                override fun start(progress: (Int) -> Unit, completion: UploadCompletion) {
+                    this@UploadPort.completion = completion
+                }
+
+                override fun discard() = Unit
+            })
         }
         fun completeSuccess() { requireNotNull(completion).succeed() }
     }

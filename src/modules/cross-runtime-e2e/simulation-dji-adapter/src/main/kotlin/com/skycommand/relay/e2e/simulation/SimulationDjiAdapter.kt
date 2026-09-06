@@ -10,7 +10,9 @@ import com.skycommand.relay.wayline.phase.MissionExecutionSignalListener
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
+import com.skycommand.relay.wayline.uploader.PreparedMissionUpload
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import com.skycommand.relay.settings.command.CameraSettings
 import com.skycommand.relay.settings.command.CameraSettingsPatch
@@ -48,6 +50,7 @@ import com.skycommand.relay.telemetry.flight.FlightTelemetryRegistration
 import com.skycommand.relay.telemetry.flight.FlightTelemetrySource
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import java.time.Duration
+import java.io.InputStream
 import java.util.ArrayDeque
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -460,8 +463,21 @@ class SimulationDjiAdapter private constructor(
     }
 
     private inner class SimulatedMissionUploadPort : MissionUploadPort {
-        override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
-            submitUpload(metadata, progress, completion)
+        override fun prepare(metadata: MissionMetadata, content: InputStream): MissionUploadPreparation {
+            content.consume()
+            return MissionUploadPreparation.Prepared(object : PreparedMissionUpload {
+                private var consumed = false
+
+                override fun start(progress: (Int) -> Unit, completion: UploadCompletion) {
+                    check(!consumed) { "Prepared simulated upload may only start once" }
+                    consumed = true
+                    submitUpload(metadata, progress, completion)
+                }
+
+                override fun discard() {
+                    consumed = true
+                }
+            })
         }
     }
 
@@ -629,4 +645,9 @@ class SimulationDjiAdapter private constructor(
             val callback: () -> Unit,
         ) : Scheduled
     }
+}
+
+private fun InputStream.consume() {
+    val buffer = ByteArray(64 * 1024)
+    while (read(buffer) >= 0) Unit
 }

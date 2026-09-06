@@ -35,17 +35,13 @@ class AndroidDjiFlightPort internal constructor(
             runCatching { completion.fail() }
             return
         }
-        try {
-            when (action) {
-                FlightAction.TAKEOFF -> platform.takeoff(callbackFor(operation))
-                FlightAction.LAND -> platform.land(callbackFor(operation))
-                FlightAction.CONFIRM_LANDING -> platform.confirmLanding(callbackFor(operation))
-                FlightAction.RETURN_HOME -> platform.returnHome(callbackFor(operation))
-                FlightAction.STOP_TAKEOFF -> platform.stopTakeoff(callbackFor(operation))
-                FlightAction.STOP_AUTO_LANDING -> platform.stopAutoLanding(callbackFor(operation))
-            }
-        } catch (_: Throwable) {
-            finish(operation, succeeded = false)
+        when (action) {
+            FlightAction.TAKEOFF -> platform.takeoff(callbackFor(operation))
+            FlightAction.LAND -> platform.land(callbackFor(operation))
+            FlightAction.CONFIRM_LANDING -> platform.confirmLanding(callbackFor(operation))
+            FlightAction.RETURN_HOME -> platform.returnHome(callbackFor(operation))
+            FlightAction.STOP_TAKEOFF -> platform.stopTakeoff(callbackFor(operation))
+            FlightAction.STOP_AUTO_LANDING -> platform.stopAutoLanding(callbackFor(operation))
         }
     }
 

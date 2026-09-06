@@ -105,6 +105,29 @@ class TransportAdapterContractTest {
     }
 
     @Test
+    fun rejectsAnUnboundedPreActivationBinaryBurstWithOneTransportFailure() {
+        val engine = RecordingSocketEngine().apply {
+            beforeOpenReturns = { callbacks ->
+                callbacks.onOpened()
+                repeat(17) { callbacks.onBinary(byteArrayOf(1)) }
+            }
+        }
+        val listener = RecordingTransportListener()
+        val generation = generationForTest()
+
+        val connection = assertIs<TransportOpenResult.OpenAccepted>(
+            EngineTransportConnector(engine).open("ws://desktop.example/relay", generation, listener),
+        ).connection
+        connection.enableCallbacks()
+
+        assertEquals(emptyList(), listener.opened)
+        assertEquals(emptyList(), listener.bytes)
+        assertEquals(emptyList(), listener.closed)
+        assertEquals(listOf(generation), listener.failed)
+        assertEquals(1, engine.current.closeCalls)
+    }
+
+    @Test
     fun enforcesWriterLifecycleAndDeliversOnlyOneTerminalCallback() {
         val engine = RecordingSocketEngine()
         val connector = EngineTransportConnector(engine)
@@ -198,6 +221,7 @@ class TransportAdapterContractTest {
         var openCalls = 0
         var throwOnOpen = false
         var openSynchronously = false
+        var beforeOpenReturns: ((SocketCallbacks) -> Unit)? = null
 
         override fun open(endpoint: String, callbacks: SocketCallbacks): SocketOpenResult {
             if (throwOnOpen) throw IllegalStateException("engine secret")
@@ -205,6 +229,7 @@ class TransportAdapterContractTest {
             this.callbacks = callbacks
             current = RecordingSocket()
             if (openSynchronously) callbacks.onOpened()
+            beforeOpenReturns?.invoke(callbacks)
             return SocketOpenResult.Accepted(current)
         }
 

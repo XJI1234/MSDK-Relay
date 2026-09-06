@@ -5,7 +5,9 @@ import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
 import com.skycommand.relay.wayline.uploader.StagedMissionContentReader
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 
 class AndroidMissionStagingStorage internal constructor(
     private val directory: File,
@@ -53,9 +55,9 @@ class AndroidMissionStagingStorage internal constructor(
         Unit
     }
 
-    override fun read(metadata: MissionMetadata): ByteArray = synchronized(lock) {
+    override fun open(metadata: MissionMetadata): InputStream = synchronized(lock) {
         check(currentMetadata == metadata && current.isFile) { "Staged mission is not current" }
-        current.readBytes()
+        FileInputStream(current)
     }
 
     override fun close() = synchronized(lock) {

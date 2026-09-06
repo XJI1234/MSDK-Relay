@@ -6,19 +6,71 @@ import com.skycommand.relay.diagnostics.DiagnosticEvent
 import com.skycommand.relay.diagnostics.DiagnosticLevel
 import com.skycommand.relay.diagnostics.DiagnosticPersistence
 import java.io.File
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+
+internal fun interface DiagnosticBackgroundExecutor {
+    fun execute(task: () -> Unit)
+}
+
+internal fun interface DiagnosticLogWriter {
+    fun append(event: DiagnosticEvent)
+}
 
 class AndroidDiagnosticStore private constructor(
     private val file: File,
+    private val executor: DiagnosticBackgroundExecutor,
+    private val log: DiagnosticLogWriter,
 ) {
     private val lock = Any()
     private var lastLogged: Pair<String, Long>? = null
+    private var queued: PendingPersistence? = null
+    private var writerRunning = false
+
+    private data class PendingPersistence(
+        val events: List<DiagnosticEvent>,
+        val onFailure: () -> Unit,
+    )
 
     fun restore(): List<DiagnosticEvent> = synchronized(lock) {
         runCatching { DiagnosticEventFileCodec.decode(file.takeIf(File::isFile)?.readText(Charsets.UTF_8).orEmpty()) }
             .getOrDefault(emptyList())
     }
 
-    fun persistence(): DiagnosticPersistence = DiagnosticPersistence { events -> synchronized(lock) { write(events) } }
+    fun persistence(): DiagnosticPersistence = DiagnosticPersistence { events, onFailure ->
+        val shouldStart = synchronized(lock) {
+            queued = PendingPersistence(events.toList(), onFailure)
+            if (writerRunning) {
+                false
+            } else {
+                writerRunning = true
+                true
+            }
+        }
+        if (shouldStart) {
+            runCatching { executor.execute(::drain) }
+                .onFailure {
+                    val failed = synchronized(lock) {
+                        writerRunning = false
+                        queued.also { queued = null }
+                    }
+                    failed?.let { pending -> runCatching { pending.onFailure() } }
+                }
+        }
+    }
+
+    private fun drain() {
+        while (true) {
+            val pending = synchronized(lock) {
+                queued?.also { queued = null } ?: run {
+                    writerRunning = false
+                    return
+                }
+            }
+            runCatching { write(pending.events) }
+                .onFailure { runCatching { pending.onFailure() } }
+        }
+    }
 
     private fun write(events: List<DiagnosticEvent>) {
         file.parentFile?.mkdirs()
@@ -28,24 +80,38 @@ class AndroidDiagnosticStore private constructor(
             temporary.delete()
             throw IllegalStateException("Diagnostic log cannot be replaced")
         }
-        events.lastOrNull()?.let(::writeLogcatIfNew)
+        events.lastOrNull()?.let { event -> runCatching { writeLogcatIfNew(event) } }
     }
 
     private fun writeLogcatIfNew(event: DiagnosticEvent) {
         val key = event.runId to event.sequence
         if (key == lastLogged) return
         lastLogged = key
-        Log.println(
-            event.level.toAndroidPriority(),
-            "SkyCommandRelay",
-            "${event.runId}#${event.sequence} ${event.module}/${event.eventCode} ${event.safeDetail}",
-        )
+        log.append(event)
     }
 
     companion object {
+        private val backgroundExecutor: Executor = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "sky-command-diagnostics").apply { isDaemon = true }
+        }
+
         fun create(context: Context): AndroidDiagnosticStore = AndroidDiagnosticStore(
             File(context.applicationContext.filesDir, "diagnostics/pending-events.v1"),
+            DiagnosticBackgroundExecutor { task -> backgroundExecutor.execute(task) },
+            DiagnosticLogWriter { event ->
+                Log.println(
+                    event.level.toAndroidPriority(),
+                    "SkyCommandRelay",
+                    "${event.runId}#${event.sequence} ${event.module}/${event.eventCode} ${event.safeDetail}",
+                )
+            },
         )
+
+        internal fun createForTesting(
+            file: File,
+            executor: DiagnosticBackgroundExecutor,
+            log: DiagnosticLogWriter,
+        ): AndroidDiagnosticStore = AndroidDiagnosticStore(file, executor, log)
     }
 }
 

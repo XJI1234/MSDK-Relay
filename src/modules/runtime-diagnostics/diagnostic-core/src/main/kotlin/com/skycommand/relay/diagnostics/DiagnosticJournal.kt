@@ -1,6 +1,7 @@
 package com.skycommand.relay.diagnostics
 
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -35,7 +36,7 @@ fun interface DiagnosticClock {
 }
 
 fun interface DiagnosticPersistence {
-    fun persist(events: List<DiagnosticEvent>)
+    fun persist(events: List<DiagnosticEvent>, onFailure: () -> Unit)
 }
 
 class DiagnosticJournal private constructor(
@@ -125,8 +126,14 @@ class DiagnosticJournal private constructor(
     }
 
     private fun persistSafely() {
-        runCatching { persistence.persist(Collections.unmodifiableList(events.toList())) }
-            .onFailure { persistenceFailures += 1 }
+        val failureReported = AtomicBoolean(false)
+        val onFailure = {
+            if (failureReported.compareAndSet(false, true)) {
+                lock.withLock { persistenceFailures += 1 }
+            }
+        }
+        runCatching { persistence.persist(Collections.unmodifiableList(events.toList()), onFailure) }
+            .onFailure { onFailure() }
     }
 
     companion object {
@@ -137,7 +144,7 @@ class DiagnosticJournal private constructor(
             runId: String,
             capacity: Int,
             clock: DiagnosticClock,
-            persistence: DiagnosticPersistence = DiagnosticPersistence { },
+            persistence: DiagnosticPersistence = DiagnosticPersistence { _, _ -> },
             recoveredEvents: List<DiagnosticEvent> = emptyList(),
         ): DiagnosticJournal {
             require(validId(runId)) { "Diagnostic run ID is invalid" }

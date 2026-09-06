@@ -3,6 +3,7 @@ package com.skycommand.relay.settings.dji.android
 import com.skycommand.relay.settings.command.CameraSettings
 import com.skycommand.relay.settings.command.CameraSettingsPatch
 import com.skycommand.relay.settings.command.SettingsDomain
+import com.skycommand.relay.settings.command.SettingsDjiFailure
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
 import com.skycommand.relay.settings.command.TransmissionSettings
@@ -34,6 +35,8 @@ internal class MsdkV5SettingsApi(
     private interface DjiWriteCompletion {
         fun succeed()
         fun fail()
+
+        fun fail(failure: SettingsDjiFailure?) = fail()
     }
 
     override fun execute(request: SettingsRequest, completion: DjiSettingsCompletion) {
@@ -74,6 +77,7 @@ internal class MsdkV5SettingsApi(
             writes[index](object : DjiWriteCompletion {
                 override fun succeed() = next(index + 1)
                 override fun fail() = completion.fail()
+                override fun fail(failure: SettingsDjiFailure?) = completion.fail(failure)
             })
         }
         next(0)
@@ -96,7 +100,12 @@ internal class MsdkV5SettingsApi(
     private fun <T> set(key: DJIKey<T>, value: T, completion: DjiWriteCompletion) {
         manager.setValue(key, value, object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() = completion.succeed()
-            override fun onFailure(error: IDJIError) = completion.fail()
+            override fun onFailure(error: IDJIError) = completion.fail(
+                SettingsDjiFailure.fromDjiError(
+                    runCatching { error.errorCode() }.getOrNull(),
+                    runCatching { error.description() }.getOrNull(),
+                ),
+            )
         })
     }
 }

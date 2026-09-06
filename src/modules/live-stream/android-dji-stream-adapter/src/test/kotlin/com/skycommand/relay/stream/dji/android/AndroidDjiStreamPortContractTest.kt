@@ -7,6 +7,7 @@ import com.skycommand.relay.stream.dji.DjiStreamStatus
 import com.skycommand.relay.stream.state.StreamMetrics
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class AndroidDjiStreamPortContractTest {
     @Test fun configuresRtmpAndCompletesStartOnce() {
@@ -51,12 +52,32 @@ class AndroidDjiStreamPortContractTest {
         assertEquals(0, failures)
     }
 
-    @Test fun detachesAfterSuccessfulStopAndMapsStopException() {
+    @Test fun detachesAfterSuccessfulStop() {
         val platform = FakePlatform(); val port = AndroidDjiStreamPort(platform)
         port.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, {}, Completion()); requireNotNull(platform.startCompletion).succeed()
-        platform.throwOnStop = true; val failed = Completion(); port.stop(failed); assertEquals(listOf("failure"), failed.events)
-        platform.throwOnStop = false; val stopped = Completion(); port.stop(stopped); requireNotNull(platform.stopCompletion).succeed()
+        val stopped = Completion(); port.stop(stopped); requireNotNull(platform.stopCompletion).succeed()
         assertEquals(listOf("success"), stopped.events); assertEquals(1, platform.removeCalls)
+    }
+
+    @Test fun propagatesSynchronousPlatformInvocationExceptionsWithoutFabricatingDjiCallbacks() {
+        val startPlatform = FakePlatform().apply { throwOnStart = true }
+        val startPort = AndroidDjiStreamPort(startPlatform)
+        val startCompletion = Completion()
+
+        assertFailsWith<IllegalStateException> {
+            startPort.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, {}, startCompletion)
+        }
+        assertEquals(emptyList(), startCompletion.events)
+
+        val stopPlatform = FakePlatform()
+        val stopPort = AndroidDjiStreamPort(stopPlatform)
+        stopPort.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, {}, Completion())
+        requireNotNull(stopPlatform.startCompletion).succeed()
+        stopPlatform.throwOnStop = true
+        val stopCompletion = Completion()
+
+        assertFailsWith<IllegalStateException> { stopPort.stop(stopCompletion) }
+        assertEquals(emptyList(), stopCompletion.events)
     }
 
     @Test fun rejectsStartWhilePlatformStopIsStillInFlight() {
@@ -138,8 +159,8 @@ class AndroidDjiStreamPortContractTest {
     private class Completion : StreamDjiCompletion { val events=mutableListOf<String>(); override fun succeed(){events+="success"}; override fun fail(){events+="failure"} }
     private class FakePlatform : DjiLiveStreamApi {
         var url:String?=null; var listener:DjiLiveStreamListener?=null; var startCompletion:DjiLiveStreamCompletion?=null
-        var stopCompletion:DjiLiveStreamCompletion?=null; var removeCalls=0; var throwOnStop=false; var startCalls=0; var stopCalls=0
-        override fun start(url:String, listener:DjiLiveStreamListener, completion:DjiLiveStreamCompletion){startCalls++;this.url=url;this.listener=listener;startCompletion=completion}
+        var stopCompletion:DjiLiveStreamCompletion?=null; var removeCalls=0; var throwOnStart=false; var throwOnStop=false; var startCalls=0; var stopCalls=0
+        override fun start(url:String, listener:DjiLiveStreamListener, completion:DjiLiveStreamCompletion){startCalls++;this.url=url;this.listener=listener;startCompletion=completion;if(throwOnStart) error("start")}
         override fun stop(completion:DjiLiveStreamCompletion){stopCalls++;if(throwOnStop) error("stop");stopCompletion=completion}
         override fun removeListener(listener:DjiLiveStreamListener){removeCalls++}
     }

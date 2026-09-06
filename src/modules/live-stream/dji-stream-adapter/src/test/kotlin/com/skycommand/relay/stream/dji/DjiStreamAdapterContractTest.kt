@@ -117,6 +117,21 @@ class DjiStreamAdapterContractTest {
     }
 
     @Test
+    fun defersRuntimeFailureCleanupUntilAnUnconfirmedStartReleasesTheCoordinatorSlot() {
+        val fixture = Fixture()
+        fixture.adapter.start(config())
+
+        fixture.port.runtimeFailure!!.invoke(null)
+        assertEquals(0, fixture.port.stopCalls)
+
+        fixture.scheduler.fire()
+
+        assertEquals(1, fixture.port.stopCalls)
+        fixture.port.stopCompletion!!.succeed()
+        assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+    }
+
+    @Test
     fun convertsDjiAdapterExceptionsToFailedState() {
         val fixture = Fixture()
         fixture.port.throwOnStart = true

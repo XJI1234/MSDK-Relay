@@ -14,9 +14,12 @@ import com.skycommand.relay.wayline.phase.MissionExecutionObservation
 import com.skycommand.relay.wayline.phase.MissionExecutionObservationListener
 import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
+import com.skycommand.relay.wayline.uploader.PreparedMissionUpload
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -24,7 +27,7 @@ internal class StoredMissionFile(val path: String, val fileName: String, private
     fun delete() = runCatching(deleteAction)
 }
 
-internal fun interface MissionFileStore { fun write(fileName: String, content: ByteArray): StoredMissionFile }
+internal fun interface MissionFileStore { fun write(fileName: String, content: InputStream): StoredMissionFile }
 internal interface DjiUploadCompletion { fun progress(value: Double); fun succeed(); fun fail(failure: MissionUploadFailure? = null) }
 internal interface DjiControlCompletion { fun succeed(); fun fail(failure: MissionControlFailure? = null) }
 internal enum class DjiMissionExecutionState {
@@ -61,6 +64,7 @@ internal enum class WaylineAdapterDiagnosticKind {
     UPLOAD_FILE_WRITE_FAILED,
     UPLOAD_DJI_INVOCATION_FAILED,
     UPLOAD_DJI_REJECTED,
+    CONTROL_DJI_INVOCATION_FAILED,
 }
 
 internal enum class WaylineUploadInputRejection {
@@ -99,17 +103,17 @@ class AndroidDjiWaylineAdapter internal constructor(
     private var djiExecutionRegistration: DjiExecutionStateRegistration? = null
     private var startSignalsEnabled = false
 
-    override fun upload(metadata: MissionMetadata, bytes: ByteArray, progress: (Int) -> Unit, completion: UploadCompletion) {
+    override fun prepare(metadata: MissionMetadata, content: InputStream): MissionUploadPreparation {
         if (!metadata.fileName.isSafeKmzName()) {
             record(
                 WaylineAdapterDiagnosticKind.UPLOAD_INPUT_REJECTED,
                 inputRejection = WaylineUploadInputRejection.UNSAFE_FILE_NAME,
             )
-            return safeFail(completion)
+            return MissionUploadPreparation.Rejected
         }
-        val file = runCatching { files.write(metadata.fileName, bytes) }.getOrElse { error ->
+        val file = runCatching { files.write(metadata.fileName, content) }.getOrElse { error ->
             record(WaylineAdapterDiagnosticKind.UPLOAD_FILE_WRITE_FAILED, error = error)
-            return safeFail(completion)
+            return MissionUploadPreparation.Rejected
         }
         val kmzInspection = SingleWaylineKmzGuard.inspect(File(file.path))
         if (!kmzInspection.accepted) {
@@ -119,8 +123,12 @@ class AndroidDjiWaylineAdapter internal constructor(
                 inputRejection = WaylineUploadInputRejection.KMZ_GUARD_REJECTED,
                 kmzRejection = kmzInspection.rejection,
             )
-            return safeFail(completion)
+            return MissionUploadPreparation.Rejected
         }
+        return MissionUploadPreparation.Prepared(PreparedUpload(file))
+    }
+
+    private fun startPreparedUpload(file: StoredMissionFile, progress: (Int) -> Unit, completion: UploadCompletion) {
         val once = OnceUpload(completion)
         val operationGeneration = synchronized(lock) {
             if (closed) null else (++uploadGeneration).also { uploadFiles[it] = file }
@@ -145,7 +153,7 @@ class AndroidDjiWaylineAdapter internal constructor(
                     dji.upload(file.path, callback)
                 } catch (error: Throwable) {
                     record(WaylineAdapterDiagnosticKind.UPLOAD_DJI_INVOCATION_FAILED, error = error)
-                    finishUpload(operationGeneration, file, once, false)
+                    throw error
                 }
             }
         }
@@ -292,8 +300,9 @@ class AndroidDjiWaylineAdapter internal constructor(
             if (isCurrentControl(prepared.generation)) {
                 try {
                     action(prepared.name, prepared.callback)
-                } catch (_: Throwable) {
-                    finishControl(prepared.generation, once, false)
+                } catch (error: Throwable) {
+                    record(WaylineAdapterDiagnosticKind.CONTROL_DJI_INVOCATION_FAILED, error = error)
+                    throw error
                 }
             }
         }
@@ -347,6 +356,37 @@ class AndroidDjiWaylineAdapter internal constructor(
         val name: String?,
         val callback: DjiControlCompletion,
     )
+
+    private inner class PreparedUpload(
+        private val file: StoredMissionFile,
+    ) : PreparedMissionUpload {
+        private val preparationLock = Any()
+        private var consumed = false
+
+        override fun start(progress: (Int) -> Unit, completion: UploadCompletion) {
+            val canStart = synchronized(preparationLock) {
+                if (consumed) false else {
+                    consumed = true
+                    true
+                }
+            }
+            if (!canStart) {
+                safeFail(completion)
+                return
+            }
+            startPreparedUpload(file, progress, completion)
+        }
+
+        override fun discard() {
+            val shouldDelete = synchronized(preparationLock) {
+                if (consumed) false else {
+                    consumed = true
+                    true
+                }
+            }
+            if (shouldDelete) file.delete()
+        }
+    }
 
     private data class SignalListenerSlot(val listener: MissionExecutionSignalListener)
     private data class ObservationListenerSlot(val listener: MissionExecutionObservationListener)
@@ -436,14 +476,14 @@ private fun String.isSafeKmzName(): Boolean = isNotBlank() && codePointCount(0, 
 
 private class AndroidMissionFileStore(context: Context) : MissionFileStore {
     private val directory = File(context.cacheDir, "dji-waylines")
-    override fun write(fileName: String, content: ByteArray): StoredMissionFile = writeMissionFile(directory, fileName, content)
+    override fun write(fileName: String, content: InputStream): StoredMissionFile = writeMissionFile(directory, fileName, content)
 }
 
 internal fun writeMissionFile(
     directory: File,
     fileName: String,
-    content: ByteArray,
-    writer: (File, ByteArray) -> Unit = { file, bytes -> file.outputStream().use { it.write(bytes) } },
+    content: InputStream,
+    writer: (File, InputStream) -> Unit = { file, source -> file.outputStream().use { source.copyTo(it, MISSION_FILE_COPY_BUFFER_BYTES) } },
 ): StoredMissionFile {
     check(directory.exists() || directory.mkdirs())
     val operationDirectory = File(directory, UUID.randomUUID().toString())
@@ -457,3 +497,5 @@ internal fun writeMissionFile(
         throw failure
     }
 }
+
+private const val MISSION_FILE_COPY_BUFFER_BYTES = 64 * 1024

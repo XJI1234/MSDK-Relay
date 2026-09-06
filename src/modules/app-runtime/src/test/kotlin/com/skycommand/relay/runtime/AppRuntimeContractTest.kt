@@ -15,6 +15,10 @@ import com.skycommand.relay.runtime.service.ForegroundServicePort
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class AppRuntimeContractTest {
     @Test fun startsThroughPermissionsServiceAndModulesAndStopsInReverseOrder() {
@@ -59,6 +63,62 @@ class AppRuntimeContractTest {
         assertEquals(RuntimeState.FAILED, runtime.snapshot())
     }
 
+    @Test fun stoppingDuringServiceStartupWaitsToStopTheServiceWithoutStartingModules() {
+        val service = DeferredServicePort()
+        val events = mutableListOf<String>()
+        val runtime = AppRuntime.create(
+            PermissionCoordinator.create(ImmediatePermissionPort()),
+            ForegroundServiceController.create(service),
+            AppBootstrap.create(listOf(Module("relay", events))),
+        )
+
+        assertIs<RuntimeStartResult.Accepted>(runtime.start(setOf(PermissionKind.RUNTIME)))
+        assertEquals(RuntimeState.STARTING_SERVICE, runtime.snapshot())
+
+        assertIs<RuntimeStopResult.Accepted>(runtime.stop())
+        assertEquals(RuntimeState.STOPPING, runtime.snapshot())
+
+        service.started()
+        assertEquals(RuntimeState.STOPPING, runtime.snapshot())
+        assertEquals(emptyList(), events)
+
+        service.stopped()
+        assertEquals(RuntimeState.STOPPED, runtime.snapshot())
+        assertEquals(emptyList(), events)
+    }
+
+    @Test fun stoppingDuringModuleStartupCleansStartedModulesBeforeStoppingService() {
+        val moduleStarted = CountDownLatch(1)
+        val releaseModule = CountDownLatch(1)
+        val service = ImmediateServicePort()
+        val events = mutableListOf<String>()
+        val module = object : BootstrapModule {
+            override val name = "relay"
+            override fun start() {
+                moduleStarted.countDown()
+                assertTrue(releaseModule.await(2, TimeUnit.SECONDS))
+                events += "start:relay"
+            }
+            override fun stop() { events += "stop:relay" }
+        }
+        val runtime = AppRuntime.create(
+            PermissionCoordinator.create(ImmediatePermissionPort()),
+            ForegroundServiceController.create(service),
+            AppBootstrap.create(listOf(module)),
+        )
+
+        val startThread = thread(start = true) { runtime.start(setOf(PermissionKind.RUNTIME)) }
+        assertTrue(moduleStarted.await(2, TimeUnit.SECONDS))
+        assertIs<RuntimeStopResult.Accepted>(runtime.stop())
+        assertEquals(RuntimeState.STOPPING, runtime.snapshot())
+
+        releaseModule.countDown()
+        startThread.join(2_000)
+        assertTrue(!startThread.isAlive)
+        assertEquals(RuntimeState.STOPPED, runtime.snapshot())
+        assertEquals(listOf("start:relay", "stop:relay"), events)
+    }
+
     @Test fun reportsTheStableStopFailureReasonWhenAModuleCannotStop() {
         val runtime = AppRuntime.create(
             PermissionCoordinator.create(ImmediatePermissionPort()),
@@ -71,6 +131,24 @@ class AppRuntimeContractTest {
 
         assertEquals(RuntimeStopFailure.STOP_FAILURE, result.reason)
         assertEquals(RuntimeState.FAILED, runtime.snapshot())
+    }
+
+    @Test fun unexpectedForegroundServiceFailureStopsModulesAndLeavesRuntimeFailed() {
+        val events = mutableListOf<String>()
+        val service = FailingServicePort()
+        val runtime = AppRuntime.create(
+            PermissionCoordinator.create(ImmediatePermissionPort()),
+            ForegroundServiceController.create(service),
+            AppBootstrap.create(listOf(Module("relay", events))),
+        )
+
+        assertIs<RuntimeStartResult.Accepted>(runtime.start(setOf(PermissionKind.RUNTIME)))
+        assertEquals(RuntimeState.RUNNING, runtime.snapshot())
+
+        service.fail()
+
+        assertEquals(RuntimeState.FAILED, runtime.snapshot())
+        assertEquals(listOf("start:relay", "stop:relay"), events)
     }
 
     private class Module(
@@ -106,5 +184,39 @@ class AppRuntimeContractTest {
     private class ImmediateServicePort : ForegroundServicePort {
         override fun start(callback: ForegroundServiceCallback) { callback.started() }
         override fun stop(callback: ForegroundServiceCallback) { callback.stopped() }
+    }
+
+    private class FailingServicePort : ForegroundServicePort {
+        private var unexpectedFailure: (() -> Unit)? = null
+
+        override fun start(callback: ForegroundServiceCallback) {
+            callback.started()
+        }
+
+        override fun stop(callback: ForegroundServiceCallback) { callback.stopped() }
+
+        override fun onUnexpectedFailure(listener: () -> Unit) =
+            com.skycommand.relay.runtime.service.ForegroundServiceRegistration {
+                if (unexpectedFailure === listener) unexpectedFailure = null
+            }.also { unexpectedFailure = listener }
+
+        fun fail() = requireNotNull(unexpectedFailure).invoke()
+    }
+
+    private class DeferredServicePort : ForegroundServicePort {
+        private var startCallback: ForegroundServiceCallback? = null
+        private var stopCallback: ForegroundServiceCallback? = null
+
+        override fun start(callback: ForegroundServiceCallback) {
+            startCallback = callback
+        }
+
+        override fun stop(callback: ForegroundServiceCallback) {
+            stopCallback = callback
+        }
+
+        fun started() = requireNotNull(startCallback).started()
+
+        fun stopped() = requireNotNull(stopCallback).stopped()
     }
 }

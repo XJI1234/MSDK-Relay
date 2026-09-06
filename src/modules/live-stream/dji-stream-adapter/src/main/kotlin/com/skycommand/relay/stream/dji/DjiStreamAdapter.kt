@@ -15,6 +15,7 @@ import com.skycommand.relay.stream.state.StreamStateStore
 import com.skycommand.relay.stream.state.StreamStopResult
 import com.skycommand.relay.stream.state.StreamUpdateResult
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -123,12 +124,16 @@ class DjiStreamAdapter private constructor(
         listener: StreamDjiTerminalListener = StreamDjiTerminalListener { },
     ): DjiStreamStartResult {
         val djiFailure = AtomicReference<StreamDjiFailure?>(null)
+        val operationSettled = AtomicBoolean(false)
+        val recoveryPending = AtomicBoolean(false)
+        val operationCompletion = AtomicReference<OperationCompletion?>(null)
         val state = stateStore.requestStart(config)
         val operationId = (state as? StreamStartResult.Accepted)?.operationId
             ?: return DjiStreamStartResult.Rejected(DjiStreamRejection.ALREADY_ACTIVE)
         val submission = coordinator.submit(
             action = object : DjiOperation {
                 override fun run(completion: OperationCompletion) {
+                    operationCompletion.set(completion)
                     djiPort.start(
                         config = config,
                         status = { status ->
@@ -151,7 +156,8 @@ class DjiStreamAdapter private constructor(
                                     failure?.toRuntimeFailure(),
                                 ) is StreamUpdateResult.Applied
                             ) {
-                                requestRecoveryStop()
+                                recoveryPending.set(true)
+                                if (operationSettled.get()) requestRecoveryStop()
                             } else if (completion.confirmHardwareSettled()) {
                                 // Runtime failure can also be the first post-timeout fact.
                                 requestRecoveryStop()
@@ -161,13 +167,22 @@ class DjiStreamAdapter private constructor(
                     )
                 }
 
+                override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) {
+                    if (recoveryPending.get() && operationCompletion.get()?.confirmHardwareSettled() == true) {
+                        recoveryPending.set(false)
+                        requestRecoveryStop()
+                    }
+                }
+
                 override fun onLateDjiCompletion(outcome: OperationOutcome) {
-                    if (outcome == OperationOutcome.SUCCEEDED) requestRecoveryStop()
+                    if (recoveryPending.getAndSet(false)) requestRecoveryStop()
                 }
             },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome ->
+                operationSettled.set(outcome == OperationOutcome.SUCCEEDED || outcome == OperationOutcome.FAILED)
                 completeStart(operationId, outcome)
+                if (operationSettled.get() && recoveryPending.getAndSet(false)) requestRecoveryStop()
                 runCatching {
                     listener.onCompleted(
                         outcome.toTerminalOutcome(),

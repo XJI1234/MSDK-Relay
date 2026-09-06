@@ -2,7 +2,6 @@ package com.skycommand.relay.app
 
 import android.content.Intent
 import android.os.Bundle
-import android.os.Looper
 import android.text.InputType
 import android.util.Log
 import android.view.View
@@ -36,6 +35,10 @@ class MainActivity : ComponentActivity() {
     private var graph: MobileRelayGraph? = null
     private var graphEndpoint: String? = null
     private var statusRegistration: CloseableRegistration? = null
+    private val statusDispatcher = LatestStatusDispatcher<MobileRelayStatus>(
+        schedule = { work -> runOnUiThread(work) },
+        render = ::renderStatus,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +74,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         statusRegistration?.unregister()
         statusRegistration = null
+        statusDispatcher.close()
         val runtime = runCatching { graph?.status()?.runtime }.getOrNull()
         val keep = graph != null && runtime != null && RelaySurfaceRetention.shouldRetain(runtime)
         if (keep) {
@@ -247,29 +251,30 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun paintStatus(status: MobileRelayStatus = currentStatus()) {
-        val paint = {
-            statusView.visibility = View.VISIBLE
-            statusView.text = listOf(
-                getString(R.string.status_runtime, StatusLabels.runtime(status.runtime)),
-                getString(R.string.status_gateway, StatusLabels.gateway(status.gateway)),
-                getString(R.string.status_msdk, StatusLabels.sdk(status.sdk)),
-                getString(R.string.status_remote_controller, StatusLabels.link(status.remoteController)),
-                getString(R.string.status_pairing, StatusLabels.pairing(status.pairing)),
-                getString(R.string.status_flight_controller, StatusLabels.link(status.flightController)),
-                getString(R.string.status_battery, StatusLabels.link(status.battery)),
-                getString(R.string.status_stream, status.stream),
-                getString(R.string.status_mission, status.mission),
-            ).joinToString("\n")
-            val running = status.runtime == RuntimeState.RUNNING
-            val starting = status.runtime == RuntimeState.WAITING_PERMISSIONS ||
-                status.runtime == RuntimeState.STARTING_SERVICE ||
-                status.runtime == RuntimeState.STARTING_MODULES
-            startButton.isEnabled = status.runtime == RuntimeState.STOPPED || status.runtime == RuntimeState.FAILED
-            stopButton.isEnabled = running || starting
-            startPairingButton.isEnabled = status.canStartPairing
-            stopPairingButton.isEnabled = status.canStopPairing
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) paint() else runOnUiThread(paint)
+        statusDispatcher.offer(status)
+    }
+
+    private fun renderStatus(status: MobileRelayStatus) {
+        statusView.visibility = View.VISIBLE
+        statusView.text = listOf(
+            getString(R.string.status_runtime, StatusLabels.runtime(status.runtime)),
+            getString(R.string.status_gateway, StatusLabels.gateway(status.gateway)),
+            getString(R.string.status_msdk, StatusLabels.sdk(status.sdk)),
+            getString(R.string.status_remote_controller, StatusLabels.link(status.remoteController)),
+            getString(R.string.status_pairing, StatusLabels.pairing(status.pairing)),
+            getString(R.string.status_flight_controller, StatusLabels.link(status.flightController)),
+            getString(R.string.status_battery, StatusLabels.link(status.battery)),
+            getString(R.string.status_stream, status.stream),
+            getString(R.string.status_mission, status.mission),
+        ).joinToString("\n")
+        val running = status.runtime == RuntimeState.RUNNING
+        val starting = status.runtime == RuntimeState.WAITING_PERMISSIONS ||
+            status.runtime == RuntimeState.STARTING_SERVICE ||
+            status.runtime == RuntimeState.STARTING_MODULES
+        startButton.isEnabled = status.runtime == RuntimeState.STOPPED || status.runtime == RuntimeState.FAILED
+        stopButton.isEnabled = running || starting
+        startPairingButton.isEnabled = status.canStartPairing
+        stopPairingButton.isEnabled = status.canStopPairing
     }
 
     private fun currentStatus(): MobileRelayStatus =

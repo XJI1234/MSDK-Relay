@@ -2,6 +2,7 @@ package com.skycommand.relay.settings.dji.android
 
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
+import com.skycommand.relay.settings.command.SettingsDjiFailure
 import com.skycommand.relay.settings.executor.DjiSettingsPort
 import com.skycommand.relay.settings.executor.SettingsDjiCompletion
 import java.util.concurrent.atomic.AtomicBoolean
@@ -9,6 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal interface DjiSettingsCompletion {
     fun succeed(snapshot: SettingsSnapshot)
     fun fail()
+
+    fun fail(failure: SettingsDjiFailure?) = fail()
 }
 
 internal interface DjiSettingsApi {
@@ -30,14 +33,11 @@ class AndroidDjiSettingsPort internal constructor(
             runCatching { completion.fail() }
             return
         }
-        try {
-            platform.execute(request, object : DjiSettingsCompletion {
-                override fun succeed(snapshot: SettingsSnapshot) = finish(operation, snapshot)
-                override fun fail() = fail(operation)
-            })
-        } catch (_: Throwable) {
-            fail(operation)
-        }
+        platform.execute(request, object : DjiSettingsCompletion {
+            override fun succeed(snapshot: SettingsSnapshot) = finish(operation, snapshot)
+            override fun fail() = fail(operation)
+            override fun fail(failure: SettingsDjiFailure?) = fail(operation, failure)
+        })
     }
 
     override fun close() {
@@ -56,13 +56,13 @@ class AndroidDjiSettingsPort internal constructor(
         if (deliver) runCatching { operation.completion.succeed(snapshot) }
     }
 
-    private fun fail(operation: Active) {
+    private fun fail(operation: Active, failure: SettingsDjiFailure? = null) {
         if (!operation.completeOnce()) return
         val deliver = synchronized(lock) {
             if (active === operation) active = null
             !closed
         }
-        if (deliver) runCatching { operation.completion.fail() }
+        if (deliver) runCatching { operation.completion.fail(failure) }
     }
 
     private class Active(val completion: SettingsDjiCompletion) {

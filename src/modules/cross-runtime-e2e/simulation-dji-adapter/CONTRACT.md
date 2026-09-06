@@ -105,7 +105,7 @@ DjiStreamPort
 
 `MissionUploadPort`、`MissionControlPort` 和 `MissionExecutionSignalSource` 必须共享同一份航线事实。它们只模拟 DJI 层的文件上传、控制请求和原始执行信号，不处理中继协议的 KMZ 分块，也不读取用户目录。
 
-上传端口应记录传入的受控字节和文件名供验证读取，但快照和错误信息不得暴露内容。开始和停止必须使用当前成功上传的精确文件名；没有成功上传文件时由端口按正式契约拒绝。暂停和恢复不修改文件名。每个监听器注销或关闭后不得收到新信号。
+上传端口必须完整消费传入的受控输入流，并返回一次性的准备对象；准备阶段不得触发模拟 DJI 上传。开始和停止必须使用当前成功上传的精确文件名；没有成功上传文件时由端口按正式契约拒绝。暂停和恢复不修改文件名。快照和错误信息不得暴露内容；每个监听器注销或关闭后不得收到新信号。
 
 对于 `PREPARING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`COMPLETED`、`INTERRUPTED`、`IDLE`、`DISCONNECTED` 与 `UNKNOWN`，模拟器只按计划转交，不替业务模块计算任务状态或阶段。这样由真实 `MissionFlightPhase`、`MissionStateStore` 和 `WaylineMission` 证明它们的代次、阶段和终态隔离逻辑。
 

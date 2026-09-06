@@ -68,11 +68,29 @@ class DiagnosticJournalContractTest {
 
     @Test
     fun keepsBusinessCallSafeWhenPersistenceFails() {
-        val journal = DiagnosticJournal.create("run-1", 2, FixedClock(0), DiagnosticPersistence { throw IllegalStateException("disk") })
+        val journal = DiagnosticJournal.create("run-1", 2, FixedClock(0), DiagnosticPersistence { _, _ -> throw IllegalStateException("disk") })
 
         val event = journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "")
 
         assertEquals(1, event.sequence)
+        assertEquals(1, journal.snapshot().persistenceFailures)
+    }
+
+    @Test
+    fun recordsBeforeBackgroundPersistenceCompletesAndTracksItsFailure() {
+        var failure: (() -> Unit)? = null
+        val journal = DiagnosticJournal.create(
+            "run-1",
+            2,
+            FixedClock(0),
+            DiagnosticPersistence { _, onFailure -> failure = onFailure },
+        )
+
+        val event = journal.record(DiagnosticLevel.ERROR, "runtime-diagnostics", "WRITE_PENDING", null, "safe")
+
+        assertEquals(1, event.sequence)
+        assertEquals(0, journal.snapshot().persistenceFailures)
+        failure?.invoke()
         assertEquals(1, journal.snapshot().persistenceFailures)
     }
 

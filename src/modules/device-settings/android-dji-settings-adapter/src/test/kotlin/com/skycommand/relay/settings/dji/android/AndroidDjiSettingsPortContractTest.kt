@@ -3,12 +3,18 @@ package com.skycommand.relay.settings.dji.android
 import com.skycommand.relay.settings.command.CameraSettings
 import com.skycommand.relay.settings.command.TransmissionSettings
 import com.skycommand.relay.settings.command.SettingsDomain
+import com.skycommand.relay.settings.command.SettingsDjiFailure
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
 import com.skycommand.relay.settings.executor.SettingsDjiCompletion
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AndroidDjiSettingsPortContractTest {
     @Test
@@ -26,18 +32,56 @@ class AndroidDjiSettingsPortContractTest {
     }
 
     @Test
-    fun synchronousFailureAndCloseDoNotLeakLatePlatformCallbacks() {
+    fun closeDoesNotLeakLatePlatformCallbacks() {
         val api = Api()
         val port = AndroidDjiSettingsPort(api)
         val outcomes = mutableListOf<String>()
-        api.throwOnExecute = true
-        port.execute(SettingsRequest.Read(SettingsDomain.CAMERA), completion(outcomes))
-        api.throwOnExecute = false
         port.execute(SettingsRequest.Read(SettingsDomain.CAMERA), completion(outcomes))
         port.close()
         api.succeed(camera())
 
-        assertEquals(listOf("fail"), outcomes)
+        assertEquals(emptyList(), outcomes)
+    }
+
+    @Test
+    fun propagatesSynchronousPlatformInvocationFailureWithoutFabricatingADjiFailure() {
+        val api = Api().apply { throwOnExecute = true }
+        val port = AndroidDjiSettingsPort(api)
+        val outcomes = mutableListOf<String>()
+
+        assertFailsWith<IllegalStateException> {
+            port.execute(SettingsRequest.Read(SettingsDomain.CAMERA), completion(outcomes))
+        }
+
+        assertEquals(emptyList(), outcomes)
+    }
+
+    @Test
+    fun readsTheOfficialDjiFailureCodeAndDescriptionAtTheAndroidBoundary() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/settings/dji/android/MsdkV5SettingsApi.kt"),
+            Path("src/modules/device-settings/android-dji-settings-adapter/src/main/kotlin/com/skycommand/relay/settings/dji/android/MsdkV5SettingsApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("error.errorCode()"))
+        assertTrue(source.contains("error.description()"))
+    }
+
+    @Test
+    fun forwardsTheNormalizedDjiFailureWithoutChangingItsFields() {
+        val api = Api()
+        val port = AndroidDjiSettingsPort(api)
+        val failure = SettingsDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The camera is busy")
+        var received: SettingsDjiFailure? = null
+
+        port.execute(SettingsRequest.Read(SettingsDomain.CAMERA), object : SettingsDjiCompletion {
+            override fun succeed(snapshot: SettingsSnapshot) = Unit
+            override fun fail() = Unit
+            override fun fail(failure: SettingsDjiFailure?) { received = failure }
+        })
+        api.fail(failure)
+
+        assertEquals(failure, received)
     }
 
     @Test
@@ -80,6 +124,6 @@ class AndroidDjiSettingsPortContractTest {
             requests += request; this.completion = completion
         }
         fun succeed(snapshot: SettingsSnapshot) = checkNotNull(completion).succeed(snapshot)
-        fun fail() = checkNotNull(completion).fail()
+        fun fail(failure: SettingsDjiFailure? = null) = checkNotNull(completion).fail(failure)
     }
 }

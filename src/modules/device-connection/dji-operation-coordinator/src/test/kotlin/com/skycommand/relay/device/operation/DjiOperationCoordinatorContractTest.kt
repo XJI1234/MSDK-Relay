@@ -146,6 +146,40 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
+    fun containmentPreemptsAnInFlightNormalOperationAndCancelsStaleQueuedOperations() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val queued = RecordingAction()
+        val containment = ContainmentAction()
+        val results = mutableListOf<String>()
+
+        coordinator.submit(first, 1_000) { results += "first:$it" }
+        coordinator.submit(queued, 1_000) { results += "queued:$it" }
+        executor.runNext()
+
+        assertIs<SubmissionResult.Accepted>(
+            coordinator.submit(containment, 1_000) { results += "containment:$it" },
+        )
+
+        assertEquals(
+            listOf("first:CANCELLED", "queued:CANCELLED"),
+            results,
+        )
+        assertEquals(listOf(OperationOutcome.CANCELLED), first.unconfirmedOutcomes)
+        assertEquals(0, queued.starts)
+        assertEquals(1, executor.taskCount())
+
+        executor.runNext()
+        assertEquals(1, containment.starts)
+        first.succeed()
+
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+        assertEquals(0, queued.starts)
+    }
+
+    @Test
     fun notifiesOnlyTheTimedOutActionAfterReportingItsTerminalOutcome() {
         val executor = ManualExecutor()
         val scheduler = ManualScheduler()

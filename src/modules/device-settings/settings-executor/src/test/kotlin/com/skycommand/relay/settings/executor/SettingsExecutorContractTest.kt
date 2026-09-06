@@ -6,6 +6,7 @@ import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
 import com.skycommand.relay.settings.command.CameraSettings
 import com.skycommand.relay.settings.command.SettingsDomain
+import com.skycommand.relay.settings.command.SettingsDjiFailure
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
 import kotlin.test.Test
@@ -50,10 +51,29 @@ class SettingsExecutorContractTest {
         assertEquals(SettingsExecutionOutcome.TimedOut, outcomes.last())
     }
 
+    @Test
+    fun forwardsOnlyARealDjiFailureSummaryToTheExecutionListener() {
+        val executor = ManualExecutor()
+        val port = Port()
+        val settings = SettingsExecutor.create(port, DjiOperationCoordinator.create(executor, Scheduler()), 1_000)
+        val failure = SettingsDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The camera is busy")
+        var received: SettingsDjiFailure? = null
+
+        assertIs<SettingsSubmissionResult.Accepted>(settings.execute(SettingsRequest.Read(SettingsDomain.CAMERA), object : SettingsExecutionListener {
+            override fun onCompleted(outcome: SettingsExecutionOutcome) = Unit
+            override fun onCompleted(outcome: SettingsExecutionOutcome, failure: SettingsDjiFailure?) { received = failure }
+        }))
+        executor.runNext()
+        port.fail(failure)
+
+        assertEquals(failure, received)
+    }
+
     private class Port : DjiSettingsPort {
         val requests = mutableListOf<SettingsRequest>(); private var completion: SettingsDjiCompletion? = null
         override fun execute(request: SettingsRequest, completion: SettingsDjiCompletion) { requests += request; this.completion = completion }
         fun succeed(snapshot: SettingsSnapshot) = checkNotNull(completion).succeed(snapshot)
+        fun fail(failure: SettingsDjiFailure? = null) = checkNotNull(completion).fail(failure)
     }
     private class ManualExecutor : OperationExecutor {
         private val tasks = ArrayDeque<() -> Unit>(); override fun execute(task: () -> Unit) { tasks += task }; fun runNext() = tasks.removeFirst()()

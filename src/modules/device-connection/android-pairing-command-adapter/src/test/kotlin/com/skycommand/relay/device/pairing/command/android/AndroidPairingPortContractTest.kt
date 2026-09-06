@@ -2,6 +2,7 @@ package com.skycommand.relay.device.pairing.command.android
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class AndroidPairingPortContractTest {
     @Test fun operationsAreLazyAndUseTheRequestedActionOnce() {
@@ -17,11 +18,23 @@ class AndroidPairingPortContractTest {
         assertEquals(listOf(PairingCommand.START), api.calls); assertEquals(1, success)
     }
 
-    @Test fun mapsFailureAndSynchronousFailureWithoutThrowing() {
+    @Test fun mapsAnAsynchronousDjiFailureOnce() {
         val api = FakeApi(); val port = AndroidPairingPort(api); var failures = 0
         port.stopPairing().run(FakeCompletion(onFail = { failures += 1 })); api.completeFailure()
-        api.throwOnCall = true; port.startPairing().run(FakeCompletion(onFail = { failures += 1 }))
-        assertEquals(listOf(PairingCommand.STOP, PairingCommand.START), api.calls); assertEquals(2, failures)
+        assertEquals(listOf(PairingCommand.STOP), api.calls); assertEquals(1, failures)
+    }
+
+    @Test fun propagatesSynchronousPlatformInvocationFailureWithoutFabricatingADjiFailure() {
+        val api = FakeApi().apply { throwOnCall = true }
+        val port = AndroidPairingPort(api)
+        var failures = 0
+
+        assertFailsWith<IllegalStateException> {
+            port.startPairing().run(FakeCompletion(onFail = { failures += 1 }))
+        }
+
+        assertEquals(listOf(PairingCommand.START), api.calls)
+        assertEquals(0, failures)
     }
 
     private class FakeApi : DjiPairingCommandApi {

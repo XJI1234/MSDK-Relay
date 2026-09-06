@@ -24,6 +24,10 @@ interface ForegroundServiceCallback {
 interface ForegroundServicePort {
     fun start(callback: ForegroundServiceCallback)
     fun stop(callback: ForegroundServiceCallback)
+
+    /** Reports an unexpected loss after a previously successful start. */
+    fun onUnexpectedFailure(listener: () -> Unit): ForegroundServiceRegistration =
+        ForegroundServiceRegistration { }
 }
 
 fun interface ForegroundServiceListener {
@@ -48,6 +52,10 @@ class ForegroundServiceController private constructor(
     private var state = ForegroundServiceState.STOPPED
     private var generation = 0L
     private var active: Operation? = null
+
+    init {
+        port.onUnexpectedFailure { onUnexpectedForegroundFailure() }
+    }
 
     fun start(): ForegroundRequestResult {
         val operation: Operation
@@ -140,6 +148,19 @@ class ForegroundServiceController private constructor(
             state = ForegroundServiceState.FAILED
         }
         notifyChanged(ForegroundServiceState.FAILED)
+    }
+
+    private fun onUnexpectedForegroundFailure() {
+        val shouldNotify = synchronized(lock) {
+            if (state != ForegroundServiceState.RUNNING) {
+                false
+            } else {
+                active = null
+                state = ForegroundServiceState.FAILED
+                true
+            }
+        }
+        if (shouldNotify) notifyChanged(ForegroundServiceState.FAILED)
     }
 
     private fun notifyChanged(next: ForegroundServiceState) {

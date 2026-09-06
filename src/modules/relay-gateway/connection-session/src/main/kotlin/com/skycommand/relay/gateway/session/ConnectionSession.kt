@@ -31,15 +31,17 @@ class ConnectionSession private constructor(
 
         override fun onBytes(generation: SessionGeneration, bytes: ByteArray) {
             val copiedBytes = bytes.copyOf()
-            eventLoop.execute { handleBytes(generation, copiedBytes) }
+            if (!eventLoop.executeInbound { handleBytes(generation, copiedBytes) }) {
+                eventLoop.executePriority { handleInboundOverflow(generation) }
+            }
         }
 
         override fun onClosed(generation: SessionGeneration, reason: String) {
-            eventLoop.execute { handleTransportEnded(generation, "Transport closed") }
+            eventLoop.executePriority { handleTransportEnded(generation, "Transport closed") }
         }
 
         override fun onFailure(generation: SessionGeneration, reason: String) {
-            eventLoop.execute { handleTransportEnded(generation, "Transport failed") }
+            eventLoop.executePriority { handleTransportEnded(generation, "Transport failed") }
         }
     }
 
@@ -75,7 +77,7 @@ class ConnectionSession private constructor(
         }
     }
 
-    fun stop(): StopResult = eventLoop.call {
+    fun stop(): StopResult = eventLoop.callPriority {
         when (currentSnapshot.state) {
             SessionState.STOPPED -> StopResult.AlreadyStopped
             SessionState.RECONNECT_WAIT -> {
@@ -196,7 +198,7 @@ class ConnectionSession private constructor(
 
         transition(SessionSnapshot(SessionState.AWAITING_PAIRING, generation, null), null)
         handshakeTimeout = schedule(config.handshakeTimeoutMillis) {
-            eventLoop.execute { handleHandshakeTimeout(generation) }
+            eventLoop.executePriority { handleHandshakeTimeout(generation) }
         }
         if (handshakeTimeout == null) {
             endCurrent(reason(SessionEndKind.NOT_CONNECTED, "Handshake timeout could not be scheduled"))
@@ -297,6 +299,14 @@ class ConnectionSession private constructor(
         endCurrent(reason(SessionEndKind.NOT_CONNECTED, detail))
     }
 
+    private fun handleInboundOverflow(generation: SessionGeneration) {
+        if (generation != currentGeneration) {
+            recordDiagnostic(SessionDiagnosticKind.STALE_CALLBACK, "Ignored inbound overflow from an old session")
+            return
+        }
+        endCurrent(reason(SessionEndKind.NOT_CONNECTED, "Inbound frame queue overflow"))
+    }
+
     private fun endCurrent(endReason: SessionEndReason) {
         val generation = currentGeneration ?: return
         val connection = currentConnection
@@ -305,6 +315,7 @@ class ConnectionSession private constructor(
 
         currentGeneration = null
         opened = false
+        eventLoop.discardPendingInbound()
         currentSnapshot = SessionSnapshot(
             state = if (reconnect) SessionState.RECONNECT_WAIT else SessionState.STOPPED,
             generation = null,

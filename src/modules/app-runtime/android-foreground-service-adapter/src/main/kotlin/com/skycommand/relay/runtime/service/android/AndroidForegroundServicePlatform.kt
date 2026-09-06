@@ -161,10 +161,12 @@ class RelayForegroundService : Service() {
         if (intent?.getStringExtra(EXTRA_OPERATION_ID) == null) return START_NOT_STICKY
         if (intent.action == ACTION_STOP) {
             pendingStop = intent
+            activeStart = null
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
         if (intent.action != ACTION_START) return START_NOT_STICKY
+        activeStart = intent
         try {
             startForeground(
                 intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0),
@@ -173,6 +175,7 @@ class RelayForegroundService : Service() {
             status(intent, ACTION_STARTED_SUFFIX)
         } catch (_: Exception) {
             status(intent, ACTION_FAILED_SUFFIX)
+            activeStart = null
             stopSelfResult(startId)
         }
         return START_NOT_STICKY
@@ -180,7 +183,9 @@ class RelayForegroundService : Service() {
 
     override fun onDestroy() {
         pendingStop?.let { status(it, ACTION_STOPPED_SUFFIX) }
+            ?: activeStart?.let { status(it, ACTION_FAILED_SUFFIX) }
         pendingStop = null
+        activeStart = null
         super.onDestroy()
     }
 
@@ -220,6 +225,7 @@ class RelayForegroundService : Service() {
     }
 
     private var pendingStop: Intent? = null
+    private var activeStart: Intent? = null
 
     companion object {
         const val ACTION_START = "com.skycommand.relay.START"

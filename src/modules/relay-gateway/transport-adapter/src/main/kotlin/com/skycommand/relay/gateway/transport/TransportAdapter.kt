@@ -97,7 +97,8 @@ private class AdapterConnection(
     private var closeRequested = false
     private var terminalDelivered = false
     private var callbacksEnabled = false
-    private val pendingCallbacks = ArrayDeque<() -> Unit>()
+    private val pendingCallbacks = ArrayDeque<PendingCallback>()
+    private var pendingBinaryCallbacks = 0
 
     override val writer: TransportWriter
         get() = this
@@ -118,9 +119,10 @@ private class AdapterConnection(
                 return
             }
             callbacksEnabled = true
+            pendingBinaryCallbacks = 0
             pendingCallbacks.toList().also { pendingCallbacks.clear() }
         }
-        callbacks.forEach(::deliver)
+        callbacks.forEach { pending -> deliver(pending.callback) }
     }
 
     override fun write(bytes: ByteArray): TransportWriteResult = lock.withLock {
@@ -157,11 +159,33 @@ private class AdapterConnection(
     }
 
     override fun onBinary(bytes: ByteArray) {
-        val shouldDeliver = lock.withLock { opened && !closeRequested && !terminalDelivered }
-        if (shouldDeliver) {
+        var callback: (() -> Unit)? = null
+        var socketToClose: SocketHandle? = null
+        lock.withLock {
+            if (!opened || closeRequested || terminalDelivered) {
+                return
+            }
+            if (!callbacksEnabled && pendingBinaryCallbacks >= MAX_PENDING_BINARY_CALLBACKS) {
+                closeRequested = true
+                terminalDelivered = true
+                pendingBinaryCallbacks = 0
+                pendingCallbacks.clear()
+                pendingCallbacks.addLast(PendingCallback({ listener.onFailure(generation, "Transport failed") }))
+                socketToClose = socket
+                return@withLock
+            }
+
             val copied = bytes.copyOf()
-            deliverWhenEnabled { listener.onBytes(generation, copied) }
+            callback = { listener.onBytes(generation, copied) }
+            if (callbacksEnabled) {
+                return@withLock
+            }
+            pendingBinaryCallbacks += 1
+            pendingCallbacks.addLast(PendingCallback(checkNotNull(callback)))
+            callback = null
         }
+        callback?.let(::deliver)
+        socketToClose?.let { current -> runCatching { current.close() } }
     }
 
     override fun onText() = Unit
@@ -196,13 +220,21 @@ private class AdapterConnection(
             if (callbacksEnabled) {
                 true
             } else {
-                pendingCallbacks.addLast(callback)
+                pendingCallbacks.addLast(PendingCallback(callback))
                 false
             }
         }
         if (shouldDeliver) {
             deliver(callback)
         }
+    }
+
+    private data class PendingCallback(
+        val callback: () -> Unit,
+    )
+
+    private companion object {
+        const val MAX_PENDING_BINARY_CALLBACKS = 16
     }
 }
 

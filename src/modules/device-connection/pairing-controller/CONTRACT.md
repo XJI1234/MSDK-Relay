@@ -26,7 +26,7 @@ PairingController.state() -> PairingState
 - 开始/停止请求被接受只表示请求进入 DJI 调度队列，不表示设备已经配对或已经停止配对。
 - 接受开始请求后进入 `PAIRING`；接受停止请求后进入 `STOPPING`。
 - 开始操作成功不得写成 `PAIRED`。停止操作成功必须保持 `STOPPING`，不得写成 `IDLE`、`PAIRED` 或 `UNKNOWN`；`IDLE` 只能由配对状态观察写入。`STOPPING` 仍允许再次开始对频。失败、超时或取消进入 `FAILED`。
-- 端口创建 DJI 操作失败时请求被拒绝，状态进入 `FAILED`；调度器拒绝请求时也不保留半完成的过渡状态。
+- 端口创建 DJI 操作失败时请求被拒绝，状态进入 `FAILED`。调度器拒绝有效请求时必须返回 `OPERATION_REJECTED`，不得误报为 `INVALID_TIMEOUT`，且不得改写已有配对状态：此时请求尚未进入 DJI 调用，只有共享 DJI 操作域暂时处于未确认隔离。端口执行 DJI action 时的同步异常不得被转换为 `OperationCompletion.fail()`；它可能发生在调用边界已开始后，必须传播给共享协调器，以隔离该次未确认的 DJI 写操作。当前配对命令结果只记录通用失败，真实配对状态仍只可由配对状态观察写入，绝不把这种失败伪造为 `PAIRED` 或 `IDLE`。
 - 时间限制与 `dji-operation-coordinator` 相同，为 `1_000..60_000` 毫秒；非法值在任何状态变更前拒绝。
 
 ## 4. 测试要求

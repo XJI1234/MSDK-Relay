@@ -1,7 +1,7 @@
 # relay-gateway.transport-adapter 模块契约
 
 状态：已批准并已实现
-版本：1.0.0
+版本：1.0.1
 所属一级模块：`relay-gateway`
 Gradle 路径：`:relay-gateway:transport-adapter`
 
@@ -34,7 +34,7 @@ connection.close(reason) -> CloseRequested | AlreadyClosed
 ## 3. 连接、写入与关闭规则
 
 1. `open` 不得向调用方抛出 WebSocket、URI 或 OkHttp 异常，只接受语法正确的 `ws://`/`wss://`，其他输入以固定安全原因拒绝。
-2. 每次成功 `open` 返回拥有完全相同传入 generation 的独立 `TransportConnection`；`open` 返回 `OpenAccepted` 前不得调用 `TransportListener`，同步网络回调必须缓冲。
+2. 每次成功 `open` 返回拥有完全相同传入 generation 的独立 `TransportConnection`；`open` 返回 `OpenAccepted` 前不得调用 `TransportListener`，同步网络回调必须缓冲。这个极短的接管窗口内，除打开/终态回调外最多缓冲 16 条二进制帧；第 17 条到达时必须丢弃已缓冲回调、请求关闭当前 socket，并在 `enableCallbacks()` 后只投递一次标准 `onFailure(generation, "Transport failed")`。该本地过载不解释任何协议帧，也不产生业务结果；它使 `connection-session` 走既有断线清理和重连路径。
 3. `connection-session` 在拥有连接后恰好调用一次 `enableCallbacks()`；之后按序投递缓冲回调。`onOpen` 只调用一次 `onOpened(connection)`；二进制消息以复制后的字节和自身 generation 按库回调顺序调用 `onBytes`；文本消息必须丢弃；`onClosing` 只请求正常关闭；`onClosed` 与 `onFailure` 中先到者产生唯一匹配终态，后者丢弃。
 4. 适配器不比较 generation、不判定过期、不关闭新连接；该策略属于 `connection-session`。收到字节交付前复制，回调返回后不保留。
 5. `write` 仅在连接已打开且未终态时发送二进制消息，且先复制调用方字节；库拒绝/异常、打开前/终态后写入返回 `WriteRejected` 不抛出。不重排也不排队，顺序属于 `outbound-publisher`。
@@ -46,4 +46,4 @@ connection.close(reason) -> CloseRequested | AlreadyClosed
 
 生产实现可有仅本模块的内部 WebSocket 引擎接缝供内存测试，不得出现在其他模块契约中。生产引擎为 OkHttp 4.12.0，ping 间隔 15 秒；替换库或内部调度只有在全部公开行为不变时允许。
 
-测试必须覆盖有效/无效端点、精确 generation 与独立连接、打开/二进制复制/文本丢弃/回调顺序、重复终态、打开前/正常/拒绝/异常/终态后写入、幂等关闭、回调与监听器异常、同步 open 回调的 enableCallbacks 缓冲、真实本地 OkHttp WebSocket、旧回调 generation、写入/关闭/终态并发，以及架构扫描确认本模块是唯一 OkHttp 导入且无协议、DJI、Android、命令、遥测、任务依赖。改变连接器行为、载荷类型、回调顺序、关闭语义、ping 间隔或允许 scheme 前，必须先更新契约与测试。
+测试必须覆盖有效/无效端点、精确 generation 与独立连接、打开/二进制复制/文本丢弃/回调顺序、重复终态、打开前/正常/拒绝/异常/终态后写入、幂等关闭、回调与监听器异常、同步 open 回调的 enableCallbacks 缓冲、接管窗口第 17 条二进制帧的失败关闭、真实本地 OkHttp WebSocket、旧回调 generation、写入/关闭/终态并发，以及架构扫描确认本模块是唯一 OkHttp 导入且无协议、DJI、Android、命令、遥测、任务依赖。改变连接器行为、载荷类型、回调顺序、关闭语义、ping 间隔或允许 scheme 前，必须先更新契约与测试。

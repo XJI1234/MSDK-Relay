@@ -7,6 +7,7 @@ import com.skycommand.relay.device.operation.OperationCompletion
 import com.skycommand.relay.device.operation.OperationOutcome
 import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
+import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.MissionStateEvent
 import com.skycommand.relay.wayline.state.MissionStateStore
@@ -139,7 +140,7 @@ class MissionExecutor private constructor(
         if (snapshot.upload != UploadState.UPLOADED) {
             return ExecutionRequestResult.Rejected(ExecutionRejection.NOT_UPLOADED)
         }
-        val rejection = lock.withLock {
+        val admissionRejection = lock.withLock {
             val unresolved = unconfirmedControl
             if (
                 unresolved != null &&
@@ -148,21 +149,27 @@ class MissionExecutor private constructor(
                 unconfirmedControl = null
             }
             when {
-                active != null -> ExecutionRejection.ALREADY_ACTIVE
+                active != null && !command.canReplace(active!!.command) ->
+                    ExecutionRejection.ALREADY_ACTIVE
                 command != Command.STOP && unconfirmedControl != null -> ExecutionRejection.OPERATION_UNCONFIRMED
                 else -> null
             }
         }
-        if (rejection != null) {
-            return ExecutionRequestResult.Rejected(rejection)
+        if (admissionRejection != null) {
+            return ExecutionRequestResult.Rejected(admissionRejection)
         }
         if (!command.allowedFrom(snapshot.execution)) {
             return ExecutionRequestResult.Rejected(ExecutionRejection.INVALID_STATE)
         }
         val operation = ActiveCommand(Any(), missionRevision, snapshot.deviceGeneration, snapshot.execution, command, listener)
-        lock.withLock {
-            if (active != null) return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
-            active = operation
+        val displaced = lock.withLock {
+            if (active != null && !command.canReplace(active!!.command)) {
+                return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
+            }
+            if (command != Command.STOP && unconfirmedControl != null) {
+                return ExecutionRequestResult.Rejected(ExecutionRejection.OPERATION_UNCONFIRMED)
+            }
+            active.also { active = operation }
         }
         applyState(operation, command.pendingState)
 
@@ -171,37 +178,40 @@ class MissionExecutor private constructor(
                 override fun unconfirmedRetryMarker(): Any? =
                     if (operation.command == Command.STOP) StopRetryMarker(operation.missionRevision, operation.deviceGeneration) else null
 
+                override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
+                    if (operation.command == Command.STOP) {
+                        UnconfirmedOutcomeAdmission.CONTAINMENT
+                    } else {
+                        UnconfirmedOutcomeAdmission.STANDARD
+                    }
+
                 override fun run(operationCompletion: OperationCompletion) {
                 operation.installHardwareConfirmation(operationCompletion::confirmHardwareSettled)
-                try {
-                    val completion = object : ControlCompletion {
-                        override fun succeed() = operationCompletion.succeed()
-                        override fun fail() = operationCompletion.fail()
-                        override fun fail(failure: MissionControlFailure?) {
-                            operation.installFailure(failure)
-                            operationCompletion.fail()
-                        }
+                val completion = object : ControlCompletion {
+                    override fun succeed() = operationCompletion.succeed()
+                    override fun fail() = operationCompletion.fail()
+                    override fun fail(failure: MissionControlFailure?) {
+                        operation.installFailure(failure)
+                        operationCompletion.fail()
                     }
-                    when (command) {
-                        Command.START -> {
-                            operation.markInvocationStarted(stateStore.snapshot().revision)
-                            controlPort.start(completion)
-                        }
-                        Command.PAUSE -> {
-                            operation.markInvocationStarted(stateStore.snapshot().revision)
-                            controlPort.pause(completion)
-                        }
-                        Command.RESUME -> {
-                            operation.markInvocationStarted(stateStore.snapshot().revision)
-                            controlPort.resume(completion)
-                        }
-                        Command.STOP -> {
-                            operation.markInvocationStarted(stateStore.snapshot().revision)
-                            controlPort.stop(completion)
-                        }
+                }
+                when (command) {
+                    Command.START -> {
+                        operation.markInvocationStarted(stateStore.snapshot().revision)
+                        controlPort.start(completion)
                     }
-                } catch (_: Throwable) {
-                    operationCompletion.fail()
+                    Command.PAUSE -> {
+                        operation.markInvocationStarted(stateStore.snapshot().revision)
+                        controlPort.pause(completion)
+                    }
+                    Command.RESUME -> {
+                        operation.markInvocationStarted(stateStore.snapshot().revision)
+                        controlPort.resume(completion)
+                    }
+                    Command.STOP -> {
+                        operation.markInvocationStarted(stateStore.snapshot().revision)
+                        controlPort.stop(completion)
+                    }
                 }
                 }
             },
@@ -210,7 +220,7 @@ class MissionExecutor private constructor(
         )
         val accepted = submission as? SubmissionResult.Accepted
         if (accepted == null) {
-            finishBeforeSubmission(operation)
+            rollbackRejectedSubmission(operation, displaced)
             return ExecutionRequestResult.Rejected(ExecutionRejection.OPERATION_REJECTED)
         }
         return ExecutionRequestResult.Accepted(accepted.cancellation)
@@ -218,7 +228,7 @@ class MissionExecutor private constructor(
 
     private fun finish(operation: ActiveCommand, outcome: OperationOutcome) {
         var hardwareConfirmation: (() -> Boolean)? = null
-        val completed = lock.withLock {
+        val ownsCurrentState = lock.withLock {
             if (active !== operation) false else {
                 active = null
                 if (
@@ -236,15 +246,16 @@ class MissionExecutor private constructor(
                 true
             }
         }
-        if (!completed) return
-        val confirmedByObservation = hardwareConfirmation?.invoke()
-        if (hardwareConfirmation != null && confirmedByObservation != true) {
-            lock.withLock {
-                if (unconfirmedControl == null) unconfirmedControl = operation
+        if (ownsCurrentState) {
+            val confirmedByObservation = hardwareConfirmation?.invoke()
+            if (hardwareConfirmation != null && confirmedByObservation != true) {
+                lock.withLock {
+                    if (unconfirmedControl == null) unconfirmedControl = operation
+                }
             }
+            nextState(operation, outcome)?.let { applyState(operation, it) }
         }
-        nextState(operation, outcome)?.let { applyState(operation, it) }
-        runCatching { operation.listener.onCompleted(outcome.toTerminalOutcome(), operation.failure) }
+        operation.reportTerminal(outcome.toTerminalOutcome())
     }
 
     private fun matchingExecutionStateAlreadyObserved(operation: ActiveCommand): Boolean {
@@ -257,9 +268,16 @@ class MissionExecutor private constructor(
             snapshot.execution == observedState
     }
 
-    private fun finishBeforeSubmission(operation: ActiveCommand) {
-        if (!clearIfActive(operation)) return
-        applyState(operation, if (operation.command == Command.START) ExecutionState.FAILED else operation.previousState)
+    private fun rollbackRejectedSubmission(operation: ActiveCommand, displaced: ActiveCommand?) {
+        val restored = lock.withLock {
+            if (active !== operation) false else {
+                active = displaced
+                true
+            }
+        }
+        if (restored) {
+            applyState(operation, if (operation.command == Command.START) ExecutionState.FAILED else operation.previousState)
+        }
     }
 
     private fun nextState(operation: ActiveCommand, outcome: OperationOutcome): ExecutionState? = when {
@@ -283,13 +301,6 @@ class MissionExecutor private constructor(
         }
     }
 
-    private fun clearIfActive(operation: ActiveCommand): Boolean = lock.withLock {
-        if (active !== operation) false else {
-            active = null
-            true
-        }
-    }
-
     private enum class Command(
         val pendingState: ExecutionState,
         val successState: ExecutionState,
@@ -304,6 +315,8 @@ class MissionExecutor private constructor(
         val requiresReceiptConfirmation: Boolean get() = observedState != null
 
         fun allowedFrom(state: ExecutionState): Boolean = state in allowed
+
+        fun canReplace(active: Command): Boolean = this == STOP && active != STOP
     }
 
     private data class ActiveCommand(
@@ -316,6 +329,7 @@ class MissionExecutor private constructor(
         var hardwareConfirmation: (() -> Boolean)? = null,
         var invocationRevision: Long? = null,
         var failure: MissionControlFailure? = null,
+        val terminalReported: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
     ) {
         fun installHardwareConfirmation(confirmation: () -> Boolean) {
             hardwareConfirmation = confirmation
@@ -327,6 +341,12 @@ class MissionExecutor private constructor(
 
         fun installFailure(value: MissionControlFailure?) {
             failure = value
+        }
+
+        fun reportTerminal(outcome: ExecutionTerminalOutcome) {
+            if (terminalReported.compareAndSet(false, true)) {
+                runCatching { listener.onCompleted(outcome, failure) }
+            }
         }
     }
 

@@ -102,14 +102,15 @@ class DjiOperationCoordinator private constructor(
     ): SubmissionResult {
         if (timeoutMillis !in 1_000..60_000) return SubmissionResult.Rejected
         val entry = Entry(action, timeoutMillis, listener)
+        val containment = runCatching { action.unconfirmedOutcomeAdmission() }
+            .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.CONTAINMENT
+        var preemption: ContainmentPreemption? = null
         val shouldStart = lock.withLock {
             if (hardwareOutcomeUnconfirmed) {
                 val unresolved = running ?: return SubmissionResult.Rejected
                 val replacementMarker = runCatching { action.unconfirmedRetryMarker() }.getOrNull()
                 val unresolvedMarker = runCatching { unresolved.action.unconfirmedRetryMarker() }.getOrNull()
                 val matchingRetry = replacementMarker != null && replacementMarker == unresolvedMarker
-                val containment = runCatching { action.unconfirmedOutcomeAdmission() }
-                    .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.CONTAINMENT
                 if (!matchingRetry && !containment) {
                     return SubmissionResult.Rejected
                 }
@@ -120,11 +121,58 @@ class DjiOperationCoordinator private constructor(
                 running = null
                 hardwareOutcomeUnconfirmed = false
             }
-            pending.addLast(entry)
-            running == null
+            val active = running
+            if (
+                active != null &&
+                containment &&
+                runCatching { active.action.unconfirmedOutcomeAdmission() }
+                    .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.STANDARD
+            ) {
+                preemption = preemptForContainment(active)
+                pending.addFirst(entry)
+                true
+            } else {
+                pending.addLast(entry)
+                running == null
+            }
         }
+        preemption?.let(::reportContainmentPreemption)
         if (shouldStart) startNext()
         return SubmissionResult.Accepted(CancellationHandle(entry))
+    }
+
+    /**
+     * A containment call is the sole exception to ordinary FIFO. The old invocation may still
+     * reach DJI, so it is permanently detached from the new command before this returns.
+     */
+    private fun preemptForContainment(active: Entry): ContainmentPreemption {
+        check(running === active) { "Containment can only preempt the active operation" }
+        active.terminalReported = true
+        active.hardwareSettled = true
+        active.superseded = active.mayHaveInvokedDji
+        val timeout = active.timeout
+        active.timeout = null
+        running = null
+        val cancelledPending = mutableListOf<Entry>()
+        while (pending.isNotEmpty()) {
+            pending.removeFirst().also {
+                it.terminalReported = true
+                it.hardwareSettled = true
+                cancelledPending += it
+            }
+        }
+        return ContainmentPreemption(active, timeout, active.mayHaveInvokedDji, cancelledPending)
+    }
+
+    private fun reportContainmentPreemption(preemption: ContainmentPreemption) {
+        runCatching { preemption.timeout?.cancel() }
+        runCatching { preemption.displaced.listener.onComplete(OperationOutcome.CANCELLED) }
+        preemption.cancelledPending.forEach { pendingEntry ->
+            runCatching { pendingEntry.listener.onComplete(OperationOutcome.CANCELLED) }
+        }
+        if (preemption.displacedMayHaveInvokedDji) {
+            runCatching { preemption.displaced.action.onHardwareOutcomeUnconfirmed(OperationOutcome.CANCELLED) }
+        }
     }
 
     private fun startNext() {
@@ -333,6 +381,13 @@ class DjiOperationCoordinator private constructor(
         var mayHaveInvokedDji: Boolean = false,
         var superseded: Boolean = false,
         var lateCompletionReported: Boolean = false,
+    )
+
+    private class ContainmentPreemption(
+        val displaced: Entry,
+        val timeout: OperationCancellation?,
+        val displacedMayHaveInvokedDji: Boolean,
+        val cancelledPending: List<Entry>,
     )
 
     companion object {

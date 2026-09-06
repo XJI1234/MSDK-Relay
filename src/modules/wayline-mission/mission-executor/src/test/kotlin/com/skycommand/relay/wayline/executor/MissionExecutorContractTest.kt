@@ -110,6 +110,48 @@ class MissionExecutorContractTest {
     }
 
     @Test
+    fun keepsDjiControlQuarantinedAfterASynchronousPortExceptionButAllowsMissionStop() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+        fixture.port.throwOnCall = true
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+
+        fixture.port.throwOnCall = false
+        assertEquals(
+            ExecutionRejection.OPERATION_REJECTED,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.pause()).reason,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.stop())
+        assertEquals(1, fixture.port.stopCalls)
+    }
+
+    @Test
+    fun stopPreemptsAnAcceptedStartThatIsStillWaitingForItsDjiReceipt() {
+        val fixture = Fixture()
+        val startOutcomes = mutableListOf<ExecutionTerminalOutcome>()
+        val stopOutcomes = mutableListOf<ExecutionTerminalOutcome>()
+
+        assertIs<ExecutionRequestResult.Accepted>(
+            fixture.executor.start(ExecutionTerminalListener { startOutcomes += it }),
+        )
+
+        assertIs<ExecutionRequestResult.Accepted>(
+            fixture.executor.stop(ExecutionTerminalListener { stopOutcomes += it }),
+        )
+
+        assertEquals(listOf(ExecutionTerminalOutcome.CANCELLED), startOutcomes)
+        assertEquals(emptyList(), stopOutcomes)
+        assertEquals(ExecutionState.STOPPING, fixture.store.snapshot().execution)
+        assertEquals(1, fixture.port.stopCalls)
+
+        fixture.port.completeSuccess()
+
+        assertEquals(listOf(ExecutionTerminalOutcome.SUCCEEDED), stopOutcomes)
+        assertEquals(ExecutionState.FINISHED, fixture.store.snapshot().execution)
+    }
+
+    @Test
     fun doesNotRepeatPauseAfterItsDjiReceiptIsLost() {
         val fixture = Fixture()
         fixture.markExecutionStarted()

@@ -8,6 +8,7 @@ import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class AndroidDjiFlightPortContractTest {
@@ -30,18 +31,31 @@ class AndroidDjiFlightPortContractTest {
     }
 
     @Test
-    fun failsSynchronouslyThrownPlatformCallsAndDropsCallbacksAfterClose() {
+    fun propagatesSynchronouslyThrownPlatformCallsWithoutFabricatingADjiFailure() {
         val api = Api()
         val port = AndroidDjiFlightPort(api)
         val events = mutableListOf<String>()
         api.throwOnCall = true
-        port.execute(FlightAction.TAKEOFF, completion(events))
+
+        assertFailsWith<IllegalStateException> {
+            port.execute(FlightAction.TAKEOFF, completion(events))
+        }
+
+        assertEquals(emptyList(), events)
+    }
+
+    @Test
+    fun dropsCallbacksAfterClose() {
+        val api = Api()
+        val port = AndroidDjiFlightPort(api)
+        val events = mutableListOf<String>()
+
         api.throwOnCall = false
         port.execute(FlightAction.LAND, completion(events))
         port.close()
         api.succeed()
 
-        assertEquals(listOf("fail"), events)
+        assertEquals(emptyList(), events)
     }
 
     @Test

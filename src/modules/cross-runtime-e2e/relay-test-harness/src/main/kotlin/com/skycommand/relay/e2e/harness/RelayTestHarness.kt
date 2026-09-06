@@ -81,6 +81,7 @@ import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
 import com.skycommand.relay.wayline.uploader.StagedMissionContentReader
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.time.Duration
@@ -134,9 +135,9 @@ class InMemoryMissionStorage : StagingStorage, StagedMissionContentReader {
         temporaryMetadata = null
     }
 
-    override fun read(metadata: MissionMetadata): ByteArray = lock.withLock {
+    override fun open(metadata: MissionMetadata) = lock.withLock {
         check(currentMetadata == metadata) { "请求的航线不是当前已暂存航线" }
-        checkNotNull(current).copyOf()
+        ByteArrayInputStream(checkNotNull(current).copyOf())
     }
 }
 

@@ -7,19 +7,51 @@ import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
+import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.wayline.uploader.UploadCompletion
 import java.io.File
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.nio.file.Files
 
+private fun AndroidDjiWaylineAdapter.upload(
+    metadata: MissionMetadata,
+    content: ByteArray,
+    progress: (Int) -> Unit,
+    completion: UploadCompletion,
+) {
+    when (val preparation = prepare(metadata, content.inputStream())) {
+        is MissionUploadPreparation.Prepared -> preparation.upload.start(progress, completion)
+        MissionUploadPreparation.Rejected -> completion.fail()
+    }
+}
+
 class AndroidDjiWaylineAdapterContractTest {
+    @Test fun preparesThePrivateUploadFileBeforeCallingDji() {
+        val files = FakeFiles()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(files, dji)
+
+        val prepared = kotlin.test.assertIs<MissionUploadPreparation.Prepared>(
+            adapter.prepare(metadata("route.kmz"), singleWaylineKmz().inputStream()),
+        )
+
+        assertEquals(1, files.writes)
+        assertTrue(dji.uploadCompletions.isEmpty())
+
+        prepared.upload.start({}, UploadDone())
+
+        assertEquals(1, dji.uploadCompletions.size)
+    }
+
     @Test fun preservesTheRawDjiExecutionStateAlongsideItsNormalizedTaskSignal() {
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
@@ -144,21 +176,46 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals("The mission manager is busy", diagnostics.single().djiErrorDescription)
     }
 
-    @Test fun recordsSynchronousDjiUploadInvocationFailureSeparatelyFromDjiCallbackFailure() {
+    @Test fun propagatesSynchronousDjiUploadInvocationFailureWithoutFabricatingADjiCallback() {
         val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
         val dji = FakeDji().apply { uploadFailure = IllegalStateException("Waypoint manager is unavailable") }
         val files = FakeFiles()
         val adapter = AndroidDjiWaylineAdapter(files, dji, WaylineAdapterDiagnosticSink { diagnostics += it })
         val completion = UploadDone()
 
-        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+        assertFailsWith<IllegalStateException> {
+            adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, completion)
+        }
 
-        assertEquals(listOf("failure"), completion.events)
+        assertEquals(emptyList(), completion.events)
         assertNull(completion.failure)
         assertEquals(1, files.writes)
-        assertEquals(1, files.deletes)
+        assertEquals(0, files.deletes)
         assertEquals(
             listOf(WaylineAdapterDiagnosticKind.UPLOAD_DJI_INVOCATION_FAILED),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals("IllegalStateException", diagnostics.single().exceptionType)
+
+        adapter.close()
+        assertEquals(1, files.deletes)
+    }
+
+    @Test fun propagatesSynchronousDjiControlInvocationFailureWithoutFabricatingADjiCallback() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val dji = FakeDji().apply { controlFailure = IllegalStateException("Waypoint manager is unavailable") }
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        val completion = ControlDone()
+
+        assertFailsWith<IllegalStateException> {
+            adapter.start(completion)
+        }
+
+        assertEquals(emptyList(), completion.events)
+        assertEquals(
+            listOf(WaylineAdapterDiagnosticKind.CONTROL_DJI_INVOCATION_FAILED),
             diagnostics.map(WaylineAdapterDiagnostic::kind),
         )
         assertEquals("IllegalStateException", diagnostics.single().exceptionType)
@@ -361,7 +418,7 @@ class AndroidDjiWaylineAdapterContractTest {
     @Test fun physicalStorePreservesOriginalBasenameAndRemovesPartialWrites() {
         val root = Files.createTempDirectory("wayline-store").toFile()
         try {
-            val stored = writeMissionFile(root, "mission.kmz", byteArrayOf(1, 2, 3))
+            val stored = writeMissionFile(root, "mission.kmz", byteArrayOf(1, 2, 3).inputStream())
             assertEquals("mission.kmz", java.io.File(stored.path).name)
             assertTrue(java.io.File(stored.path).isFile)
             stored.delete()
@@ -369,7 +426,7 @@ class AndroidDjiWaylineAdapterContractTest {
 
             val failedRoot = java.io.File(root, "failed")
             runCatching {
-                writeMissionFile(failedRoot, "broken.kmz", byteArrayOf(1)) { _, _ -> error("write failed") }
+                writeMissionFile(failedRoot, "broken.kmz", byteArrayOf(1).inputStream()) { _, _ -> error("write failed") }
             }
             assertFalse(failedRoot.walkTopDown().drop(1).any())
         } finally {
@@ -393,6 +450,20 @@ class AndroidDjiWaylineAdapterContractTest {
             zip.closeEntry()
         }
         return output.toByteArray()
+    }
+
+    @Test fun physicalStoreCopiesMissionInputsInBoundedChunks() {
+        val root = Files.createTempDirectory("wayline-stream-store").toFile()
+        val source = MaximumReadSizeInputStream((64 * 1024 * 3 + 1).toLong())
+        try {
+            val stored = writeMissionFile(root, "mission.kmz", source)
+
+            assertTrue(source.maximumRequestedBytes <= 64 * 1024)
+            assertEquals(64 * 1024 * 3 + 1L, File(stored.path).length())
+            stored.delete()
+        } finally {
+            root.deleteRecursively()
+        }
     }
 
     private fun kmzWithoutWaylinesWpml(): ByteArray {
@@ -441,14 +512,33 @@ class AndroidDjiWaylineAdapterContractTest {
         override fun fail(value: MissionControlFailure?){failure=value;events+="failure"}
     }
     private class FakeFiles:MissionFileStore{var writes=0;var deletes=0;var writeFailure:Throwable?=null;val deleteCounts=mutableListOf<Int>();val paths=mutableListOf<String>();private val root=Files.createTempDirectory("wayline-fake-files").toFile().apply{deleteOnExit()}
-        override fun write(fileName:String,content:ByteArray):StoredMissionFile{writes++;writeFailure?.let { throw it };val index=deleteCounts.size;deleteCounts+=0;val directory=File(root,index.toString()).apply{check(mkdirs())};val file=File(directory,fileName).apply{writeBytes(content)};val path=file.absolutePath;paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++;directory.deleteRecursively()}}}
-    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var uploadFailure:Throwable?=null;var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null
+        override fun write(fileName:String,content:java.io.InputStream):StoredMissionFile{writes++;writeFailure?.let { throw it };val index=deleteCounts.size;deleteCounts+=0;val directory=File(root,index.toString()).apply{check(mkdirs())};val file=File(directory,fileName).apply{outputStream().use { content.copyTo(it) }};val path=file.absolutePath;paths+=path;return StoredMissionFile(path,fileName){deleteCounts[index]++;deletes++;directory.deleteRecursively()}}}
+    private class FakeDji:DjiWaypointMissionApi{var uploadPath:String?=null;var uploadCompletion:DjiUploadCompletion?=null;val uploadCompletions=mutableListOf<DjiUploadCompletion>();var uploadFailure:Throwable?=null;var controlFailure:Throwable?=null;var controlCompletion:DjiControlCompletion?=null;var controlName:String?=null;var command:String?=null;var closeCalls=0;var executionListenerRegistrations=0;val calls=mutableListOf<String>();private var executionListener:((DjiMissionExecutionState)->Unit)?=null
         override fun upload(path:String,completion:DjiUploadCompletion){uploadFailure?.let { throw it };uploadPath=path;uploadCompletion=completion;uploadCompletions+=completion}
-        override fun start(name:String,completion:DjiControlCompletion){calls+="start";command="start";controlName=name;controlCompletion=completion}
-        override fun pause(completion:DjiControlCompletion){command="pause";controlCompletion=completion}
-        override fun resume(completion:DjiControlCompletion){command="resume";controlCompletion=completion}
-        override fun stop(name:String,completion:DjiControlCompletion){command="stop";controlName=name;controlCompletion=completion}
+        override fun start(name:String,completion:DjiControlCompletion){controlFailure?.let { throw it };calls+="start";command="start";controlName=name;controlCompletion=completion}
+        override fun pause(completion:DjiControlCompletion){controlFailure?.let { throw it };command="pause";controlCompletion=completion}
+        override fun resume(completion:DjiControlCompletion){controlFailure?.let { throw it };command="resume";controlCompletion=completion}
+        override fun stop(name:String,completion:DjiControlCompletion){controlFailure?.let { throw it };command="stop";controlName=name;controlCompletion=completion}
         override fun onExecutionState(listener:(DjiMissionExecutionState)->Unit):DjiExecutionStateRegistration { calls+="listener"; executionListenerRegistrations++; executionListener=listener; return DjiExecutionStateRegistration { executionListener=null } }
         fun emit(state:DjiMissionExecutionState) { executionListener?.invoke(state) }
         override fun close(){closeCalls++} }
+
+    private class MaximumReadSizeInputStream(
+        private var remaining: Long,
+    ) : InputStream() {
+        var maximumRequestedBytes = 0
+
+        override fun read(): Int = if (remaining == 0L) -1 else {
+            remaining -= 1
+            0
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            maximumRequestedBytes = maxOf(maximumRequestedBytes, length)
+            if (remaining == 0L) return -1
+            val copied = minOf(remaining, length.toLong()).toInt()
+            remaining -= copied.toLong()
+            return copied
+        }
+    }
 }

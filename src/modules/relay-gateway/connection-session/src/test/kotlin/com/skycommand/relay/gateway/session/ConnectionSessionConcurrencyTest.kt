@@ -1,5 +1,7 @@
 package com.skycommand.relay.gateway.session
 
+import com.skycommand.relay.protocol.CommandFrame
+import com.skycommand.relay.protocol.JsonObject
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
@@ -239,6 +241,76 @@ class ConnectionSessionConcurrencyTest {
             assertEquals(1, fixture.outbound.discarded.size)
             assertEquals(1, fixture.scheduler.tasks.count { !it.cancelled && !it.fired })
         }
+    }
+
+    @Test
+    fun inboundOverflowEndsTheSessionAndDiscardsFramesWaitingBehindAStalledConsumer() {
+        val fixture = SessionFixture.create()
+        fixture.becomeActive()
+        val firstFrameEntered = CountDownLatch(1)
+        val releaseFirstFrame = CountDownLatch(1)
+        fixture.consumer.beforeAccept = {
+            firstFrameEntered.countDown()
+            assertTrue(releaseFirstFrame.await(2, TimeUnit.SECONDS), "test did not release the first frame")
+        }
+        val connection = fixture.connector.current
+        val first = thread(start = true) {
+            connection.receive(encoded(CommandFrame("first", "telemetry.read", JsonObject(emptyMap()))))
+        }
+        assertTrue(firstFrameEntered.await(2, TimeUnit.SECONDS), "first frame was not dispatched")
+
+        repeat(17) { index ->
+            connection.receive(encoded(CommandFrame("waiting-$index", "telemetry.read", JsonObject(emptyMap()))))
+        }
+
+        releaseFirstFrame.countDown()
+        first.join(2_000)
+
+        assertFalse(first.isAlive, "event loop did not finish after the overflow")
+        assertEquals(SessionState.RECONNECT_WAIT, fixture.session.snapshot().state)
+        assertEquals(1, fixture.consumer.accepted.size)
+        assertEquals(1, fixture.connector.current.closeCount)
+        assertEquals(1, fixture.commandCleanup.calls.size)
+        assertEquals(1, fixture.missionCleanup.calls.size)
+        assertEquals(1, fixture.outbound.discarded.size)
+        assertEquals(SessionEndKind.NOT_CONNECTED, fixture.notifier.events.last().endReason?.kind)
+        assertEquals(1, fixture.scheduler.tasks.count { !it.cancelled && !it.fired })
+    }
+
+    @Test
+    fun explicitStopPreemptsFramesWaitingBehindTheCurrentInboundFrame() {
+        val fixture = SessionFixture.create()
+        fixture.becomeActive()
+        val firstFrameEntered = CountDownLatch(1)
+        val releaseFirstFrame = CountDownLatch(1)
+        val stopped = CountDownLatch(1)
+        fixture.consumer.beforeAccept = {
+            firstFrameEntered.countDown()
+            assertTrue(releaseFirstFrame.await(2, TimeUnit.SECONDS), "test did not release the first frame")
+        }
+        val connection = fixture.connector.current
+        val first = thread(start = true) {
+            connection.receive(encoded(CommandFrame("first", "telemetry.read", JsonObject(emptyMap()))))
+        }
+        assertTrue(firstFrameEntered.await(2, TimeUnit.SECONDS), "first frame was not dispatched")
+
+        connection.receive(encoded(CommandFrame("waiting-one", "telemetry.read", JsonObject(emptyMap()))))
+        connection.receive(encoded(CommandFrame("waiting-two", "telemetry.read", JsonObject(emptyMap()))))
+        val stopping = thread(start = true) {
+            fixture.session.stop()
+            stopped.countDown()
+        }
+
+        assertFalse(stopped.await(100, TimeUnit.MILLISECONDS), "stop interrupted the frame already in progress")
+        releaseFirstFrame.countDown()
+        assertTrue(stopped.await(2, TimeUnit.SECONDS), "stop did not run after the current frame")
+        first.join(2_000)
+        stopping.join(2_000)
+
+        assertFalse(first.isAlive)
+        assertFalse(stopping.isAlive)
+        assertEquals(1, fixture.consumer.accepted.size)
+        assertEquals(SessionState.STOPPED, fixture.session.snapshot().state)
     }
 
     private fun createSessionUsing(executor: Executor): ConnectionSession {

@@ -34,6 +34,23 @@ class FlightControlContractTest {
     }
 
     @Test
+    fun rejectsADuplicateTakeoffWhileTheFirstReceiptIsStillPending() {
+        val fixture = Fixture()
+        val first = Completion()
+        val duplicate = Completion()
+
+        fixture.control.commandHandler().handle(command("takeoff-1", "flight.takeoff"), first)
+        fixture.control.commandHandler().handle(command("takeoff-2", "flight.takeoff"), duplicate)
+
+        assertEquals(listOf(FlightAction.TAKEOFF), fixture.port.actions)
+        assertEquals(listOf("reject:Flight operation was rejected"), duplicate.events)
+
+        fixture.port.succeed()
+
+        assertEquals(listOf("ok:Takeoff command completed"), first.events)
+    }
+
+    @Test
     fun namesTheCompletedRecoveryActionWithoutClaimingAircraftState() {
         val fixture = Fixture()
         val completion = Completion()
@@ -111,7 +128,7 @@ class FlightControlContractTest {
         assertTrue(source.contains("ACTION_REJECTED"))
     }
 
-    private fun command(name: String) = CommandFrame(name, name, JsonObject(mapOf("confirm" to JsonBoolean(true))))
+    private fun command(id: String, name: String = id) = CommandFrame(id, name, JsonObject(mapOf("confirm" to JsonBoolean(true))))
 
     private class Fixture {
         val port = Port()

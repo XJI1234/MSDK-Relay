@@ -20,6 +20,7 @@ DiagnosticJournal.snapshot() -> DiagnosticJournalSnapshot
 
 - 构造时调用方提供固定 `runId`、容量、时钟和可选的持久化端口；容量必须大于 0。
 - `record` 永不向业务调用方抛出持久化端口或监听器异常；调用方获得的事件已经过脱敏和长度限制。
+- `record` 不得等待文件写入、网络发送或 Android Logcat。持久化端口只接受不可变快照并立即返回；异步写入失败必须通过端口回调使 `persistenceFailures` 增加，但不能改变已经记录的事件、命令回执或 DJI 调用。
 - `pending` 总是按 `sequence` 升序返回最早的未确认事件，且不改变队列。
 - `acknowledge` 仅接受当前 `runId` 且不小于已确认序号的确认；未知运行批次和旧确认不删除任何事件。
 - 所有公开集合和事件都是不可变快照；并发调用不得重复分配序号或破坏排序。
@@ -37,6 +38,6 @@ DiagnosticJournal.snapshot() -> DiagnosticJournalSnapshot
 
 ## 4. 状态与错误
 
-事件从 `PENDING` 进入 `ACKNOWLEDGED` 后删除。容量淘汰仅发生在最旧的 `PENDING` 事件；淘汰计数必须反映在下一条可记录事件的安全详情中。持久化失败仅增加统计，不得使 `record` 失败。
+事件从 `PENDING` 进入 `ACKNOWLEDGED` 后删除。容量淘汰仅发生在最旧的 `PENDING` 事件；淘汰计数必须反映在下一条可记录事件的安全详情中。持久化请求必须只携带当时完整的不可变队列快照；异步失败仅增加统计，不得使 `record` 失败。
 
 模块不产生 `runId`，不决定日志等级，不打开文件，不发送帧，也不根据业务异常自动重试。

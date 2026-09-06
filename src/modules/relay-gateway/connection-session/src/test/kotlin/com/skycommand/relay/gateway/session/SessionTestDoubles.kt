@@ -203,9 +203,12 @@ internal class RecordingOutbound(private val order: MutableList<String>) : Sessi
 
 internal class RecordingFrameConsumer : ActiveFrameConsumer {
     val accepted = mutableListOf<Pair<ActiveSession, RelayFrame>>()
+    @Volatile
+    var beforeAccept: (() -> Unit)? = null
     var failure: RuntimeException? = null
 
     override fun accept(activeSession: ActiveSession, frame: RelayFrame) {
+        beforeAccept?.invoke()
         failure?.let { throw it }
         accepted += activeSession to frame
     }

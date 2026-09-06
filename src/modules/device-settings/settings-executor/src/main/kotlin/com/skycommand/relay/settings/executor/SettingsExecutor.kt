@@ -8,12 +8,15 @@ import com.skycommand.relay.device.operation.OperationOutcome
 import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
 import com.skycommand.relay.settings.command.SettingsDomain
+import com.skycommand.relay.settings.command.SettingsDjiFailure
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
 
 interface SettingsDjiCompletion {
     fun succeed(snapshot: SettingsSnapshot)
     fun fail()
+
+    fun fail(failure: SettingsDjiFailure?) = fail()
 }
 
 interface DjiSettingsPort {
@@ -23,6 +26,8 @@ interface DjiSettingsPort {
 
 fun interface SettingsExecutionListener {
     fun onCompleted(outcome: SettingsExecutionOutcome)
+
+    fun onCompleted(outcome: SettingsExecutionOutcome, failure: SettingsDjiFailure?) = onCompleted(outcome)
 }
 
 sealed interface SettingsExecutionOutcome {
@@ -47,6 +52,7 @@ class SettingsExecutor private constructor(
         listener: SettingsExecutionListener = SettingsExecutionListener { },
     ): SettingsSubmissionResult {
         var snapshot: SettingsSnapshot? = null
+        var failure: SettingsDjiFailure? = null
         val submission = coordinator.submit(
             DjiOperation { completion ->
                 port.execute(request, object : SettingsDjiCompletion {
@@ -59,6 +65,10 @@ class SettingsExecutor private constructor(
                         }
                     }
                     override fun fail() = completion.fail()
+                    override fun fail(value: SettingsDjiFailure?) {
+                        failure = value
+                        completion.fail()
+                    }
                 })
             },
             timeoutMillis,
@@ -70,7 +80,7 @@ class SettingsExecutor private constructor(
                     OperationOutcome.TIMED_OUT -> SettingsExecutionOutcome.TimedOut
                     OperationOutcome.CANCELLED -> SettingsExecutionOutcome.Cancelled
                 }
-                runCatching { listener.onCompleted(terminal) }
+                runCatching { listener.onCompleted(terminal, failure) }
             },
         )
         return when (submission) {

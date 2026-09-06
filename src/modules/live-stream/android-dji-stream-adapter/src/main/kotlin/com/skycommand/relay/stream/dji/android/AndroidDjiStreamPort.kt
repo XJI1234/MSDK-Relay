@@ -65,11 +65,7 @@ class AndroidDjiStreamPort internal constructor(
             return
         }
         prepared.previous?.let(::detach)
-        try {
-            platform.start(config.rtmpUrl, prepared.operation.listener!!, completionForStart(prepared.operation))
-        } catch (_: Throwable) {
-            finishStart(prepared.operation, false)
-        }
+        platform.start(config.rtmpUrl, prepared.operation.listener!!, completionForStart(prepared.operation))
     }
 
     override fun stop(completion: StreamDjiCompletion) {
@@ -84,15 +80,11 @@ class AndroidDjiStreamPort internal constructor(
             return
         }
         val once = OnceCompletion(completion)
-        try {
-            platform.stop(object : DjiLiveStreamCompletion {
-                override fun succeed() = finishStop(operation.active, once, true)
-                override fun fail() = finishStop(operation.active, once, false)
-                override fun fail(failure: StreamDjiFailure?) = finishStop(operation.active, once, false, failure)
-            })
-        } catch (_: Throwable) {
-            finishStop(operation.active, once, false)
-        }
+        platform.stop(object : DjiLiveStreamCompletion {
+            override fun succeed() = finishStop(operation.active, once, true)
+            override fun fail() = finishStop(operation.active, once, false)
+            override fun fail(failure: StreamDjiFailure?) = finishStop(operation.active, once, false, failure)
+        })
     }
 
     private fun listenerFor(operation: Active) = object : DjiLiveStreamListener {

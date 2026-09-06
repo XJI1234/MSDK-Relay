@@ -1,6 +1,7 @@
 package com.skycommand.relay.runtime.service.android
 
 import com.skycommand.relay.runtime.service.ForegroundServiceCallback
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -126,6 +127,21 @@ class AndroidForegroundServicePortContractTest {
         assertEquals(1, failures)
     }
 
+    @Test
+    fun forwardsFailureAfterAStartedOperationAsAnUnexpectedServiceFailure() {
+        val platform = FakePlatform()
+        val port = AndroidForegroundServicePort(platform)
+        var unexpectedFailures = 0
+        port.onUnexpectedFailure { unexpectedFailures += 1 }
+
+        port.start(callback())
+        val operationId = platform.currentOperationId!!
+        platform.emitStarted(operationId)
+        platform.emitFailed(operationId)
+
+        assertEquals(1, unexpectedFailures)
+    }
+
     private fun callback(
         onStarted: () -> Unit = {},
         onStopped: () -> Unit = {},
@@ -197,5 +213,19 @@ class ForegroundNotificationSpecContractTest {
     @Test
     fun acceptsACompleteNotificationSpecification() {
         ForegroundNotificationSpec("relay", 1, 2, 3, 4)
+    }
+}
+
+class RelayForegroundServiceLifecycleContractTest {
+    @Test
+    fun reportsUnexpectedServiceDestructionAsFailureButKeepsExplicitStopAsStopped() {
+        val source = listOf(
+            Path.of("src/modules/app-runtime/android-foreground-service-adapter/src/main/kotlin/com/skycommand/relay/runtime/service/android/AndroidForegroundServicePlatform.kt"),
+            Path.of("src/main/kotlin/com/skycommand/relay/runtime/service/android/AndroidForegroundServicePlatform.kt"),
+        ).first { it.toFile().exists() }.toFile().readText()
+
+        assertTrue(source.contains("activeStart = intent"))
+        assertTrue(source.contains("activeStart?.let { status(it, ACTION_FAILED_SUFFIX) }"))
+        assertTrue(source.contains("pendingStop?.let { status(it, ACTION_STOPPED_SUFFIX) }"))
     }
 }

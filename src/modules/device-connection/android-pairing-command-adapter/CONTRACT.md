@@ -27,7 +27,7 @@ port.stopPairing() -> DjiOperation
 ## 操作和失败规则
 
 1. `startPairing` 只使用 MSDK 的遥控器 `KeyRequestPairing` action；`stopPairing` 只使用 `KeyStopPairing` action。不得调用中继配对、多设备配对、遥控器升级配对或任何其他 action。
-2. MSDK action 成功只调用操作完成器的成功；失败、同步 DJI 异常、action 不可用或回调异常只调用失败。失败不得包含厂商错误码、消息、异常或堆栈。
+2. MSDK action 成功只调用操作完成器的成功；真实 MSDK `onFailure` 或 action 不可用时只调用失败。直接 `KeyManager.performAction(...)` 同步抛出的异常不得伪造为 MSDK 失败回调，必须原样传播给共享协调器，以隔离该次未确认 action；回调处理自身异常仍须隔离。失败不得包含厂商错误码、消息、异常或堆栈。
 3. 操作完成器回调必须在适配器锁外执行，且用户完成器异常必须隔离。
 4. 适配器不实现超时、排队、串行化或取消；这些职责只能由 `dji-operation-coordinator` 处理。协调器取消后的迟到 DJI 回调不得令同一 `DjiOperation` 第二次完成。
 5. 适配器不把 action 成功解释为 `PAIRED` 或 `IDLE`。真实配对状态只能由 `android-pairing-status-adapter` 观察和发布。

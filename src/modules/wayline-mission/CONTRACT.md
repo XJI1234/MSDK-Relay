@@ -15,12 +15,12 @@ Gradle 路径：`:wayline-mission`
 | --- | --- |
 | `mission-staging` | 接收完整 KMZ 字节、校验摘要、原子暂存和清理 |
 | `mission-state-store` | 保存文件元数据、上传进度和执行状态 |
-| `mission-uploader` | 将当前暂存航线上传至设备 |
+| `mission-uploader` | 以有界输入流核验当前暂存航线、准备私有 DJI 上传副本并将其上传至设备 |
 | `mission-executor` | 只提交开始、暂停、恢复和停止任务命令，并管理命令终态 |
 | `mission-flight-phase` | 将 DJI 航线状态转换为可信的入场与执行阶段事实 |
 | `wayline-command-handler` | 解释 wayline 命令并调用对应能力 |
-| `android-dji-wayline-adapter` | 在上传前拒绝非单航线 WPML，再将 KMZ 字节、上传进度、任务控制及原始任务状态转换为 DJI MSDK v5 操作 |
-| `android-mission-staging-adapter` | 在应用私有目录原子暂存并读取当前 KMZ 文件 |
+| `android-dji-wayline-adapter` | 在上传前拒绝非单航线 WPML，以有界流写入私有上传副本，再将上传进度、任务控制及原始任务状态转换为 DJI MSDK v5 操作 |
+| `android-mission-staging-adapter` | 在应用私有目录原子暂存并以受控输入流读取当前 KMZ 文件 |
 
 所有 DJI 操作必须通过 `device-connection` 的统一操作调度入口；文件字节只由 `mission-staging` 拥有。
 

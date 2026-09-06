@@ -187,6 +187,27 @@ class PairingControllerContractTest {
     }
 
     @Test
+    fun rejectsStartWithoutChangingObservedPairingStateWhenDjiDomainIsQuarantined() {
+        val fixture = Fixture()
+        fixture.makeReady()
+        fixture.store.apply(DeviceStatePatch.pairing(2, PairingState.PAIRED))
+        val unresolved = RecordingAction()
+        val results = mutableListOf<PairingOperationResult>()
+
+        assertIs<SubmissionResult.Accepted>(fixture.coordinator.submit(unresolved, 1_000) { })
+        fixture.executor.runNext()
+        fixture.scheduler.fireNext()
+
+        val result = assertIs<PairingRequestResult.Rejected>(
+            fixture.controller.start(1_000) { results += it },
+        )
+        assertEquals("OPERATION_REJECTED", result.reason.name)
+        assertEquals(PairingState.PAIRED, fixture.controller.state())
+        assertTrue(results.isEmpty())
+        assertTrue(fixture.executor.isEmpty())
+    }
+
+    @Test
     fun ignoresLateCompletionAfterTimeout() {
         val fixture = Fixture()
         fixture.makeReady()

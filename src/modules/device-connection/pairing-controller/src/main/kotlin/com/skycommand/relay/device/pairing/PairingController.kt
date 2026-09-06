@@ -22,6 +22,7 @@ enum class PairingRejection {
     NOT_RUNNING,
     INVALID_TIMEOUT,
     DEPENDENCY_FAILURE,
+    OPERATION_REJECTED,
 }
 
 sealed interface PairingRequestResult {
@@ -89,21 +90,39 @@ class PairingController private constructor(
             store.applyPairing(PairingState.FAILED)
             return PairingRequestResult.Rejected(PairingRejection.DEPENDENCY_FAILURE)
         }
-        store.applyPairing(targetState)
+        val outcomeLock = Any()
+        var acceptanceCommitted = false
+        var deferredOutcome: OperationOutcome? = null
         val submission = coordinator.submit(action, timeoutMillis, OperationResultListener { outcome ->
-            when (outcome) {
-                OperationOutcome.SUCCEEDED -> listener(PairingOperationResult.RequestAccepted)
-                OperationOutcome.FAILED -> fail(listener, PairingOperationResult.RequestFailed)
-                OperationOutcome.TIMED_OUT -> fail(listener, PairingOperationResult.RequestTimedOut)
-                OperationOutcome.CANCELLED -> fail(listener, PairingOperationResult.RequestCancelled)
+            val deliver = synchronized(outcomeLock) {
+                if (acceptanceCommitted) true else {
+                    deferredOutcome = outcome
+                    false
+                }
             }
+            if (deliver) handleOutcome(outcome, listener)
         })
         return when (submission) {
-            is SubmissionResult.Accepted -> PairingRequestResult.Accepted(submission.cancellation)
-            SubmissionResult.Rejected -> {
-                store.applyPairing(PairingState.FAILED)
-                PairingRequestResult.Rejected(PairingRejection.INVALID_TIMEOUT)
+            is SubmissionResult.Accepted -> {
+                store.applyPairing(targetState)
+                val outcome = synchronized(outcomeLock) {
+                    acceptanceCommitted = true
+                    deferredOutcome
+                }
+                outcome?.let { handleOutcome(it, listener) }
+                PairingRequestResult.Accepted(submission.cancellation)
             }
+
+            SubmissionResult.Rejected -> PairingRequestResult.Rejected(PairingRejection.OPERATION_REJECTED)
+        }
+    }
+
+    private fun handleOutcome(outcome: OperationOutcome, listener: (PairingOperationResult) -> Unit) {
+        when (outcome) {
+            OperationOutcome.SUCCEEDED -> listener(PairingOperationResult.RequestAccepted)
+            OperationOutcome.FAILED -> fail(listener, PairingOperationResult.RequestFailed)
+            OperationOutcome.TIMED_OUT -> fail(listener, PairingOperationResult.RequestTimedOut)
+            OperationOutcome.CANCELLED -> fail(listener, PairingOperationResult.RequestCancelled)
         }
     }
 

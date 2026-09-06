@@ -11,13 +11,15 @@ import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.state.MissionStateEvent
 import com.skycommand.relay.wayline.state.MissionStateStore
 import com.skycommand.relay.wayline.state.UploadState
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 interface StagedMissionContentReader {
-    fun read(metadata: MissionMetadata): ByteArray
+    fun open(metadata: MissionMetadata): InputStream
 }
 
 interface UploadCompletion {
@@ -28,13 +30,26 @@ interface UploadCompletion {
     fun fail(failure: MissionUploadFailure?) = fail()
 }
 
-interface MissionUploadPort {
-    fun upload(
-        metadata: MissionMetadata,
-        bytes: ByteArray,
+interface PreparedMissionUpload {
+    fun start(
         progress: (Int) -> Unit,
         completion: UploadCompletion,
     )
+
+    fun discard()
+}
+
+sealed interface MissionUploadPreparation {
+    data class Prepared(val upload: PreparedMissionUpload) : MissionUploadPreparation
+
+    data object Rejected : MissionUploadPreparation
+}
+
+interface MissionUploadPort {
+    fun prepare(
+        metadata: MissionMetadata,
+        content: InputStream,
+    ): MissionUploadPreparation
 }
 
 class MissionUploadFailure private constructor(
@@ -130,13 +145,26 @@ class MissionUploader private constructor(
             active = activeUpload
         }
 
-        val bytes = try {
-            contentReader.read(metadata)
+        val prepared = try {
+            contentReader.open(metadata).use { source ->
+                val verifiedSource = VerifiedMissionInput(source)
+                when (val preparation = uploadPort.prepare(metadata, verifiedSource)) {
+                    is MissionUploadPreparation.Prepared -> {
+                        if (verifiedSource.matches(metadata)) {
+                            preparation.upload
+                        } else {
+                            runCatching { preparation.upload.discard() }
+                            null
+                        }
+                    }
+
+                    MissionUploadPreparation.Rejected -> null
+                }
+            }
         } catch (_: Throwable) {
-            finishBeforeSubmission(activeUpload, UploadState.FAILED)
-            return UploadStartResult.Rejected(UploadRejection.CONTENT_UNAVAILABLE)
+            null
         }
-        if (!matchesStagedMetadata(metadata, bytes)) {
+        if (prepared == null) {
             finishBeforeSubmission(activeUpload, UploadState.FAILED)
             return UploadStartResult.Rejected(UploadRejection.CONTENT_UNAVAILABLE)
         }
@@ -145,9 +173,7 @@ class MissionUploader private constructor(
 
         val submission = operationCoordinator.submit(
             action = DjiOperation { operationCompletion ->
-                uploadPort.upload(
-                    metadata = metadata,
-                    bytes = bytes.copyOf(),
+                prepared.start(
                     progress = { value -> recordProgress(activeUpload, value) },
                     completion = object : UploadCompletion {
                         override fun succeed() = operationCompletion.succeed()
@@ -164,6 +190,7 @@ class MissionUploader private constructor(
         )
         val accepted = submission as? SubmissionResult.Accepted
         if (accepted == null) {
+            runCatching { prepared.discard() }
             finishBeforeSubmission(activeUpload, UploadState.FAILED)
             return UploadStartResult.Rejected(UploadRejection.OPERATION_REJECTED)
         }
@@ -200,12 +227,34 @@ class MissionUploader private constructor(
 
     private fun isActive(upload: ActiveUpload): Boolean = lock.withLock { active === upload }
 
-    private fun matchesStagedMetadata(metadata: MissionMetadata, bytes: ByteArray): Boolean =
-        bytes.size.toLong() == metadata.expectedSize &&
-            MessageDigest.getInstance("SHA-256")
-                .digest(bytes)
+    private class VerifiedMissionInput(source: InputStream) : FilterInputStream(source) {
+        private val digest = MessageDigest.getInstance("SHA-256")
+        private var count = 0L
+
+        override fun read(): Int {
+            val value = super.read()
+            if (value >= 0) {
+                digest.update(value.toByte())
+                count += 1
+            }
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = super.read(buffer, offset, length)
+            if (read > 0) {
+                digest.update(buffer, offset, read)
+                count += read.toLong()
+            }
+            return read
+        }
+
+        fun matches(metadata: MissionMetadata): Boolean =
+            count == metadata.expectedSize &&
+                digest.digest()
                 .joinToString("") { "%02x".format(it) }
                 .equals(metadata.sha256, ignoreCase = true)
+    }
 
     private fun clearIfActive(upload: ActiveUpload): Boolean = lock.withLock {
         if (active !== upload) false else {

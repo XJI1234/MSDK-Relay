@@ -20,7 +20,7 @@ class AndroidPairingPort internal constructor(
 
     private fun operation(command: PairingCommand) = DjiOperation { completion ->
         val once = OnceCompletion(completion)
-        runCatching { platform.perform(command, once) }.onFailure { once.fail() }
+        platform.perform(command, once)
     }
 
     private class OnceCompletion(private val delegate: OperationCompletion) : DjiCommandCompletion {

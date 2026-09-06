@@ -10,15 +10,15 @@ class AndroidMissionStagingStorageTest {
     @Test fun atomicallyReplacesAndReadsOnlyTheCurrentMission() {
         val storage=AndroidMissionStagingStorage(createTempDirectory().toFile()); val first=metadata("first.kmz")
         storage.beginTemporary(first);storage.append(byteArrayOf(1));storage.append(byteArrayOf(2));storage.flush();storage.replaceCurrent()
-        assertContentEquals(byteArrayOf(1,2),storage.read(first))
-        assertFailsWith<IllegalStateException>{storage.read(metadata("other.kmz"))}
+        assertContentEquals(byteArrayOf(1,2),storage.open(first).use { it.readBytes() })
+        assertFailsWith<IllegalStateException>{storage.open(metadata("other.kmz"))}
     }
 
     @Test fun cancellingTemporaryWritePreservesCurrentMission() {
         val storage=AndroidMissionStagingStorage(createTempDirectory().toFile());val first=metadata("first.kmz")
         storage.beginTemporary(first);storage.append(byteArrayOf(1));storage.replaceCurrent()
         storage.beginTemporary(metadata("second.kmz"));storage.append(byteArrayOf(2));storage.deleteTemporary()
-        assertContentEquals(byteArrayOf(1),storage.read(first));assertFailsWith<IllegalStateException>{storage.append(byteArrayOf(3))}
+        assertContentEquals(byteArrayOf(1),storage.open(first).use { it.readBytes() });assertFailsWith<IllegalStateException>{storage.append(byteArrayOf(3))}
     }
 
     @Test fun closingClearsTheCurrentMissionCache() {
@@ -30,7 +30,7 @@ class AndroidMissionStagingStorageTest {
         storage.replaceCurrent()
         storage.close()
 
-        assertFailsWith<IllegalStateException> { storage.read(mission) }
+        assertFailsWith<IllegalStateException> { storage.open(mission) }
     }
 
     private fun metadata(name:String)=MissionMetadata(name,1,"a".repeat(64))

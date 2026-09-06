@@ -78,7 +78,8 @@ class FlightControl private constructor(
 
     private inner class Actions : FlightCommandActions {
         override fun execute(action: FlightAction, completion: FlightActionCompletion): FlightActionResult = lifecycleLock.withLock {
-            val tracked = TrackedOperation()
+            if (isDuplicateOrStaleStart(action)) return FlightActionResult.Rejected
+            val tracked = TrackedOperation(action)
             when (val result = adapter.execute(action) { result ->
                 completeTrackedOperation(tracked)
                 completion.complete(
@@ -101,7 +102,14 @@ class FlightControl private constructor(
         lifecycleLock.withLock { activeOperations.remove(tracked) }
     }
 
-    private class TrackedOperation {
+    private fun isDuplicateOrStaleStart(action: FlightAction): Boolean = when (action) {
+        FlightAction.TAKEOFF -> activeOperations.isNotEmpty()
+        else -> activeOperations.any { it.action == action }
+    }
+
+    private class TrackedOperation(
+        val action: FlightAction,
+    ) {
         val completed = AtomicBoolean(false)
         lateinit var cancellation: OperationCancellationHandle
         fun install(cancellation: OperationCancellationHandle) { this.cancellation = cancellation }

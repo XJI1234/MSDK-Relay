@@ -426,7 +426,7 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
                     sha256 = metadata.sha256,
                     readableByMissionModule = MissionReadable {
                         check(state.snapshot().file == metadata) { "Staged mission is no longer current" }
-                        contentReader.read(metadata).inputStream()
+                        contentReader.open(metadata)
                     },
                 ),
             )

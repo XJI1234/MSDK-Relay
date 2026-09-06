@@ -29,6 +29,7 @@ port.close() -> Unit
 2. `RelayForegroundService` 创建渠道并在报告 `started` 前调用 `startForeground`；此前失败报告 `failed`。
 3. 端口只接受匹配的操作 ID；重复、延迟、外来或 `close` 后广播必须忽略。
 4. 未观察到运行服务时 `stop` 立即完成；否则向中继服务发送显式停止命令，服务在销毁路径发布 `stopped`。不得使用隐式 Intent。
+   若 Android 在没有待处理显式停止的情况下销毁正在运行的服务，服务必须在销毁路径发布 `failed`，使端口和 `AppRuntime` 收敛到失败而不会继续报告运行中；启动失败本身只发布一次 `failed`。
 5. 同时只能有一个端口操作。绕开纯控制器的第二个直接调用会得到 `IllegalStateException`。
 6. `close` 是幂等操作，禁止后续回调，且绝不启动、停止或重启业务模块。
 

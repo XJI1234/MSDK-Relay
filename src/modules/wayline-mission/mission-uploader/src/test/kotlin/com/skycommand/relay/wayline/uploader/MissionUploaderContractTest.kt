@@ -16,11 +16,27 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import java.security.MessageDigest
+import java.io.InputStream
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 
 class MissionUploaderContractTest {
+
+    @Test
+    fun exposesStreamingBoundariesForBoundedMissionMemory() {
+        val readerMethod = StagedMissionContentReader::class.java.methods.singleOrNull { method ->
+            method.name == "open" && method.parameterTypes.contentEquals(arrayOf(MissionMetadata::class.java))
+        }
+        val prepareMethod = MissionUploadPort::class.java.methods.singleOrNull { method ->
+            method.name == "prepare" && method.parameterTypes.contentEquals(
+                arrayOf(MissionMetadata::class.java, InputStream::class.java),
+            )
+        }
+
+        assertEquals(InputStream::class.java, readerMethod?.returnType)
+        assertTrue(prepareMethod != null)
+    }
 
     @Test
     fun reportsExactlyOneSafeTerminalOutcomeToTheAcceptedCaller() {
@@ -75,7 +91,7 @@ class MissionUploaderContractTest {
             UploadRejection.ALREADY_ACTIVE,
             assertIs<UploadStartResult.Rejected>(fixture.uploader.start()).reason,
         )
-        assertEquals(1, fixture.reader.reads)
+        assertEquals(1, fixture.reader.opens)
     }
 
     @Test
@@ -101,7 +117,7 @@ class MissionUploaderContractTest {
     }
 
     @Test
-    fun rejectsChangedStagedContentBeforeGivingItToDji() {
+    fun rejectsChangedStagedContentBeforeStartingDjiUpload() {
         val fixture = Fixture().apply { reader.bytes = byteArrayOf(1, 2, 9) }
 
         assertEquals(
@@ -109,7 +125,20 @@ class MissionUploaderContractTest {
             assertIs<UploadStartResult.Rejected>(fixture.uploader.start()).reason,
         )
         assertEquals(UploadState.FAILED, fixture.store.snapshot().upload)
-        assertEquals(0, fixture.port.calls)
+        assertEquals(1, fixture.port.calls)
+        assertEquals(0, fixture.port.starts)
+    }
+
+    @Test
+    fun discardsPreparedContentThatWasNotFullyConsumedBeforeCallingDji() {
+        val fixture = Fixture().apply { port.consumeAll = false }
+
+        assertEquals(
+            UploadRejection.CONTENT_UNAVAILABLE,
+            assertIs<UploadStartResult.Rejected>(fixture.uploader.start()).reason,
+        )
+        assertEquals(0, fixture.port.starts)
+        assertTrue(fixture.port.discarded)
     }
 
     @Test
@@ -210,13 +239,13 @@ class MissionUploaderContractTest {
     }
 
     private class Reader : StagedMissionContentReader {
-        var reads = 0
+        var opens = 0
         var failure = false
         var bytes = byteArrayOf(1, 2, 3)
-        override fun read(metadata: MissionMetadata): ByteArray {
-            reads += 1
+        override fun open(metadata: MissionMetadata): InputStream {
+            opens += 1
             if (failure) error("reader failure")
-            return bytes.copyOf()
+            return bytes.copyOf().inputStream()
         }
     }
 
@@ -225,16 +254,28 @@ class MissionUploaderContractTest {
         var completion: UploadCompletion? = null
         var failure = false
         var calls = 0
-        override fun upload(
+        var starts = 0
+        var consumeAll = true
+        var discarded = false
+
+        override fun prepare(
             metadata: MissionMetadata,
-            bytes: ByteArray,
-            progress: (Int) -> Unit,
-            completion: UploadCompletion,
-        ) {
+            content: InputStream,
+        ): MissionUploadPreparation {
             calls += 1
-            if (failure) error("adapter failure")
-            this.progress = progress
-            this.completion = completion
+            if (consumeAll) content.readBytes() else content.read()
+            return MissionUploadPreparation.Prepared(object : PreparedMissionUpload {
+                override fun start(progress: (Int) -> Unit, completion: UploadCompletion) {
+                    starts += 1
+                    if (failure) error("adapter failure")
+                    this@Port.progress = progress
+                    this@Port.completion = completion
+                }
+
+                override fun discard() {
+                    discarded = true
+                }
+            })
         }
     }
 

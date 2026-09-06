@@ -2,9 +2,12 @@ package com.skycommand.relay.app
 
 import com.skycommand.relay.device.state.SdkAvailability
 import com.skycommand.relay.gateway.session.SessionState
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class RelayBootstrapModuleTest {
@@ -203,14 +206,54 @@ class RelayBootstrapModuleTest {
         assertEquals(0, ports.events.count { it == "link-publish" })
     }
 
+    @Test fun stoppingDoesNotHoldLifecycleLockWhileUnregisteringAnInFlightDeviceCallback() {
+        val ports = FakePorts().apply { invokeDeviceCallbackDuringInvalidation = true }
+        val module = RelayBootstrapModule(ports)
+        module.start()
+
+        module.stop()
+
+        assertTrue(ports.deviceCallbackFinishedBeforeUnregistration)
+    }
+
+    @Test fun rejectsASecondStartWhileThePreviousStartIsStillUnwindingAfterStopRequest() {
+        val ports = FakePorts().apply { blockDeviceStart = true }
+        val module = RelayBootstrapModule(ports)
+        var startFailure: Throwable? = null
+        val starter = Thread {
+            startFailure = runCatching { module.start() }.exceptionOrNull()
+        }
+        starter.start()
+
+        assertTrue(ports.deviceStartEntered.await(1, TimeUnit.SECONDS))
+        module.stop()
+
+        assertFailsWith<IllegalStateException> { module.start() }
+
+        ports.releaseDeviceStart.countDown()
+        starter.join(1_000)
+        assertFalse(starter.isAlive)
+        assertEquals(null, startFailure)
+
+        module.start()
+        module.stop()
+    }
+
     private class FakePorts : RelayLifecyclePorts {
         val events = mutableListOf<String>()
         var sdk = SdkAvailability.STARTING
         var failNextStart = false
         var failNextGatewayStart = false
         var afterTelemetryStart: (() -> Unit)? = null
+        var invokeDeviceCallbackDuringInvalidation = false
+        var deviceCallbackFinishedBeforeUnregistration = false
+        var blockDeviceStart = false
+        val deviceStartEntered = CountDownLatch(1)
+        val releaseDeviceStart = CountDownLatch(1)
         private var deviceListener: (() -> Unit)? = null
         private var gatewayListener: ((SessionState) -> Unit)? = null
+        private val deviceCallbackStarted = CountDownLatch(1)
+        private val deviceCallbackFinished = CountDownLatch(1)
 
         fun deviceChanged() = requireNotNull(deviceListener).invoke()
         fun gatewayStateChanged(state: SessionState) = requireNotNull(gatewayListener).invoke(state)
@@ -218,13 +261,21 @@ class RelayBootstrapModuleTest {
         fun requireGatewayListener() = requireNotNull(gatewayListener)
         override fun sdkAvailability() = sdk
         override fun onDeviceChanged(listener: () -> Unit) = CloseableRegistration {
-            events += "device-unlisten"; deviceListener = null
+            events += "device-unlisten"
+            if (invokeDeviceCallbackDuringInvalidation) {
+                deviceCallbackFinishedBeforeUnregistration = deviceCallbackFinished.await(200, TimeUnit.MILLISECONDS)
+            }
+            deviceListener = null
         }.also { events += "device-listen"; deviceListener = listener }
         override fun onGatewayStateChanged(listener: (SessionState) -> Unit) = CloseableRegistration {
             events += "gateway-unlisten"; gatewayListener = null
         }.also { events += "gateway-listen"; gatewayListener = listener }
         override fun startDevice() {
             events += "device-start"
+            if (blockDeviceStart) {
+                deviceStartEntered.countDown()
+                check(releaseDeviceStart.await(1, TimeUnit.SECONDS))
+            }
             if (failNextStart) {
                 failNextStart = false
                 error("start failed")
@@ -248,7 +299,20 @@ class RelayBootstrapModuleTest {
         }
         override fun stopGateway() { events += "gateway-stop" }
         override fun closeFlightTelemetry() { events += "flight-close" }
-        override fun markStreamUnavailable() { events += "stream-unavailable" }
+        override fun markStreamUnavailable() {
+            events += "stream-unavailable"
+            if (invokeDeviceCallbackDuringInvalidation) {
+                Thread {
+                    deviceCallbackStarted.countDown()
+                    requireDeviceListener().invoke()
+                    deviceCallbackFinished.countDown()
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+                check(deviceCallbackStarted.await(1, TimeUnit.SECONDS))
+            }
+        }
         override fun markMissionUnavailable() { events += "mission-unavailable" }
         override fun markFlightControlUnavailable() { events += "flight-control-unavailable" }
         override fun markDeviceSettingsUnavailable() { events += "device-settings-unavailable" }
