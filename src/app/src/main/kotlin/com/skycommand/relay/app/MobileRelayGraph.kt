@@ -476,7 +476,7 @@ class MobileRelayGraph private constructor(
                     uploadPort = waylineAdapter,
                     controlPort = waylineAdapter,
                     executionSignalSource = waylineAdapter,
-                    operationCoordinator = device.operations(),
+                    operationCoordinator = device.waylineOperations(),
                     uploadTimeoutMillis = 60_000,
                     controlTimeoutMillis = 60_000,
                     diagnosticSink = { diagnostic ->
@@ -549,11 +549,11 @@ class MobileRelayGraph private constructor(
             val flightControl = FlightControl.create(
                 FlightControlDependencies(
                     AndroidDjiFlightPort.create(),
-                    device.operations(),
+                    device.flightOperations(),
                 ),
             )
             val deviceSettings = DeviceSettings.create(
-                DeviceSettingsDependencies(AndroidDjiSettingsPort.create(), device.operations()),
+                DeviceSettingsDependencies(AndroidDjiSettingsPort.create(), device.settingsOperations()),
             )
             val gateway = RelayGateway.create(
                 RelayGatewayConfig(

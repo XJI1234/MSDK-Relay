@@ -22,13 +22,13 @@ Gradle 路径：`:wayline-mission`
 | `android-dji-wayline-adapter` | 在上传前拒绝非单航线 WPML，以有界流写入私有上传副本，再将上传进度、任务控制及原始任务状态转换为 DJI MSDK v5 操作 |
 | `android-mission-staging-adapter` | 在应用私有目录原子暂存并以受控输入流读取当前 KMZ 文件 |
 
-所有 DJI 操作必须通过 `device-connection` 的统一操作调度入口；文件字节只由 `mission-staging` 拥有。
+所有航线 DJI 写操作必须通过 `device-connection` 的 `waylineOperations()` 调度；文件字节只由 `mission-staging` 拥有。
 
 ## 3. 不变量
 
 - 文件暂存成功不代表已上传，上传成功不代表任务已开始。
 - 当前生产业务一份 KMZ 任务只能包含一条 DJI WPML `wayline`。设备侧上传边界必须在写缓存和触达 DJI 前拒绝缺少、重复或包含零条/多条 `waylineId` 的归档；不得依赖 `startMission` 的未选择航线重载或空 `waylineIds` 列表来决定执行对象。该基数检查只消除执行对象歧义，不替代 DJI 对 WPML、机型适配或飞行条件的完整校验。
-- `wayline.start` 只有一个 DJI 飞控命令：DJI 负责起飞、按 KMZ 的入场策略飞往首航点并连续执行航线。手机端只保留当前文件已上传、任务阶段合法和同设备单操作这些业务不变量；不得以本地遥控器、飞控、机型能力、电量或地面遥测拒绝调用，也不得把它拆成二次起飞、虚拟摇杆导航或第二次 `startMission` 调用。
+- `wayline.start` 只有一个 DJI 飞控命令：DJI 负责起飞、按 KMZ 的入场策略飞往首航点并连续执行航线。手机端只保留当前文件已上传、任务阶段合法和同航线域单操作这些业务不变量；不得以本地遥控器、飞控、机型能力、电量或地面遥测拒绝调用，也不得把它拆成二次起飞、虚拟摇杆导航或第二次 `startMission` 调用。
 - `startMission` 的成功回调只表示 DJI 接受了启动请求，绝不表示飞行器已到达首航点或已开始飞行航线。
 - 仅 DJI 的 `ENTER_WAYLINE` 原始状态可确认飞行器已进入首航点。收到该状态时只产生 `START_POINT_REACHED`，任务执行状态必须保持 `STARTING`，不得把入场当成已经开始执行航线。
 - 仅 DJI 的 `EXECUTING` 原始状态可确认航线开始执行。已见过首点后的首次 `EXECUTING` 产生 `ROUTE_EXECUTION_STARTED`，门面此时才把当前任务写成 `EXECUTING`。没有收到 `ENTER_WAYLINE` 而直接收到 `EXECUTING` 时，只能确认 `ROUTE_EXECUTION_STARTED`，不得补造 `START_POINT_REACHED`；必须记录不含敏感数据的 `ENTRY_STATE_MISSING` 诊断。两条事实可以紧挨着到达，但不得由一次 `ENTER_WAYLINE` 同时合成。
@@ -61,7 +61,7 @@ mission.markDeviceUnavailable() -> MissionSnapshot
 
 完整接收的 KMZ 必须先安全暂存、再写入 `FileStaged` 状态、最后才向 gateway 报告成功。上传和控制操作的接受仅表示已提交；只有对应 DJI 终态成功后才报告成功。上传、暂停、继续和停止的 DJI 明确 `onFailure` 必须作为 `command-result.result` 的 `{ domain: "wayline", outcome: "ACTION_REJECTED", errorCode, errorDescription }` 原样送回桌面；同步调用失败或缺少 DJI 错误时为 `INVOCATION_FAILED`，超时或取消为 `RESULT_UNCONFIRMED`。上传明确拒绝时恢复 `staged`，不得把未上传任务写成 `failed`；启动明确带 DJI 错误的拒绝恢复调用前执行状态（通常为 `NOT_STARTED`），并允许再次尝试；启动没有错误的失败、超时或回执丢失不能作为 DJI 未执行的证据，必须保持 `STARTING`。暂停/继续等待匹配 DJI 状态，停止保持 `STOPPING`；除明确失败外不得自动重发，操作员只能使用保守停止处置。每个中继命令最多完成一次，旧任务、重复、取消、超时或延迟回调不得改变新任务状态或重新完成命令。
 
-依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、原始 DJI 任务状态源、共享 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。
+依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、原始 DJI 任务状态源、航线域 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。上传与航线控制共用该航线域，不得注入飞行、设置、配对或图传协调器。
 
 `markDeviceUnavailable()` 是设备连接生命周期唯一调用的安全入口。它保留已安全暂存的 KMZ，取消全部已接受但尚未终态的上传和控制操作，并使当前设备侧上传与执行事实进入 `FAILED`；恢复连接后必须重新上传，不能把断开前的 `UPLOADED` 当作仍然有效。该动作建立新的设备运行代际，因此断开前的上传进度、DJI 成功、失败、超时或取消回调均不得改变当前快照，也不得将已拒绝的 relay 命令重新报告为成功。门面在同一生命周期锁内提交操作、追踪取消句柄和失效设备，避免断开与新命令交错时遗漏取消；重复调用幂等地维持安全状态。
 

@@ -12,4 +12,4 @@
 
 上传和控制命令要求 `confirm=true` 并委托 `WaylineCommandActions`；`Accepted` 只表示提交，不表示 DJI 已完成。中继组合中 `handle(command, completion)` 把上传/控制终态交给 `WaylineActionCompletion`，处理器不得把接受操作伪造成成功。控制动作的 `FAILED` 终态可带受限的 `WaylineActionFailure(errorCode, errorDescription)`；该值只能来自下层已归一化的 DJI `onFailure`，不得包含 DJI 对象或异常，省略则表示调用失败但 DJI 未提供可用错误。
 
-处理器不得保留命令字段、字节、路径、异常或 DJI 对象。缺字段、类型错误、额外字段、`confirm=false` 和委托拒绝必须成为稳定枚举原因，不暴露原始细节。它无状态、线程安全；任务串行化属于 uploader、executor 和共享协调器。测试覆盖每个命令、确认与输入结构失败、委托、委托拒绝、已移除命令、其他未知命令和并发独立调用。
+处理器不得保留命令字段、字节、路径、异常或 DJI 对象。缺字段、类型错误、额外字段、`confirm=false` 和委托拒绝必须成为稳定枚举原因，不暴露原始细节。它无状态、线程安全；任务串行化属于 uploader、executor 和航线域协调器。测试覆盖每个命令、确认与输入结构失败、委托、委托拒绝、已移除命令、其他未知命令和并发独立调用。

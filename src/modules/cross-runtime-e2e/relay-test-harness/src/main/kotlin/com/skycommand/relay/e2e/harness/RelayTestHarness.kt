@@ -295,14 +295,14 @@ class RelayTestHarness private constructor(
             val wayline = WaylineMission.create(
                 WaylineMissionDependencies(
                     storage, storage, ports.missionUpload, ports.missionControl, ports.executionSignals,
-                    device.operations(), uploadTimeoutMillis = 1_000, controlTimeoutMillis = 1_000,
+                    device.waylineOperations(), uploadTimeoutMillis = 1_000, controlTimeoutMillis = 1_000,
                 ),
             )
             val flightControl = FlightControl.create(
-                FlightControlDependencies(ports.flight, device.operations(), timeoutMillis = 1_000),
+                FlightControlDependencies(ports.flight, device.flightOperations(), timeoutMillis = 1_000),
             )
             val deviceSettings = DeviceSettings.create(
-                DeviceSettingsDependencies(ports.settings, device.operations(), timeoutMillis = 1_000),
+                DeviceSettingsDependencies(ports.settings, device.settingsOperations(), timeoutMillis = 1_000),
             )
             val stream = LiveStream.create(
                 LiveStreamDependencies(

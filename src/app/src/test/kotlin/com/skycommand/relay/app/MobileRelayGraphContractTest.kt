@@ -151,6 +151,30 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
+    fun flightWaylinePairingAndSettingsUseSeparateControlQueues() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+
+        val waylineWiring = source.substringAfter("val wayline = WaylineMission.create(")
+            .substringBefore("val stream = LiveStream.create(")
+        val flightWiring = source.substringAfter("val flightControl = FlightControl.create(")
+            .substringBefore("val deviceSettings = DeviceSettings.create(")
+        val settingsWiring = source.substringAfter("val deviceSettings = DeviceSettings.create(")
+            .substringBefore("val gateway = RelayGateway.create(")
+
+        assertTrue(waylineWiring.contains("device.waylineOperations()"))
+        assertTrue(flightWiring.contains("device.flightOperations()"))
+        assertTrue(settingsWiring.contains("device.settingsOperations()"))
+        assertFalse(waylineWiring.contains("device.operations()"))
+        assertFalse(flightWiring.contains("device.operations()"))
+        assertFalse(settingsWiring.contains("device.operations()"))
+        assertFalse(waylineWiring.contains("device.flightOperations()"))
+        assertFalse(flightWiring.contains("device.waylineOperations()"))
+    }
+
+    @Test
     fun productConnectionIsNotShownAsAnAircraftConnectionFact() {
         val strings = listOf(
             Path("src/main/res/values/strings.xml"),

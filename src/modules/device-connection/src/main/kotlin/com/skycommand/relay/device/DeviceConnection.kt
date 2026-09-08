@@ -75,9 +75,12 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
         dependencies.aircraftPort,
         dependencies.aircraftDiagnosticSink,
     )
-    private val operations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
+    private val pairingOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
+    private val flightOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
+    private val waylineOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
+    private val settingsOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
     private val streamOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
-    private val pairing = PairingController.create(store, operations, dependencies.pairingPort)
+    private val pairing = PairingController.create(store, pairingOperations, dependencies.pairingPort)
     private val pairingStatusLink = PairingStatusLink.create(
         store,
         dependencies.pairingStatusPort,
@@ -141,9 +144,15 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
         }
     }
 
-    fun operations(): DjiOperationCoordinator = operations
+    fun pairingOperations(): DjiOperationCoordinator = pairingOperations
 
-    /** RTMP operations are serialized independently of flight, mission, pairing, and settings control. */
+    fun flightOperations(): DjiOperationCoordinator = flightOperations
+
+    fun waylineOperations(): DjiOperationCoordinator = waylineOperations
+
+    fun settingsOperations(): DjiOperationCoordinator = settingsOperations
+
+    /** RTMP start/stop are serialized only against other RTMP commands. */
     fun streamOperations(): DjiOperationCoordinator = streamOperations
 
     fun requestPairingStart(

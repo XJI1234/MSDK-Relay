@@ -6,9 +6,10 @@ import com.skycommand.relay.device.aircraft.AircraftPortSubscription
 import com.skycommand.relay.device.aircraft.AircraftSignal
 import com.skycommand.relay.device.aircraft.AircraftDiagnosticKind
 import com.skycommand.relay.device.operation.DjiOperation
+import com.skycommand.relay.device.operation.OperationCancellation
 import com.skycommand.relay.device.operation.OperationExecutor
 import com.skycommand.relay.device.operation.OperationScheduler
-import com.skycommand.relay.device.operation.OperationCancellation
+import com.skycommand.relay.device.operation.SubmissionResult
 import com.skycommand.relay.device.pairing.PairingPort
 import com.skycommand.relay.device.pairing.status.PairingStatusListener
 import com.skycommand.relay.device.pairing.status.PairingStatusPort
@@ -38,7 +39,7 @@ import kotlin.test.assertTrue
 
 class DeviceConnectionContractTest {
     @Test
-    fun exposesIndependentControlAndRtmpOperationQueues() {
+    fun exposesIndependentPairingFlightWaylineSettingsAndRtmpQueues() {
         val events = mutableListOf<String>()
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
@@ -52,7 +53,43 @@ class DeviceConnectionContractTest {
             ),
         )
 
-        assertFalse(connection.operations() === connection.streamOperations())
+        val queues = listOf(
+            connection.pairingOperations(),
+            connection.flightOperations(),
+            connection.waylineOperations(),
+            connection.settingsOperations(),
+            connection.streamOperations(),
+        )
+        assertEquals(5, queues.distinct().size)
+    }
+
+    @Test
+    fun unconfirmedFlightTimeoutDoesNotRejectWaylineSubmit() {
+        val events = mutableListOf<String>()
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val connection = DeviceConnection.create(
+            DeviceConnectionDependencies(
+                sdkPort = FakeSdk(events),
+                remoteControllerPort = FakeRemote(events),
+                aircraftPort = FakeAircraft(events),
+                pairingPort = successfulPairingPort(),
+                pairingStatusPort = FakePairingStatus(events),
+                executor = executor,
+                scheduler = scheduler,
+            ),
+        )
+        val flight = HeldOperation()
+        val wayline = HeldOperation()
+
+        assertIs<SubmissionResult.Accepted>(connection.flightOperations().submit(flight, 1_000) { })
+        executor.runNext()
+        scheduler.fireNext()
+
+        assertIs<SubmissionResult.Rejected>(connection.flightOperations().submit(HeldOperation(), 1_000) { })
+        assertIs<SubmissionResult.Accepted>(connection.waylineOperations().submit(wayline, 1_000) { })
+        executor.runNext()
+        assertEquals(1, wayline.starts)
     }
 
     @Test
@@ -570,5 +607,28 @@ class DeviceConnectionContractTest {
         fun emit(signal: PairingStatusSignal) = listener?.onChanged(signal)
 
         fun emitLate(signal: PairingStatusSignal) = latestListener?.onChanged(signal)
+    }
+
+    private class HeldOperation : DjiOperation {
+        var starts = 0
+        override fun run(completion: com.skycommand.relay.device.operation.OperationCompletion) {
+            starts += 1
+        }
+    }
+
+    private class ManualExecutor : OperationExecutor {
+        private val tasks = ArrayDeque<() -> Unit>()
+        override fun execute(task: () -> Unit) { tasks.addLast(task) }
+        fun runNext() = tasks.removeFirst().invoke()
+    }
+
+    private class ManualScheduler : OperationScheduler {
+        private val tasks = ArrayDeque<() -> Unit>()
+        override fun schedule(delayMillis: Long, callback: () -> Unit): OperationCancellation {
+            var cancelled = false
+            tasks.addLast { if (!cancelled) callback() }
+            return OperationCancellation { cancelled = true }
+        }
+        fun fireNext() = tasks.removeFirst().invoke()
     }
 }

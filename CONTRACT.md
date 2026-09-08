@@ -121,7 +121,7 @@
 | `sdk-lifecycle` | DJI SDK 注册、初始化、注销和 SDK 可用状态 | 不执行配对、直播或航线任务 |
 | `android-dji-sdk-adapter` | 将 DJI MSDK v5 的初始化和注册结果适配到 `DjiSdkPort` | 不读取设备状态，不执行配对、航线、图传或遥测业务 |
 | `android-remote-controller-adapter` | 将 DJI MSDK v5 遥控器连接和型号事实适配到 `RemoteControllerPort` | 不保存状态，不观察飞行器，不执行配对、航线、图传或遥测业务 |
-| `dji-operation-coordinator` | 为所有 DJI SDK 操作提供统一串行执行、超时和取消策略 | 不理解具体业务命令，不决定操作是否应该执行 |
+| `dji-operation-coordinator` | 为单个 DJI 操作域提供串行执行、超时和取消；配对、飞行、航线、设置、图传各用独立实例 | 不理解具体业务命令，不决定操作是否应该执行，不跨域占槽 |
 | `device-state-store` | 保存 SDK、遥控器、飞行器和配对的唯一设备状态快照 | 不生成遥测 JSON，不发送网络消息 |
 | `remote-controller-link` | 遥控器连接状态、型号和固件等遥控器侧信息 | 不判断飞行器是否连接 |
 | `aircraft-link` | 飞行器和飞控连接状态、机型和基础设备连接信息 | 不执行航线和直播命令 |
@@ -173,7 +173,7 @@
 | 二级模块 | 只负责 | 明确不负责 |
 | --- | --- | --- |
 | `flight-command-handler` | 严格校验三个 `flight.*` 命令和每次 `confirm: true` | 保存飞行状态、创建线程或调用 DJI |
-| `dji-flight-adapter` | 经共享 DJI 操作协调器串行提交飞行动作，并统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
+| `dji-flight-adapter` | 经飞行域 DJI 操作协调器串行提交飞行动作，并统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
 | `android-dji-flight-adapter` | 唯一调用 DJI 飞控 Action Key | 命令校验、排队、超时或业务状态 |
 
 `flight-control` 的命令成功只表示 DJI 已确认动作调用终态；它不推断飞行器是否已起飞、降落或返航完成，飞行事实仍由 `telemetry` 发布。实现已完成，真实 DJI 设备行为待实机验证。
@@ -183,7 +183,7 @@
 | 二级模块 | 只负责 | 明确不负责 |
 | --- | --- | --- |
 | `settings-command-handler` | 严格解析四个设备设置命令和平台无关设置模型 | 保存状态、创建线程或调用 DJI |
-| `settings-executor` | 经共享 DJI 操作协调器执行一次读写，统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
+| `settings-executor` | 经设置域 DJI 操作协调器执行一次读写，统一超时、取消和终态 | 协议解析和 Android SDK 类型 |
 | `android-dji-settings-adapter` | 唯一读写 DJI `CameraKey` 和 `AirLinkKey` | 命令校验、排队、超时或网关结果 |
 
 `device-settings` 写入成功后必须重新读取完整快照，作为 `command-result.result` 返回；它不管理 RTMP 推流或视频数据。实现已完成，目标机型上各 DJI 键的实际可用性待实机验证。
