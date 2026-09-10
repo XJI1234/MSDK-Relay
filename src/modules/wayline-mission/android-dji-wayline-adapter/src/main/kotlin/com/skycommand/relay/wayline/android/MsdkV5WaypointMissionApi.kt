@@ -4,8 +4,12 @@ import dji.v5.common.callback.CommonCallbacks
 import dji.v5.common.error.IDJIError
 import dji.v5.manager.aircraft.waypoint3.WaypointMissionManager
 import dji.v5.manager.aircraft.waypoint3.WaypointMissionExecuteStateListener
+import dji.v5.manager.aircraft.waypoint3.WaylineExecutingInfoListener
+import dji.v5.manager.aircraft.waypoint3.WaypointActionListener
+import dji.v5.manager.aircraft.waypoint3.model.WaylineExecutingInfo
 import dji.v5.manager.aircraft.waypoint3.model.WaypointMissionExecuteState
 import com.skycommand.relay.wayline.executor.MissionControlFailure
+import com.skycommand.relay.wayline.phase.WaylineLiveActionPhase
 import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 
 internal class MsdkV5WaypointMissionApi(
@@ -23,17 +27,84 @@ internal class MsdkV5WaypointMissionApi(
         })
     }
 
-    override fun start(name: String, completion: DjiControlCompletion) { ensureInitialized(); manager.startMission(name, completion.sdk()) }
+    override fun start(name: String, completion: DjiControlCompletion) {
+        ensureInitialized()
+        manager.startMission(djiMissionControlName(name), completion.sdk())
+    }
     override fun pause(completion: DjiControlCompletion) { ensureInitialized(); manager.pauseMission(completion.sdk()) }
     override fun resume(completion: DjiControlCompletion) { ensureInitialized(); manager.resumeMission(completion.sdk()) }
-    override fun stop(name: String, completion: DjiControlCompletion) { ensureInitialized(); manager.stopMission(name, completion.sdk()) }
+    override fun stop(name: String, completion: DjiControlCompletion) {
+        ensureInitialized()
+        manager.stopMission(djiMissionControlName(name), completion.sdk())
+    }
     override fun onExecutionState(listener: (DjiMissionExecutionState) -> Unit): DjiExecutionStateRegistration {
         ensureInitialized()
         val sdkListener = WaypointMissionExecuteStateListener { state -> listener(state.toDjiExecutionState()) }
         manager.addWaypointMissionExecuteStateListener(sdkListener)
         return DjiExecutionStateRegistration { manager.removeWaypointMissionExecuteStateListener(sdkListener) }
     }
+
+    override fun onExecutingInfo(
+        onInfo: (DjiWaylineExecutingInfo) -> Unit,
+        onInterrupt: (String?, String?) -> Unit,
+    ): DjiExecutionStateRegistration {
+        ensureInitialized()
+        val sdkListener = object : WaylineExecutingInfoListener {
+            override fun onWaylineExecutingInfoUpdate(info: WaylineExecutingInfo) {
+                if (info == null) return
+                onInfo(
+                    DjiWaylineExecutingInfo(
+                        missionFileName = runCatching { info.missionFileName }.getOrNull(),
+                        waylineId = runCatching { info.waylineID }.getOrNull(),
+                        currentWaypointIndex = runCatching { info.currentWaypointIndex }.getOrNull(),
+                    ),
+                )
+            }
+
+            override fun onWaylineExecutingInterruptReasonUpdate(error: IDJIError) {
+                val failure = error.toMissionControlFailure()
+                onInterrupt(failure?.errorCode, failure?.errorDescription)
+            }
+        }
+        manager.addWaylineExecutingInfoListener(sdkListener)
+        return DjiExecutionStateRegistration { manager.removeWaylineExecutingInfoListener(sdkListener) }
+    }
+
+    override fun onWaypointAction(listener: (DjiWaypointActionEvent) -> Unit): DjiExecutionStateRegistration {
+        ensureInitialized()
+        val sdkListener = object : WaypointActionListener {
+            override fun onExecutionStart(actionId: Int) {
+                listener(DjiWaypointActionEvent(actionGroup = null, actionId = actionId, phase = WaylineLiveActionPhase.START))
+            }
+
+            override fun onExecutionFinish(actionId: Int, error: IDJIError?) {
+                listener(actionEvent(actionGroup = null, actionId = actionId, error = error))
+            }
+
+            override fun onExecutionStart(actionGroup: Int, actionId: Int) {
+                listener(DjiWaypointActionEvent(actionGroup = actionGroup, actionId = actionId, phase = WaylineLiveActionPhase.START))
+            }
+
+            override fun onExecutionFinish(actionGroup: Int, actionId: Int, error: IDJIError?) {
+                listener(actionEvent(actionGroup = actionGroup, actionId = actionId, error = error))
+            }
+        }
+        manager.addWaypointActionListener(sdkListener)
+        return DjiExecutionStateRegistration { manager.removeWaypointActionListener(sdkListener) }
+    }
+
     override fun close() = manager.destroy()
+
+    private fun actionEvent(actionGroup: Int?, actionId: Int, error: IDJIError?): DjiWaypointActionEvent {
+        val failure = error?.toMissionControlFailure()
+        return DjiWaypointActionEvent(
+            actionGroup = actionGroup,
+            actionId = actionId,
+            phase = WaylineLiveActionPhase.FINISH,
+            errorCode = failure?.errorCode,
+            errorDescription = failure?.errorDescription,
+        )
+    }
 
     private fun DjiControlCompletion.sdk() = object : CommonCallbacks.CompletionCallback {
         override fun onSuccess() = succeed()
@@ -58,6 +129,16 @@ internal class MsdkV5WaypointMissionApi(
 
     private fun WaypointMissionExecuteState.toDjiExecutionState(): DjiMissionExecutionState =
         mapWaypointMissionStateName(name)
+}
+
+/**
+ * Mini 4 Pro / M4 系列的 `startMission`/`stopMission` 只要文件名、不要 `.kmz`。
+ * 上传路径和本模块保存的任务身份仍带后缀；这里只在 DJI 控制入口剥掉一次。
+ */
+internal fun djiMissionControlName(fileName: String): String {
+    if (!fileName.endsWith(".kmz", ignoreCase = true)) return fileName
+    val stem = fileName.substring(0, fileName.length - ".kmz".length)
+    return stem.ifEmpty { fileName }
 }
 
 /** DJI enum names are converted here so the terminal-state policy is unit-testable without a flight stack. */

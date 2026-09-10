@@ -130,6 +130,8 @@ class SnapshotAssemblerContractTest {
         assertEquals(65, result.missionUploadProgress)
         assertEquals(MissionExecutionRawState.RETURN_TO_START_POINT, result.missionDjiExecutionState)
         assertEquals("survey.kmz", result.missionFileName)
+        assertEquals(null, result.waylineExecutingMissionFileName)
+        assertEquals(null, result.currentWaypointIndex)
     }
 
     @Test

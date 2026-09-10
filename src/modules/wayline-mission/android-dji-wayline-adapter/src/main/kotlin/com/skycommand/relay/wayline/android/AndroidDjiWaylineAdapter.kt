@@ -13,6 +13,8 @@ import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
 import com.skycommand.relay.wayline.phase.MissionExecutionObservation
 import com.skycommand.relay.wayline.phase.MissionExecutionObservationListener
 import com.skycommand.relay.wayline.phase.MissionExecutionRawState
+import com.skycommand.relay.wayline.phase.WaylineLiveProgress
+import com.skycommand.relay.wayline.phase.WaylineLiveProgressListener
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
@@ -48,6 +50,18 @@ internal enum class DjiMissionExecutionState {
     UNKNOWN,
 }
 internal fun interface DjiExecutionStateRegistration { fun unregister() }
+internal data class DjiWaylineExecutingInfo(
+    val missionFileName: String?,
+    val waylineId: Int?,
+    val currentWaypointIndex: Int?,
+)
+internal data class DjiWaypointActionEvent(
+    val actionGroup: Int?,
+    val actionId: Int,
+    val phase: com.skycommand.relay.wayline.phase.WaylineLiveActionPhase,
+    val errorCode: String? = null,
+    val errorDescription: String? = null,
+)
 internal interface DjiWaypointMissionApi {
     fun upload(path: String, completion: DjiUploadCompletion)
     fun start(name: String, completion: DjiControlCompletion)
@@ -55,6 +69,12 @@ internal interface DjiWaypointMissionApi {
     fun resume(completion: DjiControlCompletion)
     fun stop(name: String, completion: DjiControlCompletion)
     fun onExecutionState(listener: (DjiMissionExecutionState) -> Unit): DjiExecutionStateRegistration
+    fun onExecutingInfo(
+        onInfo: (DjiWaylineExecutingInfo) -> Unit,
+        onInterrupt: (String?, String?) -> Unit,
+    ): DjiExecutionStateRegistration = DjiExecutionStateRegistration { }
+    fun onWaypointAction(listener: (DjiWaypointActionEvent) -> Unit): DjiExecutionStateRegistration =
+        DjiExecutionStateRegistration { }
     fun close()
 }
 
@@ -100,8 +120,13 @@ class AndroidDjiWaylineAdapter internal constructor(
     private val uploadFiles = mutableMapOf<Long, StoredMissionFile>()
     private val signalListeners = mutableSetOf<SignalListenerSlot>()
     private val observationListeners = mutableSetOf<ObservationListenerSlot>()
+    private val liveProgressListeners = mutableSetOf<LiveProgressListenerSlot>()
     private var djiExecutionRegistration: DjiExecutionStateRegistration? = null
+    private var djiLiveProgressRegistrations: List<DjiExecutionStateRegistration> = emptyList()
     private var startSignalsEnabled = false
+    private var startInvocationArmed = false
+    private val pendingStartStates = mutableListOf<DjiMissionExecutionState>()
+    private val pendingLiveProgress = mutableListOf<WaylineLiveProgress>()
 
     override fun prepare(metadata: MissionMetadata, content: InputStream): MissionUploadPreparation {
         if (!metadata.fileName.isSafeKmzName()) {
@@ -165,6 +190,9 @@ class AndroidDjiWaylineAdapter internal constructor(
             safeFail(completion)
             return
         }
+        synchronized(lock) {
+            if (!closed) startInvocationArmed = true
+        }
         withName(completion) { name, done -> dji.start(name, done) }
     }
     override fun stop(completion: ControlCompletion) = withName(completion) { name, done -> dji.stop(name, done) }
@@ -191,38 +219,81 @@ class AndroidDjiWaylineAdapter internal constructor(
         }
     }
 
+    override fun onLiveProgress(listener: WaylineLiveProgressListener): MissionExecutionSignalRegistration {
+        val slot = LiveProgressListenerSlot(listener)
+        synchronized(lock) {
+            if (!closed) liveProgressListeners += slot
+        }
+        return MissionExecutionSignalRegistration {
+            synchronized(lock) { liveProgressListeners.remove(slot) }
+        }
+    }
+
     override fun beginStartAttempt() {
         synchronized(lock) {
-            if (!closed) startSignalsEnabled = false
+            if (closed) return
+            startSignalsEnabled = false
+            startInvocationArmed = false
+            pendingStartStates.clear()
+            pendingLiveProgress.clear()
         }
     }
 
     override fun confirmStartAttempt() {
+        val replay: List<DjiMissionExecutionState>
+        val liveReplay: List<WaylineLiveProgress>
+        val signals: List<SignalListenerSlot>
+        val observations: List<ObservationListenerSlot>
+        val liveListeners: List<LiveProgressListenerSlot>
         synchronized(lock) {
-            if (!closed) startSignalsEnabled = true
+            if (closed) return
+            startSignalsEnabled = true
+            startInvocationArmed = false
+            replay = pendingStartStates.toList()
+            pendingStartStates.clear()
+            liveReplay = pendingLiveProgress.toList()
+            pendingLiveProgress.clear()
+            signals = signalListeners.toList()
+            observations = observationListeners.toList()
+            liveListeners = liveProgressListeners.toList()
         }
+        replay.forEach { state -> deliverExecutionState(state, signals, observations) }
+        liveReplay.forEach { progress -> deliverLiveProgress(progress, liveListeners) }
     }
 
     override fun invalidateStartAttempt() {
         synchronized(lock) {
             startSignalsEnabled = false
+            startInvocationArmed = false
+            pendingStartStates.clear()
+            pendingLiveProgress.clear()
         }
     }
 
     fun close() {
         synchronized(submissionLock) {
-            val (files, registration) = synchronized(lock) {
+            val (files, registrations) = synchronized(lock) {
                 if (closed) return
                 closed = true
+                startSignalsEnabled = false
+                startInvocationArmed = false
+                pendingStartStates.clear()
+                pendingLiveProgress.clear()
                 uploadGeneration++
                 controlGeneration++
                 signalListeners.clear()
                 observationListeners.clear()
-                uploadFiles.values.toList().also { uploadFiles.clear() } to
-                    djiExecutionRegistration.also { djiExecutionRegistration = null }
+                liveProgressListeners.clear()
+                val allRegistrations = buildList {
+                    djiExecutionRegistration?.let(::add)
+                    addAll(djiLiveProgressRegistrations)
+                }
+                djiExecutionRegistration = null
+                djiLiveProgressRegistrations = emptyList()
+                uploadFiles.values.toList().also { uploadFiles.clear() } to allRegistrations
             }
             files.forEach(StoredMissionFile::delete)
-            registration?.let { runCatching { it.unregister() } }
+            registrations.forEach { runCatching { it.unregister() } }
             runCatching { dji.close() }
         }
     }
@@ -233,24 +304,96 @@ class AndroidDjiWaylineAdapter internal constructor(
             if (djiExecutionRegistration != null) return true
         }
         val registration = runCatching { dji.onExecutionState(::dispatchExecutionState) }.getOrNull() ?: return false
+        val executingInfo = runCatching { dji.onExecutingInfo(::dispatchExecutingInfo, ::dispatchExecutingInterrupt) }.getOrNull()
+        val waypointAction = runCatching { dji.onWaypointAction(::dispatchWaypointAction) }.getOrNull()
         val retained = synchronized(lock) {
             if (closed || djiExecutionRegistration != null) false else {
                 djiExecutionRegistration = registration
+                djiLiveProgressRegistrations = listOfNotNull(executingInfo, waypointAction)
                 true
             }
         }
-        if (!retained) runCatching { registration.unregister() }
+        if (!retained) {
+            runCatching { registration.unregister() }
+            executingInfo?.let { runCatching { it.unregister() } }
+            waypointAction?.let { runCatching { it.unregister() } }
+        }
         return retained
+    }
+
+    private fun dispatchExecutingInfo(info: DjiWaylineExecutingInfo) {
+        dispatchLiveProgress(
+            WaylineLiveProgress(
+                executingMissionFileName = info.missionFileName.safeExecutingName(),
+                waylineId = info.waylineId?.takeIf { it >= 0 },
+                currentWaypointIndex = info.currentWaypointIndex?.takeIf { it >= 0 },
+            ),
+        )
+    }
+
+    private fun dispatchExecutingInterrupt(errorCode: String?, errorDescription: String?) {
+        if (errorCode == null && errorDescription == null) return
+        dispatchLiveProgress(
+            WaylineLiveProgress(
+                interruptErrorCode = errorCode,
+                interruptErrorDescription = errorDescription,
+            ),
+        )
+    }
+
+    private fun dispatchWaypointAction(event: DjiWaypointActionEvent) {
+        dispatchLiveProgress(
+            WaylineLiveProgress(
+                waypointActionGroup = event.actionGroup?.takeIf { it >= 0 },
+                waypointActionId = event.actionId.takeIf { it >= 0 },
+                waypointActionPhase = event.phase,
+                waypointActionErrorCode = event.errorCode,
+                waypointActionErrorDescription = event.errorDescription,
+            ),
+        )
+    }
+
+    private fun dispatchLiveProgress(progress: WaylineLiveProgress) {
+        val listeners = synchronized(lock) {
+            when {
+                closed -> emptyList()
+                startSignalsEnabled -> liveProgressListeners.toList()
+                startInvocationArmed -> {
+                    if (pendingLiveProgress.size < MAX_PENDING_START_STATES) pendingLiveProgress += progress
+                    emptyList()
+                }
+                else -> emptyList()
+            }
+        }
+        deliverLiveProgress(progress, listeners)
+    }
+
+    private fun deliverLiveProgress(progress: WaylineLiveProgress, listeners: List<LiveProgressListenerSlot>) {
+        if (listeners.isEmpty()) return
+        listeners.forEach { runCatching { it.listener.onLiveProgress(progress) } }
     }
 
     private fun dispatchExecutionState(state: DjiMissionExecutionState) {
         val (signals, observations) = synchronized(lock) {
-            if (closed || !startSignalsEnabled) {
-                emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
-            } else {
-                signalListeners.toList() to observationListeners.toList()
+            when {
+                closed -> emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
+                startSignalsEnabled -> signalListeners.toList() to observationListeners.toList()
+                startInvocationArmed -> {
+                    if (pendingStartStates.size < MAX_PENDING_START_STATES) pendingStartStates += state
+                    emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
+                }
+                else -> emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
             }
         }
+        deliverExecutionState(state, signals, observations)
+    }
+
+    private fun deliverExecutionState(
+        state: DjiMissionExecutionState,
+        signals: List<SignalListenerSlot>,
+        observations: List<ObservationListenerSlot>,
+    ) {
+        if (signals.isEmpty() && observations.isEmpty()) return
         val signal = state.toMissionExecutionSignal()
         val observation = MissionExecutionObservation(signal, state.toMissionExecutionRawState())
         signals.forEach { runCatching { it.listener.onSignal(signal) } }
@@ -390,6 +533,7 @@ class AndroidDjiWaylineAdapter internal constructor(
 
     private data class SignalListenerSlot(val listener: MissionExecutionSignalListener)
     private data class ObservationListenerSlot(val listener: MissionExecutionObservationListener)
+    private data class LiveProgressListenerSlot(val listener: WaylineLiveProgressListener)
 
     companion object {
         fun create(context: Context): AndroidDjiWaylineAdapter = AndroidDjiWaylineAdapter(AndroidMissionFileStore(context.applicationContext), MsdkV5WaypointMissionApi())
@@ -397,6 +541,7 @@ class AndroidDjiWaylineAdapter internal constructor(
 }
 
 private const val WAYLINE_DIAGNOSTIC_TAG = "SkyCommandRelay"
+private const val MAX_PENDING_START_STATES = 32
 
 private fun recordToLogcat(diagnostic: WaylineAdapterDiagnostic) {
     val detail = listOfNotNull(
@@ -473,6 +618,22 @@ private const val MAX_RELAY_FILE_NAME_CODE_POINTS = 128
 private fun String.isSafeKmzName(): Boolean = isNotBlank() && codePointCount(0, length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
     none(Char::isISOControl) && !contains('/') && !contains('\\') && this != "." && this != ".." &&
     endsWith(".kmz", ignoreCase = true) && File(this).name == this
+
+private fun String?.safeExecutingName(): String? {
+    val sanitized = this
+        ?.codePoints()
+        ?.filter { !Character.isISOControl(it) }
+        ?.limit(MAX_RELAY_FILE_NAME_CODE_POINTS.toLong())
+        ?.collect(
+            { StringBuilder() },
+            { builder, codePoint -> builder.appendCodePoint(codePoint) },
+            { left, right -> left.append(right) },
+        )
+        ?.toString()
+        ?.trim()
+        ?.takeUnless { it.isEmpty() || it.contains('/') || it.contains('\\') || it == "." || it == ".." }
+    return sanitized
+}
 
 private class AndroidMissionFileStore(context: Context) : MissionFileStore {
     private val directory = File(context.cacheDir, "dji-waylines")

@@ -1,6 +1,6 @@
 # mission-flight-phase 模块契约
 
-状态：已实现并验证；版本：1.1.0；所属一级模块：wayline-mission；Gradle 路径：`:wayline-mission:mission-flight-phase`
+状态：已实现并验证；版本：1.2.0；所属一级模块：wayline-mission；Gradle 路径：`:wayline-mission:mission-flight-phase`
 
 ## 唯一职责
 
@@ -22,7 +22,7 @@ phaseTracker.invalidate(missionRevision?, deviceGeneration) -> Unit
 
 `MissionExecutionSignalSource` 的每一个实现都必须显式实现 `beginStartAttempt()`、`confirmStartAttempt()` 和 `invalidateStartAttempt()` 三个时点的行为；可携带任务身份的模拟源可以明确实现为空操作，真实 DJI 适配器必须在门面准备新任务前关闭状态投递，只在相同启动请求收到成功回执后恢复投递，并在失败、停止、任务替换或设备失效时再次关闭。这样，前一任务的迟到原始状态不能被新任务暂存或归属；被隔离的状态不得补发，宁可等待新的 DJI 状态。
 
-除既有的归一化 `MissionExecutionSignal` 外，来源还必须发布 `MissionExecutionObservation(signal, rawState)`。`rawState` 是受限的、逐项保留的 `WaypointMissionExecuteStateListener` 观察值：`IDLE`、`READY`、`UPLOADING`、`PREPARING`、`RECOVERING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`INTERRUPTED`、`FINISHED`、`RETURN_TO_START_POINT`、`DISCONNECTED`、`NOT_SUPPORTED`、`UNKNOWN`。它不是桌面工作流阶段、不是按钮 `onSuccess` 回执，也不是由坐标或时间推导的航点进度。真实 DJI 实现必须同时提供归一化信号和原始观察；旧的仅信号实现可由默认观察映射保持兼容，但不得伪造 DJI 未提供的更具体原始状态。
+除既有的归一化 `MissionExecutionSignal` 外，来源还必须发布 `MissionExecutionObservation(signal, rawState)` 与可选的 `WaylineLiveProgress`。`rawState` 是受限的、逐项保留的 `WaypointMissionExecuteStateListener` 观察值：`IDLE`、`READY`、`UPLOADING`、`PREPARING`、`RECOVERING`、`ENTER_WAYLINE`、`EXECUTING`、`PAUSED`、`INTERRUPTED`、`FINISHED`、`RETURN_TO_START_POINT`、`DISCONNECTED`、`NOT_SUPPORTED`、`UNKNOWN`。`WaylineLiveProgress` 是 `WaylineExecutingInfoListener` 与 `WaypointActionListener` 的受限现场进度，默认实现不得伪造 DJI 未提供的航点、动作或中断。它不是桌面工作流阶段、不是按钮 `onSuccess` 回执，也不是由坐标或时间推导的航点进度。真实 DJI 实现必须同时提供归一化信号、原始观察和现场进度；旧的仅信号实现可由默认观察/进度映射保持兼容。
 
 输出的阶段事实是：
 

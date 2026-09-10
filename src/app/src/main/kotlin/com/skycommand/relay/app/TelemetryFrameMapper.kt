@@ -103,6 +103,16 @@ object TelemetryFrameMapper {
         "missionDjiExecutionState" to snapshot.missionDjiExecutionState?.name.json(),
         "missionUploadProgress" to snapshot.missionUploadProgress.json(),
         "missionFileName" to snapshot.missionFileName.json(),
+        "waylineExecutingMissionFileName" to snapshot.waylineExecutingMissionFileName.json(),
+        "waylineId" to snapshot.waylineId.json(),
+        "currentWaypointIndex" to snapshot.currentWaypointIndex.json(),
+        "waypointActionGroup" to snapshot.waypointActionGroup.json(),
+        "waypointActionId" to snapshot.waypointActionId.json(),
+        "waypointActionPhase" to snapshot.waypointActionPhase.json(),
+        "waypointActionErrorCode" to snapshot.waypointActionErrorCode.json(),
+        "waypointActionErrorDescription" to snapshot.waypointActionErrorDescription.json(),
+        "waylineInterruptErrorCode" to snapshot.waylineInterruptErrorCode.json(),
+        "waylineInterruptErrorDescription" to snapshot.waylineInterruptErrorDescription.json(),
     )
 
     private fun capabilities(snapshot: TelemetrySnapshot): JsonObject = JsonObject(

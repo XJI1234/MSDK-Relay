@@ -131,6 +131,16 @@ data class TelemetrySnapshot(
     val missionDjiExecutionState: MissionExecutionRawState? = null,
     val missionUploadProgress: Int? = null,
     val missionFileName: String? = null,
+    val waylineExecutingMissionFileName: String? = null,
+    val waylineId: Int? = null,
+    val currentWaypointIndex: Int? = null,
+    val waypointActionGroup: Int? = null,
+    val waypointActionId: Int? = null,
+    val waypointActionPhase: String? = null,
+    val waypointActionErrorCode: String? = null,
+    val waypointActionErrorDescription: String? = null,
+    val waylineInterruptErrorCode: String? = null,
+    val waylineInterruptErrorDescription: String? = null,
     val lowBatteryRthState: LowBatteryRthState? = null,
     val airLink: LinkState = LinkState.UNKNOWN,
     val camera: LinkState = LinkState.UNKNOWN,
@@ -230,6 +240,16 @@ object SnapshotAssembler {
             -> null
         },
         missionFileName = inputs.mission.file?.fileName,
+        waylineExecutingMissionFileName = inputs.mission.waylineExecutingMissionFileName,
+        waylineId = inputs.mission.waylineId,
+        currentWaypointIndex = inputs.mission.currentWaypointIndex,
+        waypointActionGroup = inputs.mission.waypointActionGroup,
+        waypointActionId = inputs.mission.waypointActionId,
+        waypointActionPhase = inputs.mission.waypointActionPhase?.name,
+        waypointActionErrorCode = inputs.mission.waypointActionErrorCode,
+        waypointActionErrorDescription = inputs.mission.waypointActionErrorDescription,
+        waylineInterruptErrorCode = inputs.mission.waylineInterruptErrorCode,
+        waylineInterruptErrorDescription = inputs.mission.waylineInterruptErrorDescription,
     )
     }
 

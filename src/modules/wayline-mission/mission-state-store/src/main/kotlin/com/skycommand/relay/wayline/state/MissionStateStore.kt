@@ -10,6 +10,12 @@ enum class MissionStateSource {
     STAGING,
     UPLOAD,
     EXECUTION,
+    LIVE_PROGRESS,
+}
+
+enum class WaypointActionPhase {
+    START,
+    FINISH,
 }
 
 sealed interface UploadState {
@@ -37,6 +43,16 @@ data class MissionSnapshot(
     val upload: UploadState,
     val execution: ExecutionState,
     val missionDjiExecutionState: MissionExecutionRawState? = null,
+    val waylineExecutingMissionFileName: String? = null,
+    val waylineId: Int? = null,
+    val currentWaypointIndex: Int? = null,
+    val waypointActionGroup: Int? = null,
+    val waypointActionId: Int? = null,
+    val waypointActionPhase: WaypointActionPhase? = null,
+    val waypointActionErrorCode: String? = null,
+    val waypointActionErrorDescription: String? = null,
+    val waylineInterruptErrorCode: String? = null,
+    val waylineInterruptErrorDescription: String? = null,
 )
 
 sealed interface MissionStateEvent {
@@ -70,6 +86,22 @@ sealed interface MissionStateEvent {
         val missionRevision: Long,
         val deviceGeneration: Long,
         val state: MissionExecutionRawState,
+    ) : MissionStateEvent
+
+    data class LiveProgressObserved(
+        override val sourceRevision: Long,
+        val missionRevision: Long,
+        val deviceGeneration: Long,
+        val executingMissionFileName: String? = null,
+        val waylineId: Int? = null,
+        val currentWaypointIndex: Int? = null,
+        val waypointActionGroup: Int? = null,
+        val waypointActionId: Int? = null,
+        val waypointActionPhase: WaypointActionPhase? = null,
+        val waypointActionErrorCode: String? = null,
+        val waypointActionErrorDescription: String? = null,
+        val interruptErrorCode: String? = null,
+        val interruptErrorDescription: String? = null,
     ) : MissionStateEvent
 }
 
@@ -137,7 +169,7 @@ class MissionStateStore private constructor(
                         upload = UploadState.NOT_UPLOADED,
                         execution = ExecutionState.NOT_STARTED,
                         missionDjiExecutionState = null,
-                    )
+                    ).clearedLiveProgress()
                 }
                 is MissionStateEvent.FileCleared -> {
                     if (current.file == null) {
@@ -150,7 +182,7 @@ class MissionStateStore private constructor(
                         upload = UploadState.NOT_UPLOADED,
                         execution = ExecutionState.NOT_STARTED,
                         missionDjiExecutionState = null,
-                    )
+                    ).clearedLiveProgress()
                 }
                 is MissionStateEvent.UploadChanged -> {
                     if (event.missionRevision != current.missionRevision || event.deviceGeneration != current.deviceGeneration) {
@@ -173,6 +205,24 @@ class MissionStateStore private constructor(
                         return ApplyResult.IgnoredStale(event.sourceRevision)
                     }
                     current.copy(revision = current.revision + 1, missionDjiExecutionState = event.state)
+                }
+                is MissionStateEvent.LiveProgressObserved -> {
+                    if (event.missionRevision != current.missionRevision || event.deviceGeneration != current.deviceGeneration) {
+                        return ApplyResult.IgnoredStale(event.sourceRevision)
+                    }
+                    current.copy(
+                        revision = current.revision + 1,
+                        waylineExecutingMissionFileName = event.executingMissionFileName,
+                        waylineId = event.waylineId,
+                        currentWaypointIndex = event.currentWaypointIndex,
+                        waypointActionGroup = event.waypointActionGroup,
+                        waypointActionId = event.waypointActionId,
+                        waypointActionPhase = event.waypointActionPhase,
+                        waypointActionErrorCode = event.waypointActionErrorCode,
+                        waypointActionErrorDescription = event.waypointActionErrorDescription,
+                        waylineInterruptErrorCode = event.interruptErrorCode,
+                        waylineInterruptErrorDescription = event.interruptErrorDescription,
+                    )
                 }
             }
             val previous = current
@@ -199,7 +249,7 @@ class MissionStateStore private constructor(
                 upload = if (hasMission) UploadState.FAILED else UploadState.NOT_UPLOADED,
                 execution = if (hasMission) ExecutionState.FAILED else ExecutionState.NOT_STARTED,
                 missionDjiExecutionState = null,
-            )
+            ).clearedLiveProgress()
             current = next
             appliedSnapshot = next
             pendingEvents.addLast(PendingEvent(MissionStateEventRecord(previous, next), listeners.toList()))
@@ -343,8 +393,44 @@ class MissionStateStore private constructor(
                     require(event.missionRevision > 0) { "Mission revision must be positive" }
                     require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
                 }
+                is MissionStateEvent.LiveProgressObserved -> {
+                    require(event.missionRevision > 0) { "Mission revision must be positive" }
+                    require(event.deviceGeneration >= 0) { "Device generation must not be negative" }
+                    event.executingMissionFileName?.let { require(isSafeExecutingName(it)) { "Executing mission filename is invalid" } }
+                    event.waylineId?.let { require(it >= 0) { "Wayline id must not be negative" } }
+                    event.currentWaypointIndex?.let { require(it >= 0) { "Waypoint index must not be negative" } }
+                    event.waypointActionGroup?.let { require(it >= 0) { "Waypoint action group must not be negative" } }
+                    event.waypointActionId?.let { require(it >= 0) { "Waypoint action id must not be negative" } }
+                    event.waypointActionErrorCode?.let { require(isSafeError(it, 128)) { "Waypoint action error code is invalid" } }
+                    event.waypointActionErrorDescription?.let { require(isSafeError(it, 512)) { "Waypoint action error description is invalid" } }
+                    event.interruptErrorCode?.let { require(isSafeError(it, 128)) { "Wayline interrupt error code is invalid" } }
+                    event.interruptErrorDescription?.let { require(isSafeError(it, 512)) { "Wayline interrupt error description is invalid" } }
+                }
             }
         }
+
+        private fun isSafeExecutingName(fileName: String): Boolean =
+            fileName.isNotBlank() &&
+                fileName.codePointCount(0, fileName.length) <= MAX_RELAY_FILE_NAME_CODE_POINTS &&
+                fileName.none { it == '/' || it == '\\' || it.isISOControl() }
+
+        private fun isSafeError(value: String, maxCodePoints: Int): Boolean =
+            value.isNotBlank() &&
+                value.codePointCount(0, value.length) <= maxCodePoints &&
+                value.none { it.isISOControl() }
+
+        private fun MissionSnapshot.clearedLiveProgress(): MissionSnapshot = copy(
+            waylineExecutingMissionFileName = null,
+            waylineId = null,
+            currentWaypointIndex = null,
+            waypointActionGroup = null,
+            waypointActionId = null,
+            waypointActionPhase = null,
+            waypointActionErrorCode = null,
+            waypointActionErrorDescription = null,
+            waylineInterruptErrorCode = null,
+            waylineInterruptErrorDescription = null,
+        )
 
         private fun validateMetadata(metadata: MissionMetadata) {
             require(metadata.fileName.isNotBlank()) { "Mission filename must not be blank" }
@@ -365,6 +451,7 @@ class MissionStateStore private constructor(
             is MissionStateEvent.ExecutionChanged,
             is MissionStateEvent.ExecutionObserved,
             -> MissionStateSource.EXECUTION
+            is MissionStateEvent.LiveProgressObserved -> MissionStateSource.LIVE_PROGRESS
         }
     }
 }

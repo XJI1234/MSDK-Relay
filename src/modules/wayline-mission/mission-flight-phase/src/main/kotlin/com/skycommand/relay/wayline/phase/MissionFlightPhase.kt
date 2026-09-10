@@ -49,6 +49,46 @@ fun interface MissionExecutionObservationListener {
     fun onObservation(observation: MissionExecutionObservation)
 }
 
+enum class WaylineLiveActionPhase {
+    START,
+    FINISH,
+}
+
+data class WaylineLiveProgress(
+    val executingMissionFileName: String? = null,
+    val waylineId: Int? = null,
+    val currentWaypointIndex: Int? = null,
+    val waypointActionGroup: Int? = null,
+    val waypointActionId: Int? = null,
+    val waypointActionPhase: WaylineLiveActionPhase? = null,
+    val waypointActionErrorCode: String? = null,
+    val waypointActionErrorDescription: String? = null,
+    val interruptErrorCode: String? = null,
+    val interruptErrorDescription: String? = null,
+) {
+    fun merge(update: WaylineLiveProgress): WaylineLiveProgress {
+        val executing = update.executingMissionFileName != null || update.waylineId != null || update.currentWaypointIndex != null
+        val action = update.waypointActionPhase != null
+        val interrupt = update.interruptErrorCode != null || update.interruptErrorDescription != null
+        return copy(
+            executingMissionFileName = if (executing) update.executingMissionFileName else executingMissionFileName,
+            waylineId = if (executing) update.waylineId else waylineId,
+            currentWaypointIndex = if (executing) update.currentWaypointIndex else currentWaypointIndex,
+            waypointActionGroup = if (action) update.waypointActionGroup else waypointActionGroup,
+            waypointActionId = if (action) update.waypointActionId else waypointActionId,
+            waypointActionPhase = if (action) update.waypointActionPhase else waypointActionPhase,
+            waypointActionErrorCode = if (action) update.waypointActionErrorCode else waypointActionErrorCode,
+            waypointActionErrorDescription = if (action) update.waypointActionErrorDescription else waypointActionErrorDescription,
+            interruptErrorCode = if (interrupt) update.interruptErrorCode else interruptErrorCode,
+            interruptErrorDescription = if (interrupt) update.interruptErrorDescription else interruptErrorDescription,
+        )
+    }
+}
+
+fun interface WaylineLiveProgressListener {
+    fun onLiveProgress(progress: WaylineLiveProgress)
+}
+
 fun interface MissionExecutionSignalRegistration {
     fun unregister()
 }
@@ -64,12 +104,21 @@ interface MissionExecutionSignalSource {
         onSignal { signal -> listener.onObservation(MissionExecutionObservation(signal, MissionExecutionRawState.UNKNOWN)) }
 
     /**
+     * Live waypoint progress is display evidence only. Default sources do not invent DJI facts.
+     */
+    fun onLiveProgress(listener: WaylineLiveProgressListener): MissionExecutionSignalRegistration =
+        MissionExecutionSignalRegistration { }
+
+    /**
      * Identity-free platform sources close this fence before a new start attempt so a delayed
      * status callback from a prior task cannot be attributed to the task now being prepared.
      */
     fun beginStartAttempt()
 
-    /** Enables signals only after the current start command has an explicit DJI success receipt. */
+    /**
+     * Opens delivery after the current start command has an explicit DJI success receipt.
+     * Platform sources may replay states observed after this attempt's `startMission` call.
+     */
     fun confirmStartAttempt()
 
     /** Closes the fence when the pending start is no longer a current task. */

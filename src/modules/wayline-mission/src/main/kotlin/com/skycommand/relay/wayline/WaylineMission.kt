@@ -36,6 +36,8 @@ import com.skycommand.relay.wayline.phase.MissionFlightPhase
 import com.skycommand.relay.wayline.phase.MissionPhase
 import com.skycommand.relay.wayline.phase.MissionPhaseFact
 import com.skycommand.relay.wayline.phase.MissionPhaseSink
+import com.skycommand.relay.wayline.phase.WaylineLiveActionPhase
+import com.skycommand.relay.wayline.phase.WaylineLiveProgress
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.MissionStaging
 import com.skycommand.relay.wayline.staging.StagingCompleteResult
@@ -48,6 +50,7 @@ import com.skycommand.relay.wayline.state.MissionStateEvent
 import com.skycommand.relay.wayline.state.MissionStateListener
 import com.skycommand.relay.wayline.state.MissionStateStore
 import com.skycommand.relay.wayline.state.Registration
+import com.skycommand.relay.wayline.state.WaypointActionPhase
 import com.skycommand.relay.wayline.uploader.MissionUploadPort
 import com.skycommand.relay.wayline.uploader.MissionUploadFailure
 import com.skycommand.relay.wayline.uploader.MissionUploader
@@ -78,6 +81,11 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private val activeOperations = mutableSetOf<TrackedOperation>()
     private val stagingRevision = AtomicLong(0)
     private val executionStateRevision = AtomicLong(0)
+    private val liveProgressRevision = AtomicLong(0)
+    private val liveProgressLock = ReentrantLock()
+    private var latestLiveProgress = WaylineLiveProgress()
+    private var latestLiveMissionRevision: Long? = null
+    private var latestLiveDeviceGeneration: Long? = null
     private val phaseListeners = mutableSetOf<MissionPhaseListener>()
     private var incomingTransferActive = false
     private val executionSignalSource = dependencies.executionSignalSource
@@ -101,6 +109,9 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     @Suppress("unused")
     private val executionSignalRegistration: MissionExecutionSignalRegistration =
         dependencies.executionSignalSource.onObservation(::acceptExecutionObservation)
+    @Suppress("unused")
+    private val liveProgressRegistration: MissionExecutionSignalRegistration =
+        dependencies.executionSignalSource.onLiveProgress(::acceptLiveProgress)
     private val commands = WaylineCommandHandler.create(Actions())
     private val contentReader = dependencies.contentReader
 
@@ -180,10 +191,7 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         val missionRevision = snapshot.missionRevision
         val shouldArm = missionRevision != null &&
             snapshot.upload is com.skycommand.relay.wayline.state.UploadState.UPLOADED &&
-            snapshot.execution in setOf(
-                com.skycommand.relay.wayline.state.ExecutionState.NOT_STARTED,
-                com.skycommand.relay.wayline.state.ExecutionState.FAILED,
-        )
+            snapshot.file != null
         if (shouldArm) {
             executionSignalSource.beginStartAttempt()
             flightPhase.prepareStart(missionRevision, snapshot.deviceGeneration, requireNotNull(snapshot.file).fileName)
@@ -295,6 +303,37 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
                 executor.observeExecutionState(ExecutionState.EXECUTING, missionRevision, snapshot.deviceGeneration)
             else -> Unit
         }
+    }
+
+    private fun acceptLiveProgress(progress: WaylineLiveProgress) {
+        val snapshot = state.snapshot()
+        val missionRevision = snapshot.missionRevision ?: return
+        val merged = liveProgressLock.withLock {
+            if (latestLiveMissionRevision != missionRevision || latestLiveDeviceGeneration != snapshot.deviceGeneration) {
+                latestLiveProgress = WaylineLiveProgress()
+                latestLiveMissionRevision = missionRevision
+                latestLiveDeviceGeneration = snapshot.deviceGeneration
+            }
+            latestLiveProgress = latestLiveProgress.merge(progress)
+            latestLiveProgress
+        }
+        state.apply(
+            MissionStateEvent.LiveProgressObserved(
+                sourceRevision = liveProgressRevision.incrementAndGet(),
+                missionRevision = missionRevision,
+                deviceGeneration = snapshot.deviceGeneration,
+                executingMissionFileName = merged.executingMissionFileName,
+                waylineId = merged.waylineId,
+                currentWaypointIndex = merged.currentWaypointIndex,
+                waypointActionGroup = merged.waypointActionGroup,
+                waypointActionId = merged.waypointActionId,
+                waypointActionPhase = merged.waypointActionPhase.toStore(),
+                waypointActionErrorCode = merged.waypointActionErrorCode,
+                waypointActionErrorDescription = merged.waypointActionErrorDescription,
+                interruptErrorCode = merged.interruptErrorCode,
+                interruptErrorDescription = merged.interruptErrorDescription,
+            ),
+        )
     }
 
     private fun applyAcceptedExecutionSignal(
@@ -523,6 +562,12 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
         ExecutionTerminalOutcome.FAILED -> WaylineActionTerminalOutcome.FAILED
         ExecutionTerminalOutcome.TIMED_OUT -> WaylineActionTerminalOutcome.TIMED_OUT
         ExecutionTerminalOutcome.CANCELLED -> WaylineActionTerminalOutcome.CANCELLED
+    }
+
+    private fun WaylineLiveActionPhase?.toStore(): WaypointActionPhase? = when (this) {
+        WaylineLiveActionPhase.START -> WaypointActionPhase.START
+        WaylineLiveActionPhase.FINISH -> WaypointActionPhase.FINISH
+        null -> null
     }
 
     companion object {

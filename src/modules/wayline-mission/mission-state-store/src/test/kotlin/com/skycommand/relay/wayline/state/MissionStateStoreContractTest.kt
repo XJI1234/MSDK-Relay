@@ -70,6 +70,42 @@ class MissionStateStoreContractTest {
     }
 
     @Test
+    fun recordsLiveWaylineProgressWithoutChangingWorkflowExecution() {
+        val store = MissionStateStore.create()
+        val staged = staged(store, 1)
+        val mission = requireNotNull(staged.missionRevision)
+
+        val result = assertIs<ApplyResult.Applied>(
+            store.apply(
+                MissionStateEvent.LiveProgressObserved(
+                    sourceRevision = 1,
+                    missionRevision = mission,
+                    deviceGeneration = staged.deviceGeneration,
+                    executingMissionFileName = "默认",
+                    waylineId = 0,
+                    currentWaypointIndex = 46,
+                    waypointActionGroup = 2,
+                    waypointActionId = 3,
+                    waypointActionPhase = WaypointActionPhase.START,
+                    waypointActionErrorCode = null,
+                    waypointActionErrorDescription = null,
+                    interruptErrorCode = null,
+                    interruptErrorDescription = null,
+                ),
+            ),
+        )
+
+        assertEquals("默认", result.snapshot.waylineExecutingMissionFileName)
+        assertEquals(0, result.snapshot.waylineId)
+        assertEquals(46, result.snapshot.currentWaypointIndex)
+        assertEquals(2, result.snapshot.waypointActionGroup)
+        assertEquals(3, result.snapshot.waypointActionId)
+        assertEquals(WaypointActionPhase.START, result.snapshot.waypointActionPhase)
+        assertEquals(ExecutionState.NOT_STARTED, result.snapshot.execution)
+        assertNull(result.snapshot.missionDjiExecutionState)
+    }
+
+    @Test
     fun ignoresOldAndDuplicateEventsIndependentlyForEachSource() {
         val store = MissionStateStore.create()
         val mission = staged(store, 1).missionRevision!!

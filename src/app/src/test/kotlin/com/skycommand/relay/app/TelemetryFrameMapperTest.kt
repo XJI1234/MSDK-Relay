@@ -204,6 +204,9 @@ class TelemetryFrameMapperTest {
             "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
             "liveStreaming", "liveStreamNotice", "liveStreamRuntimeErrorCode", "liveStreamRuntimeErrorDescription", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
             "missionRevision", "missionDeviceGeneration", "missionDjiExecutionState", "missionUploadProgress", "missionFileName",
+            "waylineExecutingMissionFileName", "waylineId", "currentWaypointIndex", "waypointActionGroup", "waypointActionId",
+            "waypointActionPhase", "waypointActionErrorCode", "waypointActionErrorDescription", "waylineInterruptErrorCode",
+            "waylineInterruptErrorDescription",
         ).forEach { assertEquals(JsonNull, frame.payload[it], it) }
     }
 

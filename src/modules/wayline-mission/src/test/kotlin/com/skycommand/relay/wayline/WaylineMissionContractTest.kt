@@ -22,8 +22,12 @@ import com.skycommand.relay.wayline.phase.MissionExecutionObservationListener
 import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.phase.MissionPhase
 import com.skycommand.relay.wayline.phase.MissionPhaseFact
+import com.skycommand.relay.wayline.phase.WaylineLiveActionPhase
+import com.skycommand.relay.wayline.phase.WaylineLiveProgress
+import com.skycommand.relay.wayline.phase.WaylineLiveProgressListener
 import com.skycommand.relay.wayline.state.ExecutionState
 import com.skycommand.relay.wayline.state.UploadState
+import com.skycommand.relay.wayline.state.WaypointActionPhase
 import com.skycommand.relay.wayline.executor.MissionControlPort
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.staging.StagingStorage
@@ -51,6 +55,36 @@ class WaylineMissionContractTest {
         fixture.signals.emit(MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.RETURN_TO_START_POINT))
 
         assertEquals(MissionExecutionRawState.RETURN_TO_START_POINT, fixture.mission.snapshot().missionDjiExecutionState)
+    }
+
+    @Test
+    fun recordsLiveWaylineProgressWithoutChangingWorkflowExecution() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+
+        fixture.signals.emit(
+            WaylineLiveProgress(
+                executingMissionFileName = "默认",
+                waylineId = 0,
+                currentWaypointIndex = 46,
+                waypointActionGroup = 2,
+                waypointActionId = 3,
+                waypointActionPhase = WaylineLiveActionPhase.START,
+            ),
+        )
+
+        val snapshot = fixture.mission.snapshot()
+        assertEquals("默认", snapshot.waylineExecutingMissionFileName)
+        assertEquals(0, snapshot.waylineId)
+        assertEquals(46, snapshot.currentWaypointIndex)
+        assertEquals(2, snapshot.waypointActionGroup)
+        assertEquals(3, snapshot.waypointActionId)
+        assertEquals(WaypointActionPhase.START, snapshot.waypointActionPhase)
+        assertEquals(ExecutionState.STARTING, snapshot.execution)
     }
 
     @Test
@@ -647,6 +681,7 @@ class WaylineMissionContractTest {
     private class SignalSource : MissionExecutionSignalSource {
         private var listener: MissionExecutionSignalListener? = null
         private var observationListener: MissionExecutionObservationListener? = null
+        private var liveProgressListener: WaylineLiveProgressListener? = null
         override fun onSignal(listener: MissionExecutionSignalListener): MissionExecutionSignalRegistration {
             this.listener = listener
             return MissionExecutionSignalRegistration { this.listener = null }
@@ -655,6 +690,10 @@ class WaylineMissionContractTest {
             observationListener = listener
             return MissionExecutionSignalRegistration { observationListener = null }
         }
+        override fun onLiveProgress(listener: WaylineLiveProgressListener): MissionExecutionSignalRegistration {
+            liveProgressListener = listener
+            return MissionExecutionSignalRegistration { liveProgressListener = null }
+        }
         override fun beginStartAttempt() = Unit
         override fun confirmStartAttempt() = Unit
         override fun invalidateStartAttempt() = Unit
@@ -662,6 +701,9 @@ class WaylineMissionContractTest {
         fun emit(observation: MissionExecutionObservation) {
             listener?.onSignal(observation.signal)
             observationListener?.onObservation(observation)
+        }
+        fun emit(progress: WaylineLiveProgress) {
+            liveProgressListener?.onLiveProgress(progress)
         }
     }
 

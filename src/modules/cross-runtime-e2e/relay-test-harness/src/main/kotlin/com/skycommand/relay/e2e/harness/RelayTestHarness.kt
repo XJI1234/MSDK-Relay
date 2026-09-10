@@ -34,6 +34,8 @@ import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
 import com.skycommand.relay.diagnostics.DiagnosticClock
 import com.skycommand.relay.diagnostics.DiagnosticJournal
 import com.skycommand.relay.diagnostics.DiagnosticLevel
+import com.skycommand.relay.diagnostics.gateway.DiagnosticRegistration
+import com.skycommand.relay.diagnostics.gateway.DiagnosticTimeoutScheduler
 import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
 import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.settings.RelayConnectionSettingsResult
@@ -331,6 +333,10 @@ class RelayTestHarness private constructor(
             val diagnostics = GatewayDiagnosticPublisher.create(
                 diagnosticJournal,
                 RelayGatewayDiagnosticPort(gateway),
+                DiagnosticTimeoutScheduler { delay, callback ->
+                    val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                    DiagnosticRegistration { future.cancel(false) }
+                },
             )
             wayline.onPhaseChanged { fact ->
                 gateway.publishMissionPhase(
@@ -522,6 +528,16 @@ private object HarnessTelemetryMapper {
         "missionDeviceGeneration" to snapshot.missionDeviceGeneration.json(), "missionExecution" to JsonString(snapshot.missionExecution.name),
         "missionDjiExecutionState" to snapshot.missionDjiExecutionState?.name.json(),
         "missionUploadProgress" to snapshot.missionUploadProgress.json(), "missionFileName" to snapshot.missionFileName.json(),
+        "waylineExecutingMissionFileName" to snapshot.waylineExecutingMissionFileName.json(),
+        "waylineId" to snapshot.waylineId.json(),
+        "currentWaypointIndex" to snapshot.currentWaypointIndex.json(),
+        "waypointActionGroup" to snapshot.waypointActionGroup.json(),
+        "waypointActionId" to snapshot.waypointActionId.json(),
+        "waypointActionPhase" to snapshot.waypointActionPhase.json(),
+        "waypointActionErrorCode" to snapshot.waypointActionErrorCode.json(),
+        "waypointActionErrorDescription" to snapshot.waypointActionErrorDescription.json(),
+        "waylineInterruptErrorCode" to snapshot.waylineInterruptErrorCode.json(),
+        "waylineInterruptErrorDescription" to snapshot.waylineInterruptErrorDescription.json(),
     )
 
     private fun String?.json(): JsonValue = this?.let(::JsonString) ?: JsonNull
