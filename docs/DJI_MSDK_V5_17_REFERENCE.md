@@ -261,10 +261,10 @@ removeReceiveStreamListener(theSameListenerInstance)
 | --- | --- | --- | --- |
 | `init()` | 初始化航线管理器。 | 第一次调用前由 `ensureInitialized()` 执行一次。 | 必须在 MSDK 就绪后使用；不要每个命令重复初始化。 |
 | `pushKMZFileToAircraft(path, CompletionCallbackWithProgress<Double>)` | 上传 DJI WPML 定义的 KMZ 航线文件；同名文件覆盖此前文件；可上传多个文件；一个 KMZ 含一个航线任务，可含多条 wayline。 | `upload(path, ...)` 透传进度、成功、失败。 | “上传成功”仅代表文件上传到飞机，不代表自动起飞或开始执行。文件名是后续启动/停止的身份。 |
-| `startMission(missionFileName, CompletionCallback)` | 启动指定文件的航线任务。 | `start(name, ...)`。 | 官方特别说明：航线起飞阶段不要调用 `KeyStartGoHome`；若要停止航线，调用 `stopMission`。成功回调仍要等执行状态变化确认。 |
+| `startMission(missionFileName, CompletionCallback)` | 启动指定文件的航线任务。 | `start(name, ...)`，入参为适配器身份去掉 `.kmz` 后的名字。 | Mini 4 Pro / M4 不要带 `.kmz`；M300/M350 才要完整后缀。上传路径仍带 `.kmz`。官方特别说明：航线起飞阶段不要调用 `KeyStartGoHome`；若要停止航线，调用 `stopMission`。成功回调仍要等执行状态变化确认。 |
 | `pauseMission(callback)` | 暂停航线。 | `pause(...)`。 | 它不是上传/停止的替代。 |
 | `resumeMission(callback)` | 继续航线。 | `resume(...)`。 | 必须由任务当前状态和 SDK 回调共同决定可用性。 |
-| `stopMission(missionFileName, callback)` | 停止指定文件的航线。 | `stop(name, ...)`。 | 名称必须与上传/目标任务一致。停止请求成功不是 UI 可以立刻写“已完成”。 |
+| `stopMission(missionFileName, callback)` | 停止指定文件的航线。 | `stop(name, ...)`，入参同样去掉 `.kmz`。 | 名称必须与该机型 `startMission` 使用的任务名一致。停止请求成功不是 UI 可以立刻写“已完成”。 |
 | `addWaypointMissionExecuteStateListener(listener)` | 订阅航线执行状态。 | 注册后映射为项目任务阶段。 | 它是任务运行态证据；移除时必须使用同一 listener。 |
 | `destroy()` | 销毁该 manager 的资源。 | `close()` 调用。 | 不能在还有有效使用者时过早销毁。 |
 

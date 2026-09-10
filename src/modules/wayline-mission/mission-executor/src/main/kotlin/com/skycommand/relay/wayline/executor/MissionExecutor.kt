@@ -151,7 +151,8 @@ class MissionExecutor private constructor(
             when {
                 active != null && !command.canReplace(active!!.command) ->
                     ExecutionRejection.ALREADY_ACTIVE
-                command != Command.STOP && unconfirmedControl != null -> ExecutionRejection.OPERATION_UNCONFIRMED
+                command != Command.STOP && command != Command.START && unconfirmedControl != null ->
+                    ExecutionRejection.OPERATION_UNCONFIRMED
                 else -> null
             }
         }
@@ -166,7 +167,7 @@ class MissionExecutor private constructor(
             if (active != null && !command.canReplace(active!!.command)) {
                 return ExecutionRequestResult.Rejected(ExecutionRejection.ALREADY_ACTIVE)
             }
-            if (command != Command.STOP && unconfirmedControl != null) {
+            if (command != Command.STOP && command != Command.START && unconfirmedControl != null) {
                 return ExecutionRequestResult.Rejected(ExecutionRejection.OPERATION_UNCONFIRMED)
             }
             active.also { active = operation }
@@ -175,14 +176,17 @@ class MissionExecutor private constructor(
 
         val submission = coordinator.submit(
             action = object : DjiOperation {
-                override fun unconfirmedRetryMarker(): Any? =
-                    if (operation.command == Command.STOP) StopRetryMarker(operation.missionRevision, operation.deviceGeneration) else null
+                override fun unconfirmedRetryMarker(): Any? = when (operation.command) {
+                    Command.STOP -> StopRetryMarker(operation.missionRevision, operation.deviceGeneration)
+                    Command.START -> StartRetryMarker(operation.missionRevision, operation.deviceGeneration)
+                    else -> null
+                }
 
                 override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
-                    if (operation.command == Command.STOP) {
-                        UnconfirmedOutcomeAdmission.CONTAINMENT
-                    } else {
-                        UnconfirmedOutcomeAdmission.STANDARD
+                    when (operation.command) {
+                        Command.STOP -> UnconfirmedOutcomeAdmission.CONTAINMENT
+                        Command.START -> UnconfirmedOutcomeAdmission.SUPERSEDE_UNCONFIRMED
+                        else -> UnconfirmedOutcomeAdmission.STANDARD
                     }
 
                 override fun run(operationCompletion: OperationCompletion) {
@@ -222,6 +226,9 @@ class MissionExecutor private constructor(
         if (accepted == null) {
             rollbackRejectedSubmission(operation, displaced)
             return ExecutionRequestResult.Rejected(ExecutionRejection.OPERATION_REJECTED)
+        }
+        if (command == Command.START) {
+            lock.withLock { unconfirmedControl = null }
         }
         return ExecutionRequestResult.Accepted(accepted.cancellation)
     }
@@ -276,7 +283,7 @@ class MissionExecutor private constructor(
             }
         }
         if (restored) {
-            applyState(operation, if (operation.command == Command.START) ExecutionState.FAILED else operation.previousState)
+            applyState(operation, operation.previousState)
         }
     }
 
@@ -307,7 +314,7 @@ class MissionExecutor private constructor(
         val allowed: Set<ExecutionState>,
         val observedState: ExecutionState? = null,
     ) {
-        START(ExecutionState.STARTING, ExecutionState.STARTING, setOf(ExecutionState.NOT_STARTED, ExecutionState.FAILED)),
+        START(ExecutionState.STARTING, ExecutionState.STARTING, ExecutionState.entries.toSet()),
         PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING), ExecutionState.PAUSED),
         RESUME(ExecutionState.PAUSED, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED), ExecutionState.EXECUTING),
         STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED, ExecutionState.STOPPING));
@@ -351,6 +358,11 @@ class MissionExecutor private constructor(
     }
 
     private data class StopRetryMarker(
+        val missionRevision: Long,
+        val deviceGeneration: Long,
+    )
+
+    private data class StartRetryMarker(
         val missionRevision: Long,
         val deviceGeneration: Long,
     )

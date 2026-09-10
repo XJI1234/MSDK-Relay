@@ -152,6 +152,53 @@ class MissionExecutorContractTest {
     }
 
     @Test
+    fun sendsStartMissionAfterPauseReceiptTimesOut() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.scheduler.fire()
+
+        assertEquals(
+            ExecutionRejection.OPERATION_UNCONFIRMED,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.pause()).reason,
+        )
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        assertEquals(1, fixture.port.startCalls)
+        fixture.port.completeSuccess()
+        fixture.markExecutionStarted()
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+    }
+
+    @Test
+    fun sendsStartMissionAfterResumeReceiptTimesOut() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        fixture.port.completeSuccess()
+        assertEquals(ExecutionState.PAUSED, fixture.store.snapshot().execution)
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.resume())
+        fixture.scheduler.fire()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        assertEquals(1, fixture.port.startCalls)
+    }
+
+    @Test
+    fun doesNotStartWhilePauseIsStillWaitingForItsDjiReceipt() {
+        val fixture = Fixture()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.pause())
+        assertEquals(
+            ExecutionRejection.ALREADY_ACTIVE,
+            assertIs<ExecutionRequestResult.Rejected>(fixture.executor.start()).reason,
+        )
+        assertEquals(0, fixture.port.startCalls)
+    }
+
+    @Test
     fun doesNotRepeatPauseAfterItsDjiReceiptIsLost() {
         val fixture = Fixture()
         fixture.markExecutionStarted()
@@ -217,6 +264,41 @@ class MissionExecutorContractTest {
         assertEquals(failure, received)
         assertEquals(ExecutionState.NOT_STARTED, fixture.store.snapshot().execution)
         assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+    }
+
+    @Test
+    fun sendsStartMissionAgainFromStartingAfterDjiAcceptedTheFirstStart() {
+        val fixture = Fixture()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        fixture.port.completeSuccess()
+        assertEquals(ExecutionState.STARTING, fixture.store.snapshot().execution)
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        assertEquals(2, fixture.port.startCalls)
+    }
+
+    @Test
+    fun sendsStartMissionAgainAfterTheFirstStartReceiptTimesOut() {
+        val fixture = Fixture()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        fixture.scheduler.fire()
+        assertEquals(ExecutionState.STARTING, fixture.store.snapshot().execution)
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        assertEquals(2, fixture.port.startCalls)
+    }
+
+    @Test
+    fun sendsStartMissionEvenWhenLocalExecutionStateAlreadySaysExecuting() {
+        val fixture = Fixture()
+        fixture.executor.start()
+        fixture.port.completeSuccess()
+        fixture.markExecutionStarted()
+
+        assertIs<ExecutionRequestResult.Accepted>(fixture.executor.start())
+        assertEquals(2, fixture.port.startCalls)
     }
 
     @Test
@@ -391,7 +473,11 @@ class MissionExecutorContractTest {
     private class Port : MissionControlPort {
         var completion: ControlCompletion? = null
         var throwOnCall = false
-        override fun start(completion: ControlCompletion) = call(completion)
+        var startCalls = 0
+        override fun start(completion: ControlCompletion) {
+            startCalls += 1
+            call(completion)
+        }
         override fun pause(completion: ControlCompletion) = call(completion)
         override fun resume(completion: ControlCompletion) = call(completion)
         var stopCalls = 0

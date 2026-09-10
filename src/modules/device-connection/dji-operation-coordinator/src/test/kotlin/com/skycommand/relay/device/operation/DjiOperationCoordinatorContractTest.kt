@@ -127,6 +127,48 @@ class DjiOperationCoordinatorContractTest {
     }
 
     @Test
+    fun permitsASupersedeUnconfirmedActionToReplaceATimedOutDifferentOperation() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val supersede = SupersedeUnconfirmedAction()
+
+        coordinator.submit(first, 1_000) { }
+        executor.runNext()
+        scheduler.fireNext()
+
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(supersede, 1_000) { })
+        executor.runNext()
+        assertEquals(1, supersede.starts)
+        first.succeed()
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+    }
+
+    @Test
+    fun doesNotLetASupersedeUnconfirmedActionPreemptAnInFlightNormalOperation() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = RecordingAction()
+        val supersede = SupersedeUnconfirmedAction()
+        val results = mutableListOf<OperationOutcome>()
+
+        coordinator.submit(first, 1_000) { results += it }
+        executor.runNext()
+
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(supersede, 1_000) { })
+        assertEquals(emptyList(), results)
+        assertEquals(1, first.starts)
+        assertEquals(0, supersede.starts)
+
+        first.succeed()
+        executor.runNext()
+        assertEquals(listOf(OperationOutcome.SUCCEEDED), results)
+        assertEquals(1, supersede.starts)
+    }
+
+    @Test
     fun permitsOnlyAnExplicitContainmentActionToReplaceAnUnconfirmedDifferentOperation() {
         val executor = ManualExecutor()
         val scheduler = ManualScheduler()
@@ -143,6 +185,24 @@ class DjiOperationCoordinatorContractTest {
         assertEquals(1, containment.starts)
         first.succeed()
         assertEquals(listOf(OperationOutcome.SUCCEEDED), first.lateOutcomes)
+    }
+
+    @Test
+    fun containmentPreemptsAnInFlightSupersedeUnconfirmedAction() {
+        val executor = ManualExecutor()
+        val scheduler = ManualScheduler()
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val first = SupersedeUnconfirmedAction()
+        val containment = ContainmentAction()
+        val results = mutableListOf<OperationOutcome>()
+
+        coordinator.submit(first, 1_000) { results += it }
+        executor.runNext()
+
+        assertIs<SubmissionResult.Accepted>(coordinator.submit(containment, 1_000) { })
+        assertEquals(listOf(OperationOutcome.CANCELLED), results)
+        executor.runNext()
+        assertEquals(1, containment.starts)
     }
 
     @Test
@@ -255,6 +315,19 @@ class DjiOperationCoordinatorContractTest {
         override fun onLateDjiCompletion(outcome: OperationOutcome) { lateOutcomes += outcome }
 
         fun succeed() = checkNotNull(completion).succeed()
+    }
+
+    private class SupersedeUnconfirmedAction : DjiOperation {
+        var starts = 0
+        private var completion: OperationCompletion? = null
+
+        override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
+            UnconfirmedOutcomeAdmission.SUPERSEDE_UNCONFIRMED
+
+        override fun run(completion: OperationCompletion) {
+            starts += 1
+            this.completion = completion
+        }
     }
 
     private class ContainmentAction : DjiOperation {

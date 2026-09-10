@@ -7,14 +7,17 @@ import kotlin.concurrent.withLock
 enum class UnconfirmedOutcomeAdmission {
     STANDARD,
     CONTAINMENT,
+    SUPERSEDE_UNCONFIRMED,
 }
 
 fun interface DjiOperation {
     fun run(completion: OperationCompletion)
 
     /**
-     * Only a one-way containment action may replace an unresolved earlier DJI call.
-     * Normal actions retain the default and remain quarantined until the old call settles.
+     * Containment may replace an unresolved earlier DJI call, including an in-flight wait.
+     * SUPERSEDE_UNCONFIRMED may replace only an already-quarantined slot after timeout or
+     * cancellation. Normal actions retain the default and remain quarantined until the old
+     * call settles.
      */
     fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission = UnconfirmedOutcomeAdmission.STANDARD
 
@@ -102,8 +105,10 @@ class DjiOperationCoordinator private constructor(
     ): SubmissionResult {
         if (timeoutMillis !in 1_000..60_000) return SubmissionResult.Rejected
         val entry = Entry(action, timeoutMillis, listener)
-        val containment = runCatching { action.unconfirmedOutcomeAdmission() }
-            .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.CONTAINMENT
+        val admission = runCatching { action.unconfirmedOutcomeAdmission() }
+            .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD)
+        val containment = admission == UnconfirmedOutcomeAdmission.CONTAINMENT
+        val supersedeUnconfirmed = admission == UnconfirmedOutcomeAdmission.SUPERSEDE_UNCONFIRMED
         var preemption: ContainmentPreemption? = null
         val shouldStart = lock.withLock {
             if (hardwareOutcomeUnconfirmed) {
@@ -111,7 +116,7 @@ class DjiOperationCoordinator private constructor(
                 val replacementMarker = runCatching { action.unconfirmedRetryMarker() }.getOrNull()
                 val unresolvedMarker = runCatching { unresolved.action.unconfirmedRetryMarker() }.getOrNull()
                 val matchingRetry = replacementMarker != null && replacementMarker == unresolvedMarker
-                if (!matchingRetry && !containment) {
+                if (!matchingRetry && !containment && !supersedeUnconfirmed) {
                     return SubmissionResult.Rejected
                 }
                 // The original caller was already told its result is unconfirmed. A late callback
@@ -126,7 +131,7 @@ class DjiOperationCoordinator private constructor(
                 active != null &&
                 containment &&
                 runCatching { active.action.unconfirmedOutcomeAdmission() }
-                    .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) == UnconfirmedOutcomeAdmission.STANDARD
+                    .getOrDefault(UnconfirmedOutcomeAdmission.STANDARD) != UnconfirmedOutcomeAdmission.CONTAINMENT
             ) {
                 preemption = preemptForContainment(active)
                 pending.addFirst(entry)
