@@ -33,6 +33,8 @@ import com.skycommand.relay.diagnostics.DiagnosticClock
 import com.skycommand.relay.diagnostics.DiagnosticJournal
 import com.skycommand.relay.diagnostics.DiagnosticLevel
 import com.skycommand.relay.diagnostics.android.AndroidDiagnosticStore
+import com.skycommand.relay.diagnostics.gateway.DiagnosticRegistration
+import com.skycommand.relay.diagnostics.gateway.DiagnosticTimeoutScheduler
 import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
 import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.runtime.AppRuntime
@@ -574,7 +576,14 @@ class MobileRelayGraph private constructor(
                 OkHttpTransportConnector(),
                 gatewayScheduler,
             )
-            val diagnostics = GatewayDiagnosticPublisher.create(journal, RelayGatewayDiagnosticPort(gateway))
+            val diagnostics = GatewayDiagnosticPublisher.create(
+                journal,
+                RelayGatewayDiagnosticPort(gateway),
+                DiagnosticTimeoutScheduler { delay, callback ->
+                    val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                    DiagnosticRegistration { future.cancel(false) }
+                },
+            )
             wayline.onPhaseChanged { fact ->
                 val result = gateway.publishMissionPhase(
                     MissionPhaseFrame(

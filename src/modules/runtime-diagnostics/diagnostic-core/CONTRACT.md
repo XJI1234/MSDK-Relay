@@ -13,15 +13,19 @@ Gradle 路径：`:runtime-diagnostics:diagnostic-core`
 
 ```text
 DiagnosticJournal.record(level, module, eventCode, operationId?, detail) -> DiagnosticEvent
+DiagnosticJournal.onRecorded(listener) -> unregister
 DiagnosticJournal.pending(maxEvents) -> List<DiagnosticEvent>
+DiagnosticJournal.pendingAfter(afterSequence, maxEvents) -> List<DiagnosticEvent>
 DiagnosticJournal.acknowledge(runId, acknowledgedSequence) -> AcknowledgementResult
 DiagnosticJournal.snapshot() -> DiagnosticJournalSnapshot
 ```
 
 - 构造时调用方提供固定 `runId`、容量、时钟和可选的持久化端口；容量必须大于 0。
 - `record` 永不向业务调用方抛出持久化端口或监听器异常；调用方获得的事件已经过脱敏和长度限制。
+- `record` 在释放队列锁之后才通知 `onRecorded` 监听器，监听器失败不得回滚事件。
 - `record` 不得等待文件写入、网络发送或 Android Logcat。持久化端口只接受不可变快照并立即返回；异步写入失败必须通过端口回调使 `persistenceFailures` 增加，但不能改变已经记录的事件、命令回执或 DJI 调用。
 - `pending` 总是按 `sequence` 升序返回最早的未确认事件，且不改变队列。
+- `pendingAfter` 返回同一最老 `runId` 中序号大于 `afterSequence` 的未确认事件，供发送窗口跳过已发出未确认的批次。
 - `acknowledge` 仅接受当前 `runId` 且不小于已确认序号的确认；未知运行批次和旧确认不删除任何事件。
 - 所有公开集合和事件都是不可变快照；并发调用不得重复分配序号或破坏排序。
 

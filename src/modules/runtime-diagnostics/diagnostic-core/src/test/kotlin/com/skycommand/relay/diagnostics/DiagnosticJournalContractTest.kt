@@ -1,5 +1,7 @@
 package com.skycommand.relay.diagnostics
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -67,6 +69,17 @@ class DiagnosticJournalContractTest {
     }
 
     @Test
+    fun pendingAfterReturnsTheOldestRunBeyondASentSequence() {
+        val journal = DiagnosticJournal.create("run-1", 8, FixedClock(0))
+        repeat(4) { journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "EVENT", null, "") }
+
+        assertEquals(listOf(3L, 4L), journal.pendingAfter(2, 32).map { it.sequence })
+        assertEquals(emptyList(), journal.pendingAfter(4, 32))
+        journal.acknowledge("run-1", 2)
+        assertEquals(listOf(3L, 4L), journal.pendingAfter(0, 32).map { it.sequence })
+    }
+
+    @Test
     fun keepsBusinessCallSafeWhenPersistenceFails() {
         val journal = DiagnosticJournal.create("run-1", 2, FixedClock(0), DiagnosticPersistence { _, _ -> throw IllegalStateException("disk") })
 
@@ -92,6 +105,38 @@ class DiagnosticJournalContractTest {
         assertEquals(0, journal.snapshot().persistenceFailures)
         failure?.invoke()
         assertEquals(1, journal.snapshot().persistenceFailures)
+    }
+
+    @Test
+    fun notifiesRecordedListenersWithTheNewEventVisibleAndStopsAfterUnregister() {
+        val journal = DiagnosticJournal.create("run-1", 4, FixedClock(0))
+        val seen = mutableListOf<List<Long>>()
+        val unregister = journal.onRecorded { seen += journal.pending(32).map { it.sequence } }
+
+        journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "")
+
+        assertEquals(listOf(listOf(1L)), seen)
+        unregister()
+        journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "READY", null, "")
+        assertEquals(listOf(listOf(1L)), seen)
+        assertEquals(listOf(1L, 2L), journal.pending(32).map { it.sequence })
+    }
+
+    @Test
+    fun notifiesRecordedListenersAfterReleasingTheJournalLock() {
+        val journal = DiagnosticJournal.create("run-1", 4, FixedClock(0))
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        journal.onRecorded {
+            entered.countDown()
+            check(release.await(2, TimeUnit.SECONDS))
+        }
+        val writer = Thread { journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "") }
+        writer.start()
+        check(entered.await(2, TimeUnit.SECONDS))
+        assertEquals(1, journal.snapshot().pendingEvents)
+        release.countDown()
+        writer.join(2_000)
     }
 
     @Test

@@ -48,6 +48,7 @@ class DiagnosticJournal private constructor(
 ) {
     private val lock = ReentrantLock()
     private val events = ArrayDeque<DiagnosticEvent>()
+    private val recordedListeners = mutableListOf<() -> Unit>()
     private var nextSequence = 1L
     private var droppedEvents = 0L
     private var persistenceFailures = 0L
@@ -60,43 +61,58 @@ class DiagnosticJournal private constructor(
         nextSequence = (retained.filter { it.runId == runId }.maxOfOrNull { it.sequence } ?: 0L) + 1L
     }
 
+    fun onRecorded(listener: () -> Unit): () -> Unit {
+        lock.withLock { recordedListeners += listener }
+        return { lock.withLock { recordedListeners.remove(listener) } }
+    }
+
     fun record(
         level: DiagnosticLevel,
         module: String,
         eventCode: String,
         operationId: String?,
         detail: String,
-    ): DiagnosticEvent = lock.withLock {
-        require(validIdentifier(module)) { "Diagnostic module is invalid" }
-        require(validIdentifier(eventCode)) { "Diagnostic event code is invalid" }
-        require(operationId == null || validId(operationId)) { "Diagnostic operation ID is invalid" }
+    ): DiagnosticEvent {
+        val recorded = lock.withLock {
+            require(validIdentifier(module)) { "Diagnostic module is invalid" }
+            require(validIdentifier(eventCode)) { "Diagnostic event code is invalid" }
+            require(operationId == null || validId(operationId)) { "Diagnostic operation ID is invalid" }
 
-        val dropped = if (events.size >= capacity) {
-            events.removeFirst()
-            droppedEvents += 1
-            " dropped=$droppedEvents"
-        } else {
-            ""
+            val dropped = if (events.size >= capacity) {
+                events.removeFirst()
+                droppedEvents += 1
+                " dropped=$droppedEvents"
+            } else {
+                ""
+            }
+            val event = DiagnosticEvent(
+                timestampMillis = clock.currentTimeMillis().coerceAtLeast(0),
+                level = level,
+                module = module,
+                eventCode = eventCode,
+                runId = runId,
+                sequence = nextSequence++,
+                operationId = operationId,
+                safeDetail = sanitize(detail).take((MAX_DETAIL - dropped.length).coerceAtLeast(0)) + dropped,
+            )
+            events.addLast(event)
+            persistSafely()
+            event to recordedListeners.toList()
         }
-        val event = DiagnosticEvent(
-            timestampMillis = clock.currentTimeMillis().coerceAtLeast(0),
-            level = level,
-            module = module,
-            eventCode = eventCode,
-            runId = runId,
-            sequence = nextSequence++,
-            operationId = operationId,
-            safeDetail = sanitize(detail).take((MAX_DETAIL - dropped.length).coerceAtLeast(0)) + dropped,
-        )
-        events.addLast(event)
-        persistSafely()
-        event
+        recorded.second.forEach { listener -> runCatching { listener() } }
+        return recorded.first
     }
 
     fun pending(maxEvents: Int): List<DiagnosticEvent> = lock.withLock {
         require(maxEvents in 1..MAX_BATCH)
         val oldestRun = events.firstOrNull()?.runId ?: return emptyList()
         events.takeWhile { it.runId == oldestRun }.take(maxEvents)
+    }
+
+    fun pendingAfter(afterSequence: Long, maxEvents: Int): List<DiagnosticEvent> = lock.withLock {
+        require(maxEvents in 1..MAX_BATCH)
+        val oldestRun = events.firstOrNull()?.runId ?: return emptyList()
+        events.takeWhile { it.runId == oldestRun }.filter { it.sequence > afterSequence }.take(maxEvents)
     }
 
     fun acknowledge(ackRunId: String, acknowledgedSequence: Long): AcknowledgementResult = lock.withLock {

@@ -61,7 +61,89 @@ class GatewayDiagnosticPublisherContractTest {
         assertEquals(1, gateway.reports.size)
     }
 
+    @Test
+    fun flushesNewlyRecordedEventsWhileActiveWithoutWaitingForManualFlush() {
+        val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
+        val gateway = RecordingGateway(SessionState.ACTIVE)
+        val publisher = GatewayDiagnosticPublisher.create(journal, gateway)
+        publisher.start()
+
+        journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "safe")
+
+        assertEquals(listOf(1L), gateway.reports.single().events.map { it.sequence })
+        assertEquals(listOf(1L), journal.pending(32).map { it.sequence })
+    }
+
+    @Test
+    fun sendsLaterBatchesBeforeTheEarlierBatchIsAcknowledged() {
+        val journal = DiagnosticJournal.create("run-1", 256, FixedClock)
+        repeat(33) { journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "EVENT", null, "safe") }
+        val gateway = RecordingGateway(SessionState.ACTIVE)
+        val publisher = GatewayDiagnosticPublisher.create(journal, gateway)
+
+        publisher.start()
+
+        assertEquals(2, gateway.reports.size)
+        assertEquals((1L..32L).toList(), gateway.reports[0].events.map { it.sequence })
+        assertEquals(listOf(33L), gateway.reports[1].events.map { it.sequence })
+        assertEquals(33, journal.snapshot().pendingEvents)
+    }
+
+    @Test
+    fun capsUnacknowledgedSendsAtFourBatches() {
+        val journal = DiagnosticJournal.create("run-1", 256, FixedClock)
+        repeat(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH + 8) {
+            journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "EVENT", null, "safe")
+        }
+        val gateway = RecordingGateway(SessionState.ACTIVE)
+        val publisher = GatewayDiagnosticPublisher.create(journal, gateway)
+
+        publisher.start()
+
+        assertEquals(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES, gateway.reports.size)
+        assertEquals(1L, gateway.reports.first().events.first().sequence)
+        assertEquals(
+            (GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH).toLong(),
+            gateway.reports.last().events.last().sequence,
+        )
+        gateway.acknowledge("run-1", DiagnosticJournal.MAX_BATCH.toLong())
+
+        assertEquals(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES + 1, gateway.reports.size)
+        assertEquals(
+            (GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH + 8).toLong(),
+            gateway.reports.last().events.last().sequence,
+        )
+    }
+
+    @Test
+    fun resendsOldestUnacknowledgedBatchWhenTheAckTimerFires() {
+        val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
+        journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "safe")
+        val gateway = RecordingGateway(SessionState.ACTIVE)
+        val scheduler = ManualScheduler()
+        val publisher = GatewayDiagnosticPublisher.create(journal, gateway, scheduler)
+        publisher.start()
+        assertEquals(1, gateway.reports.size)
+
+        scheduler.fireNext()
+
+        assertEquals(2, gateway.reports.size)
+        assertEquals(listOf(1L, 1L), gateway.reports.map { it.events.single().sequence })
+        assertEquals(listOf(1L), journal.pending(32).map { it.sequence })
+    }
+
     private object FixedClock : DiagnosticClock { override fun currentTimeMillis(): Long = 0 }
+
+    private class ManualScheduler : DiagnosticTimeoutScheduler {
+        private val pending = ArrayDeque<() -> Unit>()
+        override fun schedule(delayMillis: Long, callback: () -> Unit): DiagnosticRegistration {
+            pending.addLast(callback)
+            return DiagnosticRegistration { pending.remove(callback) }
+        }
+        fun fireNext() {
+            if (pending.isNotEmpty()) pending.removeFirst().invoke()
+        }
+    }
 
     private class RecordingGateway(
         initial: SessionState,
