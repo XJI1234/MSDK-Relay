@@ -79,12 +79,21 @@ internal interface DjiWaypointMissionApi {
 }
 
 /** A bounded local diagnostic for failures that occur before DJI calls an action callback. */
+internal enum class WaylineObservationDelivery {
+    DELIVERED,
+    PENDING,
+    DROPPED,
+}
+
 internal enum class WaylineAdapterDiagnosticKind {
     UPLOAD_INPUT_REJECTED,
     UPLOAD_FILE_WRITE_FAILED,
     UPLOAD_DJI_INVOCATION_FAILED,
     UPLOAD_DJI_REJECTED,
     CONTROL_DJI_INVOCATION_FAILED,
+    EXECUTION_STATE_OBSERVED,
+    WAYLINE_PROGRESS_OBSERVED,
+    WAYLINE_INTERRUPT_OBSERVED,
 }
 
 internal enum class WaylineUploadInputRejection {
@@ -100,6 +109,10 @@ internal data class WaylineAdapterDiagnostic(
     val exceptionDescription: String? = null,
     val djiErrorCode: String? = null,
     val djiErrorDescription: String? = null,
+    val observedRawState: String? = null,
+    val observationDelivery: WaylineObservationDelivery? = null,
+    val currentWaypointIndex: Int? = null,
+    val waylineId: Int? = null,
 )
 
 internal fun interface WaylineAdapterDiagnosticSink {
@@ -354,16 +367,27 @@ class AndroidDjiWaylineAdapter internal constructor(
     }
 
     private fun dispatchLiveProgress(progress: WaylineLiveProgress) {
-        val listeners = synchronized(lock) {
+        val (listeners, delivery, closedNow) = synchronized(lock) {
             when {
-                closed -> emptyList()
-                startSignalsEnabled -> liveProgressListeners.toList()
+                closed -> Triple(emptyList<LiveProgressListenerSlot>(), WaylineObservationDelivery.DROPPED, true)
+                startSignalsEnabled -> Triple(liveProgressListeners.toList(), WaylineObservationDelivery.DELIVERED, false)
                 startInvocationArmed -> {
                     if (pendingLiveProgress.size < MAX_PENDING_START_STATES) pendingLiveProgress += progress
-                    emptyList()
+                    Triple(emptyList(), WaylineObservationDelivery.PENDING, false)
                 }
-                else -> emptyList()
+                else -> Triple(emptyList(), WaylineObservationDelivery.DROPPED, false)
             }
+        }
+        if (!closedNow) {
+            val interrupt = progress.interruptErrorCode != null || progress.interruptErrorDescription != null
+            record(
+                kind = if (interrupt) WaylineAdapterDiagnosticKind.WAYLINE_INTERRUPT_OBSERVED else WaylineAdapterDiagnosticKind.WAYLINE_PROGRESS_OBSERVED,
+                djiErrorCode = progress.interruptErrorCode,
+                djiErrorDescription = progress.interruptErrorDescription,
+                observationDelivery = delivery,
+                currentWaypointIndex = progress.currentWaypointIndex,
+                waylineId = progress.waylineId,
+            )
         }
         deliverLiveProgress(progress, listeners)
     }
@@ -374,16 +398,23 @@ class AndroidDjiWaylineAdapter internal constructor(
     }
 
     private fun dispatchExecutionState(state: DjiMissionExecutionState) {
-        val (signals, observations) = synchronized(lock) {
+        val (signals, observations, delivery, closedNow) = synchronized(lock) {
             when {
-                closed -> emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
-                startSignalsEnabled -> signalListeners.toList() to observationListeners.toList()
+                closed -> ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.DROPPED, true)
+                startSignalsEnabled -> ExecutionDispatch(signalListeners.toList(), observationListeners.toList(), WaylineObservationDelivery.DELIVERED, false)
                 startInvocationArmed -> {
                     if (pendingStartStates.size < MAX_PENDING_START_STATES) pendingStartStates += state
-                    emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
+                    ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.PENDING, false)
                 }
-                else -> emptyList<SignalListenerSlot>() to emptyList<ObservationListenerSlot>()
+                else -> ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.DROPPED, false)
             }
+        }
+        if (!closedNow) {
+            record(
+                kind = WaylineAdapterDiagnosticKind.EXECUTION_STATE_OBSERVED,
+                observedRawState = state.name,
+                observationDelivery = delivery,
+            )
         }
         deliverExecutionState(state, signals, observations)
     }
@@ -470,6 +501,12 @@ class AndroidDjiWaylineAdapter internal constructor(
         kmzRejection: SingleWaylineKmzRejection? = null,
         error: Throwable? = null,
         djiFailure: MissionUploadFailure? = null,
+        djiErrorCode: String? = null,
+        djiErrorDescription: String? = null,
+        observedRawState: String? = null,
+        observationDelivery: WaylineObservationDelivery? = null,
+        currentWaypointIndex: Int? = null,
+        waylineId: Int? = null,
     ) {
         runCatching {
             diagnostics.record(
@@ -479,8 +516,12 @@ class AndroidDjiWaylineAdapter internal constructor(
                     kmzRejection = kmzRejection,
                     exceptionType = error?.javaClass?.simpleName?.safeDiagnosticText(128),
                     exceptionDescription = error?.message.safeDiagnosticText(512),
-                    djiErrorCode = djiFailure?.errorCode,
-                    djiErrorDescription = djiFailure?.errorDescription,
+                    djiErrorCode = (djiErrorCode ?: djiFailure?.errorCode).safeDiagnosticText(128),
+                    djiErrorDescription = (djiErrorDescription ?: djiFailure?.errorDescription).safeDiagnosticText(512),
+                    observedRawState = observedRawState.safeDiagnosticText(128),
+                    observationDelivery = observationDelivery,
+                    currentWaypointIndex = currentWaypointIndex,
+                    waylineId = waylineId,
                 ),
             )
         }
@@ -534,25 +575,50 @@ class AndroidDjiWaylineAdapter internal constructor(
     private data class SignalListenerSlot(val listener: MissionExecutionSignalListener)
     private data class ObservationListenerSlot(val listener: MissionExecutionObservationListener)
     private data class LiveProgressListenerSlot(val listener: WaylineLiveProgressListener)
+    private data class ExecutionDispatch(
+        val signals: List<SignalListenerSlot>,
+        val observations: List<ObservationListenerSlot>,
+        val delivery: WaylineObservationDelivery,
+        val closedNow: Boolean,
+    )
 
     companion object {
-        fun create(context: Context): AndroidDjiWaylineAdapter = AndroidDjiWaylineAdapter(AndroidMissionFileStore(context.applicationContext), MsdkV5WaypointMissionApi())
+        fun create(
+            context: Context,
+            diagnosticSink: ((kind: String, detail: String) -> Unit)? = null,
+        ): AndroidDjiWaylineAdapter = AndroidDjiWaylineAdapter(
+            AndroidMissionFileStore(context.applicationContext),
+            MsdkV5WaypointMissionApi(),
+            WaylineAdapterDiagnosticSink { diagnostic ->
+                recordToLogcat(diagnostic)
+                diagnosticSink?.invoke(diagnostic.kind.name, diagnosticDetail(diagnostic))
+            },
+        )
     }
 }
 
 private const val WAYLINE_DIAGNOSTIC_TAG = "SkyCommandRelay"
 private const val MAX_PENDING_START_STATES = 32
 
+private fun diagnosticDetail(diagnostic: WaylineAdapterDiagnostic): String = listOfNotNull(
+    diagnostic.observationDelivery?.let { "delivery=$it" },
+    diagnostic.observedRawState?.let { "rawState=$it" },
+    diagnostic.currentWaypointIndex?.let { "currentWaypointIndex=$it" },
+    diagnostic.waylineId?.let { "waylineId=$it" },
+    diagnostic.inputRejection?.let { "input=$it" },
+    diagnostic.kmzRejection?.let { "kmz=$it" },
+    diagnostic.exceptionType?.let { "exception=$it" },
+    diagnostic.exceptionDescription?.let { "detail=$it" },
+    diagnostic.djiErrorCode?.let { "djiErrorCode=$it" },
+    diagnostic.djiErrorDescription?.let { "djiErrorDescription=$it" },
+).joinToString(" ")
+
 private fun recordToLogcat(diagnostic: WaylineAdapterDiagnostic) {
-    val detail = listOfNotNull(
-        diagnostic.inputRejection?.let { "input=$it" },
-        diagnostic.kmzRejection?.let { "kmz=$it" },
-        diagnostic.exceptionType?.let { "exception=$it" },
-        diagnostic.exceptionDescription?.let { "detail=$it" },
-        diagnostic.djiErrorCode?.let { "djiErrorCode=$it" },
-        diagnostic.djiErrorDescription?.let { "djiErrorDescription=$it" },
-    ).joinToString(" ")
-    Log.w(WAYLINE_DIAGNOSTIC_TAG, "wayline-mission/${diagnostic.kind}${if (detail.isBlank()) "" else " $detail"}")
+    val detail = diagnosticDetail(diagnostic)
+    val observation = diagnostic.kind == WaylineAdapterDiagnosticKind.EXECUTION_STATE_OBSERVED ||
+        diagnostic.kind == WaylineAdapterDiagnosticKind.WAYLINE_PROGRESS_OBSERVED
+    val message = "wayline-mission/${diagnostic.kind}${if (detail.isBlank()) "" else " $detail"}"
+    if (observation) Log.i(WAYLINE_DIAGNOSTIC_TAG, message) else Log.w(WAYLINE_DIAGNOSTIC_TAG, message)
 }
 
 private fun String?.safeDiagnosticText(limit: Int): String? {

@@ -103,6 +103,67 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(2, progress.size)
     }
 
+    @Test fun recordsDjiExecutionInterruptAndProgressEvenWhenStartIsolationDropsThem() {
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+        val signals = mutableListOf<MissionExecutionSignal>()
+        val progress = mutableListOf<WaylineLiveProgress>()
+
+        adapter.onSignal { signals += it }
+        adapter.onLiveProgress { progress += it }
+        adapter.beginStartAttempt()
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.start(ControlDone())
+        dji.emit(DjiMissionExecutionState.ENTER_WAYLINE)
+        dji.emitExecutingInfo(DjiWaylineExecutingInfo("默认", 0, 12))
+        dji.emitInterrupt("WAYPOINT_BREAK", "interrupted by remote")
+        assertEquals(emptyList(), signals)
+        assertEquals(emptyList(), progress)
+        assertEquals(
+            listOf(
+                WaylineAdapterDiagnosticKind.EXECUTION_STATE_OBSERVED,
+                WaylineAdapterDiagnosticKind.WAYLINE_PROGRESS_OBSERVED,
+                WaylineAdapterDiagnosticKind.WAYLINE_INTERRUPT_OBSERVED,
+            ),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals(
+            listOf(
+                WaylineObservationDelivery.PENDING,
+                WaylineObservationDelivery.PENDING,
+                WaylineObservationDelivery.PENDING,
+            ),
+            diagnostics.map(WaylineAdapterDiagnostic::observationDelivery),
+        )
+        assertEquals("ENTER_WAYLINE", diagnostics[0].observedRawState)
+        assertEquals(12, diagnostics[1].currentWaypointIndex)
+        assertEquals("WAYPOINT_BREAK", diagnostics[2].djiErrorCode)
+        assertEquals("interrupted by remote", diagnostics[2].djiErrorDescription)
+
+        adapter.confirmStartAttempt()
+        assertEquals(listOf(MissionExecutionSignal.ENTER_WAYLINE), signals)
+        adapter.beginStartAttempt()
+        diagnostics.clear()
+        dji.emit(DjiMissionExecutionState.INTERRUPTED)
+        dji.emitInterrupt("RC_PAUSE_STOP", "flight pause")
+        assertEquals(listOf(MissionExecutionSignal.ENTER_WAYLINE), signals)
+        assertEquals(
+            listOf(
+                WaylineAdapterDiagnosticKind.EXECUTION_STATE_OBSERVED,
+                WaylineAdapterDiagnosticKind.WAYLINE_INTERRUPT_OBSERVED,
+            ),
+            diagnostics.map(WaylineAdapterDiagnostic::kind),
+        )
+        assertEquals(
+            listOf(WaylineObservationDelivery.DROPPED, WaylineObservationDelivery.DROPPED),
+            diagnostics.map(WaylineAdapterDiagnostic::observationDelivery),
+        )
+        assertEquals("INTERRUPTED", diagnostics[0].observedRawState)
+        assertEquals("RC_PAUSE_STOP", diagnostics[1].djiErrorCode)
+    }
+
     @Test fun registersForDjiStateBeforeStartAndStopsDeliveringAfterClose() {
         val dji = FakeDji()
         val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
@@ -596,6 +657,7 @@ class AndroidDjiWaylineAdapterContractTest {
         override fun onWaypointAction(listener:(DjiWaypointActionEvent)->Unit):DjiExecutionStateRegistration { waypointActionListener=listener; return DjiExecutionStateRegistration { waypointActionListener=null } }
         fun emit(state:DjiMissionExecutionState) { executionListener?.invoke(state) }
         fun emitExecutingInfo(info:DjiWaylineExecutingInfo) { executingInfoListener?.invoke(info) }
+        fun emitInterrupt(errorCode: String?, errorDescription: String?) { executingInterruptListener?.invoke(errorCode, errorDescription) }
         fun emitWaypointAction(event:DjiWaypointActionEvent) { waypointActionListener?.invoke(event) }
         override fun close(){closeCalls++} }
 

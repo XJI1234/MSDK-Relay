@@ -129,6 +129,7 @@ class MobileRelayGraph private constructor(
     private val executor: ScheduledThreadPoolExecutor,
     private val journal: DiagnosticJournal,
     private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
+    private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
@@ -152,6 +153,7 @@ class MobileRelayGraph private constructor(
     fun stop(): RuntimeStopResult {
         cancelUsbWatch()
         flightTelemetryDiagnostics.reset()
+        waylineTelemetryDiagnostics.reset()
         synchronized(flightTelemetryLifecycleLock) {
             flightTelemetryInvalidated = false
             lastFlightControllerLink = LinkState.UNKNOWN
@@ -375,6 +377,7 @@ class MobileRelayGraph private constructor(
         runCatching { whipStream.close() }
         runCatching { flightControl.close() }
         runCatching { flightTelemetryDiagnostics.reset() }
+        runCatching { waylineTelemetryDiagnostics.reset() }
         runCatching { deviceSettings.close() }
         runCatching { stream.close() }
         runCatching { waylineAdapter.close() }
@@ -412,6 +415,7 @@ class MobileRelayGraph private constructor(
                 recoveredEvents = diagnosticStore.restore(),
             )
             val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
+            val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),
@@ -470,7 +474,17 @@ class MobileRelayGraph private constructor(
             )
             val flight = AndroidFlightTelemetrySource.create()
             val staging = AndroidMissionStagingStorage.create(activity)
-            val waylineAdapter = AndroidDjiWaylineAdapter.create(activity)
+            val waylineAdapter = AndroidDjiWaylineAdapter.create(activity, diagnosticSink = { kind, detail ->
+                val level = when (kind) {
+                    "EXECUTION_STATE_OBSERVED",
+                    "WAYLINE_PROGRESS_OBSERVED",
+                    -> DiagnosticLevel.INFO
+                    "WAYLINE_INTERRUPT_OBSERVED",
+                    -> DiagnosticLevel.WARN
+                    else -> DiagnosticLevel.WARN
+                }
+                journal.record(level, "wayline-mission", kind, null, detail)
+            })
             val wayline = WaylineMission.create(
                 WaylineMissionDependencies(
                     stagingStorage = staging,
@@ -625,7 +639,10 @@ class MobileRelayGraph private constructor(
                     stream.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
                 },
                 feed({ wayline.snapshot() }) { changed ->
-                    wayline.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
+                    wayline.onChanged {
+                        waylineTelemetryDiagnostics.record(wayline.snapshot())
+                        changed()
+                    }.let { CloseableRegistration(it::unregister) }
                 },
                 feed({ cameraFrameObserver.snapshot() }) { changed ->
                     cameraFrameObserver.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
@@ -713,7 +730,7 @@ class MobileRelayGraph private constructor(
             )
             return MobileRelayGraph(
                 runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, journal, flightTelemetryDiagnostics, permissionAdapter,
+                staging, foregroundPort, executor, journal, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
 

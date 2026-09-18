@@ -195,6 +195,19 @@ class MobileRelayGraphContractTest {
         assertTrue(source.contains("CommandDiagnosticRecorder(journal).wrap(handler)"))
         assertFalse(source.contains("private fun recorded("))
     }
+
+    @Test
+    fun waylineDjiObservationsAreJournaledFromTheAdapterAndMissionSnapshots() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        assertTrue(source.contains("MissionTelemetryDiagnosticRecorder(journal)"))
+        assertTrue(source.contains("waylineTelemetryDiagnostics.record(wayline.snapshot())"))
+        assertTrue(source.contains("AndroidDjiWaylineAdapter.create(activity, diagnosticSink"))
+        assertTrue(source.contains("EXECUTION_STATE_OBSERVED"))
+        assertTrue(source.contains("WAYLINE_INTERRUPT_OBSERVED"))
+    }
 }
 
 class MainActivityRetentionContractTest {
