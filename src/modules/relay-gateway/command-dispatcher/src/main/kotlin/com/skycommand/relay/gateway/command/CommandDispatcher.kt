@@ -196,6 +196,8 @@ class CommandDispatcher(
             "device.settings.camera.write",
             "device.settings.transmission.read",
             "device.settings.transmission.write",
+            "camera.photo.capture",
+            "camera.photo.fetch",
         )
     }
 }

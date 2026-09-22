@@ -21,7 +21,7 @@ PairingController.state() -> PairingState
 
 ## 3. 规则
 
-- 配对是新飞机或更换遥控器时的低频维护操作，不是常规连接、图传、航线或飞行控制前置条件。开始配对必须且只能使用 `DeviceCapabilityReader.read(snapshot).canStartPairing`：SDK `READY`、遥控器明确 `CONNECTED`、飞控明确 `DISCONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`PAIRED`、`FAILED` 或 `STOPPING`。飞控 `CONNECTED` 或 `UNKNOWN` 时不得开始。`ProductKey.KeyConnection` 仅为诊断，绝不参与此门禁。`PAIRED` 允许重新开始，以支持更换飞机。
+- 配对是新飞机或更换遥控器时的低频维护操作，不是常规连接、图传、航线或飞行控制前置条件。开始配对必须且只能使用 `DeviceCapabilityReader.read(snapshot).canStartPairing`：SDK `READY`、遥控器明确 `CONNECTED`、飞控不是 `CONNECTED`，且当前配对状态为 `UNKNOWN`、`IDLE`、`PAIRED`、`FAILED` 或 `STOPPING`。飞控 `CONNECTED` 时不得开始；飞控 `UNKNOWN` 必须允许开始，因为没飞机时该 Key 经常不回报断开。`ProductKey.KeyConnection` 仅为诊断，绝不参与此门禁。`PAIRED` 允许重新开始，以支持更换飞机。
 - 停止配对要求当前状态为 `PAIRING`、`PAIRED` 或 `STOPPING`。
 - 开始/停止请求被接受只表示请求进入 DJI 调度队列，不表示设备已经配对或已经停止配对。
 - 接受开始请求后进入 `PAIRING`；接受停止请求后进入 `STOPPING`。

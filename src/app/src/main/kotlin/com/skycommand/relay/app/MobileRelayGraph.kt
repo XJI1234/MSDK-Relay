@@ -72,6 +72,17 @@ import com.skycommand.relay.flight.dji.android.AndroidDjiFlightPort
 import com.skycommand.relay.settings.DeviceSettings
 import com.skycommand.relay.settings.DeviceSettingsDependencies
 import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
+import com.skycommand.relay.photo.CameraPhoto
+import com.skycommand.relay.photo.CameraPhotoDependencies
+import com.skycommand.relay.photo.dji.android.AndroidDjiPhotoPort
+import com.skycommand.relay.photo.media.PhotoMediaCancellation
+import com.skycommand.relay.photo.media.PhotoMediaClock
+import com.skycommand.relay.photo.media.PhotoMediaPublisher
+import com.skycommand.relay.photo.media.PhotoMediaWriter
+import com.skycommand.relay.protocol.MediaBeginFrame
+import com.skycommand.relay.protocol.MediaChunkFrame
+import com.skycommand.relay.protocol.MediaCompleteFrame
+import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.telemetry.Telemetry
 import com.skycommand.relay.telemetry.TelemetryPublicationRequestResult
 import com.skycommand.relay.telemetry.command.TelemetryReadResult
@@ -117,6 +128,7 @@ class MobileRelayGraph private constructor(
     private val flight: FlightTelemetrySource,
     private val flightControl: FlightControl,
     private val deviceSettings: DeviceSettings,
+    private val cameraPhoto: CameraPhoto,
     private val stream: LiveStream,
     private val cameraFrameObserver: CameraFrameObserver,
     private val cameraFrameEvaluation: ScheduledFuture<*>,
@@ -127,6 +139,7 @@ class MobileRelayGraph private constructor(
     private val staging: AndroidMissionStagingStorage,
     private val foregroundPort: AndroidForegroundServicePort,
     private val executor: ScheduledThreadPoolExecutor,
+    private val timeoutExecutor: ScheduledThreadPoolExecutor,
     private val journal: DiagnosticJournal,
     private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
     private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
@@ -216,6 +229,15 @@ class MobileRelayGraph private constructor(
         }
         registrations += gateway.onStateChanged { event ->
             val ended = event.endReason
+            val noisyHandshake = ended == null && (
+                event.snapshot.state == SessionState.CONNECTING ||
+                    event.snapshot.state == SessionState.AWAITING_PAIRING ||
+                    event.snapshot.state == SessionState.RECONNECT_WAIT
+                )
+            if (noisyHandshake) {
+                notifyStatus()
+                return@onStateChanged
+            }
             val code = if (ended != null) "SESSION_${ended.kind.name}" else "SESSION_${event.snapshot.state.name}"
             val level = when (ended?.kind) {
                 SessionEndKind.HANDSHAKE_TIMEOUT,
@@ -379,11 +401,13 @@ class MobileRelayGraph private constructor(
         runCatching { flightTelemetryDiagnostics.reset() }
         runCatching { waylineTelemetryDiagnostics.reset() }
         runCatching { deviceSettings.close() }
+        runCatching { cameraPhoto.close() }
         runCatching { stream.close() }
         runCatching { waylineAdapter.close() }
         runCatching { staging.close() }
         runCatching { foregroundPort.close() }
         executor.shutdownNow()
+        timeoutExecutor.shutdownNow()
         listeners.clear()
     }
 
@@ -397,13 +421,16 @@ class MobileRelayGraph private constructor(
             val executor = ScheduledThreadPoolExecutor(2) { task ->
                 Thread(task, "msdk-relay").apply { isDaemon = true }
             }.apply { removeOnCancelPolicy = true }
+            val timeoutExecutor = ScheduledThreadPoolExecutor(1) { task ->
+                Thread(task, "msdk-relay-timeout").apply { isDaemon = true }
+            }.apply { removeOnCancelPolicy = true }
             val operationExecutor = OperationExecutor { task -> executor.execute(task) }
             val operationScheduler = OperationScheduler { delay, callback ->
-                val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
                 OperationCancellation { future.cancel(false) }
             }
             val gatewayScheduler = MonotonicScheduler { delay, callback ->
-                val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
                 ScheduledCancellation { future.cancel(false) }
             }
             val diagnosticStore = AndroidDiagnosticStore.create(activity)
@@ -569,7 +596,11 @@ class MobileRelayGraph private constructor(
                 ),
             )
             val deviceSettings = DeviceSettings.create(
-                DeviceSettingsDependencies(AndroidDjiSettingsPort.create(), device.settingsOperations()),
+                DeviceSettingsDependencies(
+                    AndroidDjiSettingsPort.create(),
+                    cameraOperationCoordinator = device.settingsOperations(),
+                    transmissionSettingsOperationCoordinator = device.settingsOperations(),
+                ),
             )
             val gateway = RelayGateway.create(
                 RelayGatewayConfig(
@@ -594,7 +625,7 @@ class MobileRelayGraph private constructor(
                 journal,
                 RelayGatewayDiagnosticPort(gateway),
                 DiagnosticTimeoutScheduler { delay, callback ->
-                    val future = executor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                    val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
                     DiagnosticRegistration { future.cancel(false) }
                 },
             )
@@ -665,7 +696,21 @@ class MobileRelayGraph private constructor(
                 },
             )
             val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
-            registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, videoTransports, wayline)
+            val cameraPhoto = CameraPhoto.create(
+                CameraPhotoDependencies(
+                    AndroidDjiPhotoPort.create(activity.cacheDir),
+                    device.photoOperations(),
+                    PhotoMediaPublisher.create(
+                        PhotoMediaWriter { frame -> publishPhotoMedia(gateway, journal, frame) },
+                        PhotoMediaClock { delay, callback ->
+                            val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                            PhotoMediaCancellation { future.cancel(false) }
+                        },
+                    ),
+                ),
+            )
+            gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
+            registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, cameraPhoto, videoTransports, wayline)
             val lifecycle = RelayBootstrapModule(
                 object : RelayLifecyclePorts {
                     override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -704,6 +749,8 @@ class MobileRelayGraph private constructor(
                     override fun markMissionUnavailable() { wayline.markDeviceUnavailable() }
                     override fun markFlightControlUnavailable() { flightControl.markDeviceUnavailable() }
                     override fun markDeviceSettingsUnavailable() { deviceSettings.markDeviceUnavailable() }
+                    override fun markCameraPhotoUnavailable() { cameraPhoto.markDeviceUnavailable() }
+                    override fun abortCameraPhotoTransfer() { cameraPhoto.abortTransfer() }
                     override fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind) {
                         journal.record(
                             DiagnosticLevel.ERROR,
@@ -729,8 +776,8 @@ class MobileRelayGraph private constructor(
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, journal, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
+                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
+                staging, foregroundPort, executor, timeoutExecutor, journal, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
 
@@ -749,6 +796,7 @@ class MobileRelayGraph private constructor(
             device: DeviceConnection,
             flightControl: FlightControl,
             deviceSettings: DeviceSettings,
+            cameraPhoto: CameraPhoto,
             videoTransports: VideoTransportInterlock,
             wayline: WaylineMission,
         ) {
@@ -781,6 +829,9 @@ class MobileRelayGraph private constructor(
             }
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
                 register(gateway, journal, it, deviceSettings.commandHandler())
+            }
+            listOf("camera.photo.capture", "camera.photo.fetch").forEach {
+                register(gateway, journal, it, cameraPhoto.commandHandler())
             }
             listOf(
                 "wayline.upload", "wayline.start", "wayline.pause",
@@ -815,6 +866,25 @@ class MobileRelayGraph private constructor(
                 is PairingRequestResult.Accepted -> Unit
                 is PairingRequestResult.Rejected, null -> once.reject("Pairing operation was rejected")
             }
+        }
+
+        private fun publishPhotoMedia(gateway: RelayGateway, journal: DiagnosticJournal, frame: RelayFrame): Boolean {
+            val result = when (frame) {
+                is MediaBeginFrame -> gateway.publishMediaBegin(frame)
+                is MediaChunkFrame -> gateway.publishMediaChunk(frame)
+                is MediaCompleteFrame -> gateway.publishMediaComplete(frame)
+                else -> return false
+            }
+            if (result is PublishResult.Rejected) {
+                journal.record(
+                    DiagnosticLevel.WARN,
+                    "camera-photo",
+                    "PHOTO_MEDIA_PUBLISH_REJECTED",
+                    null,
+                    result.kind.name,
+                )
+            }
+            return result is PublishResult.Delivered
         }
 
         private fun register(gateway: RelayGateway, journal: DiagnosticJournal, name: String, handler: CommandHandler) {

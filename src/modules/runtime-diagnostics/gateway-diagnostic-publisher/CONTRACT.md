@@ -17,7 +17,7 @@ GatewayDiagnosticPublisher.flush() -> FlushResult
 ```
 
 - `start` 监听 gateway 状态、journal 新记录和 `diagnostic-ack`。每次进入 `ACTIVE`、每次新记录，都尝试 `flush`。
-- `flush` 在非 `ACTIVE` 状态不发送、不删除。`ACTIVE` 时按序号发送尚未发出的批次，窗口最多 4 批（每批至多 32 条）；不必等上一批 ack 才能发下一批。
+- `flush` 在非 `ACTIVE` 状态不发送、不删除。`ACTIVE` 时按序号发送尚未发出的批次（每批至多 32 条）；不必等上一批 ack 才能发下一批，新事件不得被未确认批次堵住。未确认事件仍留在 journal，确认后才删除。
 - 未确认批次超时后只重发最老的一批，不把新事件当作已删除。
 - gateway 返回“已交给传输层”不等于电脑已保存，只有 `diagnostic-ack` 能确认删除。
 - 会话离开 `ACTIVE` 时重置发送游标，队列仍保留；再次 `ACTIVE` 从最老未确认事件重发。

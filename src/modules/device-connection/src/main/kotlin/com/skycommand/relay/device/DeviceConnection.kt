@@ -80,6 +80,7 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
     private val waylineOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
     private val settingsOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
     private val streamOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
+    private val photoOperations = DjiOperationCoordinator.create(dependencies.executor, dependencies.scheduler)
     private val pairing = PairingController.create(store, pairingOperations, dependencies.pairingPort)
     private val pairingStatusLink = PairingStatusLink.create(
         store,
@@ -154,6 +155,9 @@ class DeviceConnection private constructor(dependencies: DeviceConnectionDepende
 
     /** RTMP start/stop are serialized only against other RTMP commands. */
     fun streamOperations(): DjiOperationCoordinator = streamOperations
+
+    /** Camera shutter and original-photo download are serialized only against other photo commands. */
+    fun photoOperations(): DjiOperationCoordinator = photoOperations
 
     fun requestPairingStart(
         timeoutMillis: Long,

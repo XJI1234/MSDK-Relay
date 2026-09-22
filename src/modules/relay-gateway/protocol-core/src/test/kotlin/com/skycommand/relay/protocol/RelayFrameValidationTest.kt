@@ -89,7 +89,7 @@ class RelayFrameValidationTest {
 
     @Test
     fun rejectsMissionChunkAboveLimit() {
-        val result = validate(MissionChunkFrame("id", ByteArray(49153)))
+        val result = validate(MissionChunkFrame("id", ByteArray(ProtocolLimits.maxMissionChunkBytes + 1)))
 
         assertEquals(ProtocolErrorCode.CHUNK_TOO_LARGE, assertIs<Rejected>(result).error.code)
     }

@@ -65,7 +65,7 @@ class ProtocolBoundaryContractTest {
             validate(MissionBeginFrame("id", fileName, 104_857_600, "0".repeat(64)))
         )
         assertIs<Accepted<RelayFrame>>(validate(CommandResultFrame("id", true, detail)))
-        assertIs<Accepted<RelayFrame>>(validate(MissionChunkFrame("id", ByteArray(49_152))))
+        assertIs<Accepted<RelayFrame>>(validate(MissionChunkFrame("id", ByteArray(ProtocolLimits.maxMissionChunkBytes))))
     }
 
     @Test
@@ -122,7 +122,7 @@ class ProtocolBoundaryContractTest {
         )
         assertRejected(
             ProtocolErrorCode.CHUNK_TOO_LARGE,
-            validate(MissionChunkFrame("id", ByteArray(49_153))),
+            validate(MissionChunkFrame("id", ByteArray(ProtocolLimits.maxMissionChunkBytes + 1))),
         )
     }
 
@@ -199,8 +199,8 @@ class ProtocolBoundaryContractTest {
 
     @Test
     fun enforcesGenericStringCodePointBoundary() {
-        val acceptedValue = "a".repeat(65_536)
-        val rejectedValue = "a".repeat(65_537)
+        val acceptedValue = "a".repeat(ProtocolLimits.maxJsonStringCodePoints)
+        val rejectedValue = "a".repeat(ProtocolLimits.maxJsonStringCodePoints + 1)
 
         assertIs<DecodeResult.Decoded>(
             decodeResult("""{"type":"telemetry","payload":{"value":"$acceptedValue"},"capabilities":{}}""")
@@ -215,10 +215,10 @@ class ProtocolBoundaryContractTest {
 
     @Test
     fun acceptsFrameAtExactByteLimitAndRejectsOneByteMore() {
-        val atLimit = unknownFrameWithSize(98_304)
-        val overLimit = unknownFrameWithSize(98_305)
+        val atLimit = unknownFrameWithSize(ProtocolLimits.maxFrameBytes)
+        val overLimit = unknownFrameWithSize(ProtocolLimits.maxFrameBytes + 1)
 
-        assertEquals(98_304, atLimit.size)
+        assertEquals(ProtocolLimits.maxFrameBytes, atLimit.size)
         assertIs<DecodeResult.Ignored>(RelayFrameCodec.decode(atLimit))
         assertEquals(
             ProtocolErrorCode.FRAME_TOO_LARGE,
@@ -246,13 +246,13 @@ class ProtocolBoundaryContractTest {
 
     @Test
     fun acceptsCanonicalMaximumMissionChunk() {
-        val bytes = ByteArray(49_152) { index -> (index % 251).toByte() }
+        val bytes = ByteArray(ProtocolLimits.maxMissionChunkBytes) { index -> (index % 251).toByte() }
         val data = Base64.getEncoder().encodeToString(bytes)
         val json = """{"type":"mission-chunk","id":"id","data":"$data"}"""
 
         val frame = assertIs<MissionChunkFrame>(decode(json))
 
-        assertEquals(65_536, data.length)
+        assertEquals(ProtocolLimits.maxMissionChunkBase64Chars, data.length)
         assertTrue(bytes.contentEquals(frame.bytes))
     }
 

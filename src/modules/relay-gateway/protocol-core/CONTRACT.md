@@ -1,7 +1,7 @@
 # relay-gateway.protocol-core 二级模块契约
 
-状态：已批准并实现；`mission-phase` 编解码已实现，真实 DJI 航线阶段来源待实机验证
-版本：0.3.0
+状态：已批准并实现；媒体回传帧已写入契约，编解码待实现
+版本：0.4.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 模块标识：`relay-protocol-core`
 模块目录：`src/modules/relay-gateway/protocol-core/`
@@ -23,7 +23,7 @@ Gradle 路径：`:relay-gateway:protocol-core`
 
 ### 2.1 负责
 
-- 定义 `hello`、`paired`、`telemetry`、`command`、结果帧和任务传输帧；
+- 定义 `hello`、`paired`、`telemetry`、`command`、结果帧、任务传输帧和媒体回传帧；
 - 定义诊断报告与诊断确认帧；
 - 定义航线阶段上报帧；
 - 定义所有协议级长度、大小和复杂度上限；
@@ -50,6 +50,7 @@ Gradle 路径：`:relay-gateway:protocol-core`
 | --- | --- | --- |
 | 当前连接五态、会话代次和 `sessionId` | `connection-session` | 帧结构与协议版本校验 |
 | 当前任务传输、累计字节、摘要和取消 | `mission-transfer` | 单个任务帧结构校验 |
+| 当前原图发送、累计字节和电脑确认 | `camera-photo/photo-media-publisher` | 单个媒体帧结构校验 |
 | 命令注册和命令结果关联 | `command-dispatcher` | 命令帧模型 |
 | 发送顺序和旧代次隔离 | `outbound-publisher` | 帧编码 |
 
@@ -113,10 +114,10 @@ RelayFrameCodec.decode(bytes)
 
 | 项目 | 固定限制 |
 | --- | --- |
-| 单个 UTF-8 JSON 帧 | `1..98304` 字节，即最大 96 KiB |
+| 单个 UTF-8 JSON 帧 | `1..524288` 字节，即最大 512 KiB |
 | JSON 容器嵌套深度 | 最大 `32` 层，包含顶层对象 |
 | 单帧 JSON token 数 | 最大 `8192` |
-| 单个 JSON 字符串 | 最大 `65536` 个 Unicode code point |
+| 单个 JSON 字符串 | 最大 `349528` 个 Unicode code point |
 | JSON 数字 token | 最大 `128` 个字符 |
 | 任意 JSON 字段名 | `1..128` 个 Unicode code point，且不含控制字符 |
 | 消息 `type` | `1..64` 个 Unicode code point，非空白且不含控制字符 |
@@ -125,15 +126,15 @@ RelayFrameCodec.decode(bytes)
 | 任务文件名 | `1..128` 个 Unicode code point |
 | 结果 `detail` | `0..1024` 个 Unicode code point，且不含控制字符 |
 | 任务文件大小 | `1..104857600` 字节，即最大 100 MiB |
-| 单个任务分块原始字节 | `1..49152` 字节，即最大 48 KiB |
-| 单个任务分块 Base64 文本 | 最大 `65536` 个 ASCII 字符 |
+| 单个任务分块原始字节 | `1..262144` 字节，即最大 256 KiB |
+| 单个任务分块 Base64 文本 | 最大 `349528` 个 ASCII 字符 |
 | 协议错误消息 | `1..256` 个 Unicode code point，且不含控制字符 |
 | 诊断批次事件数 | `1..32` 条 |
 | 诊断 `runId`、`operationId` | 与 ID 相同：`1..128` 个 Unicode code point |
 | 诊断 `module`、`eventCode` | `1..64` 个 ASCII 字符，仅字母、数字、`-`、`_`、`.`，且首字符为字母 |
 | 诊断 `safeDetail` | `0..512` 个 Unicode code point，无控制字符 |
 
-当前 48 KiB 分块经过标准 Base64 编码后最多为 65536 个字符。96 KiB 单帧上限能够容纳该数据、最长传输 ID 和 JSON 外壳，同时为普通命令和遥测保留余量。
+当前 256 KiB 分块经过标准 Base64 编码后最多为 349528 个字符。512 KiB 单帧上限能够容纳该数据、最长传输 ID 和 JSON 外壳。该上限按原图回传设定：命令和遥测帧仍应远小于此。
 
 ## 5. 帧目录
 
@@ -328,12 +329,67 @@ mission-phase {
 - `Delivered` 只表示手机交给当前传输 writer，不表示电脑已收到。当前协议不为阶段帧提供离线重发；连接不活跃时的发送拒绝必须被手机记录为受限诊断，不能重新执行航线或伪造新阶段事实；
 - 旧版本收到此类型必须依照未知帧规则 `Ignored("mission-phase")`，不得关闭会话。
 
+### 5.13 `media-begin`
+
+```text
+media-begin {
+  type: "media-begin",
+  id: 合法传输 ID,
+  fileName: 安全图片 basename,
+  size: 1..104857600 的整数,
+  sha256: 64 个小写十六进制字符
+}
+```
+
+- 仅手机端向电脑端发送，是原图回传的开始帧，不是命令结果；
+- `size`、整数和 SHA-256 规则与 `mission-begin` 相同；
+- `fileName` 使用 §9.5 的媒体文件名规则，不得使用 §9.2 的 `.kmz` 规则；
+- 本模块不检查该 ID 是否已开始传输。旧版本必须 `Ignored("media-begin")`，不得关闭会话。
+
+### 5.14 `media-chunk`
+
+```text
+media-chunk {
+  type: "media-chunk",
+  id: 合法传输 ID,
+  data: 规范 Base64 文本
+}
+```
+
+Base64、空分块和大小规则与 `mission-chunk` 完全相同。本模块只校验并解码一个分块，不累计总字节。
+
+### 5.15 `media-complete`
+
+```text
+media-complete {
+  type: "media-complete",
+  id: 合法传输 ID
+}
+```
+
+本模块不检查是否收到 begin，也不验证最终大小或摘要。
+
+### 5.16 `media-result`
+
+```text
+media-result {
+  type: "media-result",
+  id: 合法传输 ID,
+  ok: boolean,
+  detail: 有界字符串
+}
+```
+
+- 仅电脑端向手机端发送；`detail` 的兼容和编码规则与 `command-result` / `mission-result` 相同；
+- `ok: true` 只表示电脑已按声明大小和 SHA-256 收齐该传输，不表示操作员已打开文件；
+- 旧版本必须 `Ignored("media-result")`，不得关闭会话。
+
 ## 6. 解码算法和固定顺序
 
 `decode(bytes)` 必须按以下顺序执行：
 
 1. 空字节返回 `INVALID_JSON`；
-2. 超过 98304 字节立即返回 `FRAME_TOO_LARGE`，不得先构造 String、JSON 树或 Base64 数组；
+2. 超过 524288 字节立即返回 `FRAME_TOO_LARGE`，不得先构造 String、JSON 树或 Base64 数组；
 3. 使用严格 UTF-8 解码器验证字节；
 4. 使用开启重复字段检测和尾随 token 拒绝的 JSON 解析器；
 5. 解析器在建立 JSON 树前执行文档长度、深度 `32`、token `8192`、数字字符 `128` 以及不缩小本契约合法输入集合的字符串和字段名安全限制；
@@ -358,14 +414,14 @@ JSON 整数只有同时满足 `isIntegralNumber` 和“可精确转换为 Long�
 2. 校验通用 `JsonObject`、`JsonArray`、字段名、字符串、数字和总深度；
 3. 使用本契约规定的标准字段名构造 JSON；
 4. 编码为 UTF-8；
-5. 最后确认输出不超过 98304 字节。
+5. 最后确认输出不超过 524288 字节。
 
 通用 JSON 规则：
 
 - `JsonNumber.value` 必须匹配标准 JSON 数字语法：可选负号、整数部分、可选小数、可选指数；
 - 不接受 `+1`、前导零、`NaN`、`Infinity`、空数字或超过 128 字符的数字；
 - 任意字段名必须非空白、无控制字符并满足 128 code point 上限；
-- 单个字符串不得超过 65536 code point；
+- 单个字符串不得超过 349528 code point；
 - 整个帧的容器深度和 token 总数不得超限；
 - `CommandFrame.fields` 包含 `name` 时返回 `INVALID_FIELD`，不得静默覆盖；
 - 字符串中的普通换行等内容可以由 JSON 转义，但 ID、类型、命令名和结果详情仍按各自更严格规则校验。
@@ -380,10 +436,10 @@ JSON 整数只有同时满足 `isIntegralNumber` 和“可精确转换为 Long�
 - 文本长度必须能被 `4` 整除；
 - 必需的 `=` 不得省略；
 - 不允许空白、换行、URL-safe 的 `-`/`_`、中间填充或多余填充；
-- 文本超过 65536 字符时，在解码前返回 `CHUNK_TOO_LARGE`；
+- 文本超过 349528 字符时，在解码前返回 `CHUNK_TOO_LARGE`；
 - 语法非法或重新编码后与原文本不一致时返回 `INVALID_BASE64`；
 - 解码后为 0 字节时返回 `EMPTY_CHUNK`；
-- 解码后超过 49152 字节时返回 `CHUNK_TOO_LARGE`。
+- 解码后超过 262144 字节时返回 `CHUNK_TOO_LARGE`。
 
 规范校验必须发生在大数组分配之前。当前电脑端使用的标准 Base64 编码器与该规则兼容。
 
@@ -409,6 +465,18 @@ JSON 整数只有同时满足 `isIntegralNumber` 和“可精确转换为 Long�
 - 以 ASCII 大小写不敏感的 `.kmz` 结尾。
 
 本模块不创建路径，不检查文件是否存在，也不判断 KMZ 是否满足 DJI 航线要求。
+
+### 9.5 媒体文件名
+
+合法媒体文件名必须：
+
+- 是 basename，不能包含 `/` 或 `\`；
+- 不能包含 `..`；
+- 不能是空白，不能含控制字符；
+- 最大 128 Unicode code point；
+- 以 ASCII 大小写不敏感的 `.jpg`、`.jpeg` 或 `.dng` 结尾。
+
+媒体文件大小和分块上限与任务文件相同：`1..104857600` 字节，单块 `1..262144` 字节。本模块不创建路径，不检查文件是否存在，也不判断该文件是否为可用照片。
 
 ### 9.3 SHA-256
 
@@ -520,14 +588,14 @@ Activity、Service、Context
 - 编码的协议版本固定为字符串 `"1"`；
 - `paired.protocolVersion` 缺失时按 v1 接受；
 - 标准带填充 Base64 与当前电脑端兼容；
-- 48 KiB 分块和 100 MiB 文件上限不变；
+- 256 KiB 分块和 100 MiB 文件上限不变；
 - 未知但结构合法的消息类型继续返回 `Ignored`；
 - 已知帧的额外顶层字段可以忽略。
 
 ### 14.2 可以兼容增加
 
 - 增加新的可选字段；
-- 增加新的帧类型，并让旧版本返回 `Ignored`；
+- 增加新的帧类型，并让旧版本返回 `Ignored`；当前待实现的兼容增加是 `media-begin`、`media-chunk`、`media-complete` 与 `media-result`；
 - 更换内部 JSON 库；
 - 优化校验实现但不改变接受集合和错误分类。
 
@@ -544,16 +612,17 @@ Activity、Service、Context
 
 ### 15.1 每种合法帧
 
-- 十二种帧分别完成编码和解码往返；
+- 十六种帧分别完成编码和解码往返；
 - `paired` 分别覆盖显式 `"1"` 和省略版本；
 - 两种结果帧分别覆盖有详情和缺失详情；`command-result` 还必须覆盖结构化 `result`、缺失 `result` 和非对象 `result`；
 - `mission-phase` 覆盖两种阶段、每个整数边界、文件名边界、阶段枚举非法值、错误数值类型与同一任务代际的相邻顺序；
+- `media-begin` / `media-chunk` / `media-complete` / `media-result` 覆盖与任务传输对等的大小、摘要、Base64 与文件名边界，以及 `.jpg` / `.jpeg` / `.dng` 与非法扩展名；
 - 通用 JSON 覆盖 null、字符串、数字、布尔、数组和嵌套对象；
 - 已知帧额外字段可忽略，未知合法类型返回 `Ignored`。
 
 ### 15.2 固定边界
 
-- 单帧 98304 字节边界和 98305 字节拒绝；
+- 单帧 524288 字节边界和 524289 字节拒绝；
 - JSON 深度 32 接受、33 拒绝；
 - token 8192 边界和超限；
 - JSON 字符串、数字、字段名和消息类型的最大值及超限值；
@@ -579,8 +648,8 @@ Activity、Service、Context
 
 ### 15.5 Base64
 
-- 1 字节和 49152 字节正常分块；
-- 空分块和 49153 字节分块；
+- 1 字节和 262144 字节正常分块；
+- 空分块和 262145 字节分块；
 - 缺失填充、错误填充、多余填充、中间填充；
 - 空白、换行、URL-safe 字符和非法字符；
 - 非规范 pad bits；

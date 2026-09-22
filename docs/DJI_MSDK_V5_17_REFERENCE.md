@@ -220,9 +220,9 @@
 | --- | --- | --- | --- |
 | `setCameraIndex(LEFT_OR_MAIN)` | 选择主/左相机。 | 设置需要直播的相机索引。 | 没有证明该相机正在输出有效画面。 |
 | `setLiveStreamSettings(LiveStreamSettings)` + `LiveStreamType.RTMP` + `RtmpSettings.url` | 设置桌面 RTMP URL。 | 设置直播设置；RTMP 是一种直播类型。 | 设置成功不等于网络端点已可达。 |
-| `setLiveStreamQuality(StreamQuality.HD)` | 当前固定 `HD`。 | 设置直播视频质量类型。 | `HD` 不是产品分辨率、相机焦点或桌面播放清晰度的保证。 |
-| `setLiveVideoBitrateMode(MANUAL)` | 当前固定手动码率。 | `AUTO` 由 MSDK 自动设码率；`MANUAL` 后可调用 `setLiveVideoBitrate`。 | 手动值不保证所有型号/网络下实际输出恒定。 |
-| `setLiveVideoBitrate(1_802_240)` | 当前约 `220 * 1024 * 8 bit/s`。 | 设定直播码率，单位 **bit/s**。 | 不要把单位误作 byte/s 或 Mbps。 |
+| `setLiveStreamQuality(StreamQuality.FULL_HD)` | 当前固定 `FULL_HD`。 | 设置直播视频质量类型。 | `FULL_HD` 不是产品分辨率、相机焦点或桌面播放清晰度的保证。 |
+| `setLiveVideoBitrateMode(AUTO)` | 当前固定自动码率。 | `AUTO` 由 MSDK 按 `FULL_HD` 设码率；`MANUAL` 后可调用 `setLiveVideoBitrate`。 | Mini 4 Pro 上 `MANUAL` 3/8 Mbit/s 会推流成功但没有视频包。 |
+| `setLiveStreamScaleType(FIX_XY)` | 固定直播缩放方式。 | 设置直播画面缩放方式。 | 缩放类型不是分辨率保证。 |
 | `addLiveStreamStatusListener` | 开始前注册状态监听。 | 添加直播状态监听。 | `LiveStreamStatus.isStreaming` 只能说明 DJI 直播侧状态，不等同于桌面播放器已经播放。 |
 | `startStream(callback)` | 启动推流。 | 开始直播。 | 成功回调不等于 RTMP 已被桌面接收、HTTP-FLV 已生成或视频已渲染。 |
 | `stopStream(callback)` | 停止推流。 | 停止直播。 | 成功回调不等于桌面所有缓冲帧瞬间消失。 |
@@ -248,7 +248,7 @@ removeReceiveStreamListener(theSameListenerInstance)
 
 `ReceiveStreamListener` 提供 `ByteArray data`、`offset`、`length` 和 `StreamInfo`。项目只转发指定切片及其 codec、宽高、帧率、PTS、关键帧标记；`H264`/`H265` 以原始枚举映射，未知类型拒绝处理。它没有调用 `putCameraStreamSurface`、YUV `addFrameListener` 或 `ILiveStreamManager`。
 
-这是封存的 WHIP/WebRTC 原始帧路径，**不是当前生产 RTMP 图传链路**。保留源码用于回溯，禁止在没有独立设计、编译测试和真机验证的情况下恢复命令入口或修改生产 RTMP 行为。
+这是封存的 WHIP/WebRTC 原始帧路径，**不是当前生产 RTMP 图传链路**。本地预览也使用该管理器，但与 RTMP 启停无关。保留源码用于回溯，禁止在没有独立设计、编译测试和真机验证的情况下恢复命令入口或修改生产 RTMP 行为。
 
 **官方来源**：[ICameraStreamManager](https://developer.dji.com/api-reference-v5/android-api/Components/IMediaDataCenter/ICameraStreamManager.html)。
 

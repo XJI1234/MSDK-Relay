@@ -134,6 +134,34 @@ data class DiagnosticAcknowledgementFrame(
     val acknowledgedSequence: Long,
 ) : RelayFrame
 
+data class MediaBeginFrame(
+    val id: String,
+    val fileName: String,
+    val size: Long,
+    val sha256: String,
+) : RelayFrame
+
+class MediaChunkFrame(id: String, bytes: ByteArray) : RelayFrame {
+    val id: String = id
+    private val storedBytes: ByteArray = bytes.copyOf()
+
+    val bytes: ByteArray
+        get() = storedBytes.copyOf()
+
+    override fun equals(other: Any?): Boolean =
+        other is MediaChunkFrame && id == other.id && storedBytes.contentEquals(other.storedBytes)
+
+    override fun hashCode(): Int = 31 * id.hashCode() + storedBytes.contentHashCode()
+}
+
+data class MediaCompleteFrame(val id: String) : RelayFrame
+
+data class MediaResultFrame(
+    val id: String,
+    val ok: Boolean,
+    val detail: String,
+) : RelayFrame
+
 fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
     val result: ProtocolResult<Unit> = when (frame) {
         is HelloFrame -> validateHello(frame)
@@ -148,6 +176,10 @@ fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
         is MissionPhaseFrame -> validateMissionPhase(frame)
         is DiagnosticReportFrame -> validateDiagnosticReport(frame)
         is DiagnosticAcknowledgementFrame -> validateDiagnosticAcknowledgement(frame)
+        is MediaBeginFrame -> validateMediaBegin(frame)
+        is MediaChunkFrame -> validateMediaChunk(frame)
+        is MediaCompleteFrame -> validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Media ID is invalid")
+        is MediaResultFrame -> validateResult(frame.id, frame.detail)
     }
     return when (result) {
         is Accepted -> Accepted(frame)
@@ -371,13 +403,45 @@ private fun validateMissionBegin(frame: MissionBeginFrame): ProtocolResult<Unit>
 
 private fun validateMissionChunk(frame: MissionChunkFrame): ProtocolResult<Unit> {
     return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Mission ID is invalid")
+        .then { validateChunkBytes(frame.bytes) }
+}
+
+private fun validateMediaBegin(frame: MediaBeginFrame): ProtocolResult<Unit> {
+    return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Media ID is invalid")
         .then {
-            when {
-                frame.bytes.isEmpty() -> Rejected(ProtocolError(ProtocolErrorCode.EMPTY_CHUNK, "Mission chunk is empty"))
-                frame.bytes.size > ProtocolLimits.maxMissionChunkBytes -> Rejected(ProtocolError(ProtocolErrorCode.CHUNK_TOO_LARGE, "Mission chunk is too large"))
-                else -> Accepted(Unit)
+            if (!isSafeMediaFileName(frame.fileName)) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FILE_NAME, "Media file name is invalid"))
+            } else {
+                Accepted(Unit)
             }
         }
+        .then {
+            if (frame.size !in 1..ProtocolLimits.maxMissionBytes) {
+                Rejected(ProtocolError(ProtocolErrorCode.MISSION_SIZE_OUT_OF_RANGE, "Mission size is outside the allowed range"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+        .then {
+            if (!frame.sha256.matches(Regex("[0-9a-f]{64}"))) {
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_SHA256, "Mission SHA-256 is invalid"))
+            } else {
+                Accepted(Unit)
+            }
+        }
+}
+
+private fun validateMediaChunk(frame: MediaChunkFrame): ProtocolResult<Unit> {
+    return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Media ID is invalid")
+        .then { validateChunkBytes(frame.bytes) }
+}
+
+private fun validateChunkBytes(bytes: ByteArray): ProtocolResult<Unit> {
+    return when {
+        bytes.isEmpty() -> Rejected(ProtocolError(ProtocolErrorCode.EMPTY_CHUNK, "Mission chunk is empty"))
+        bytes.size > ProtocolLimits.maxMissionChunkBytes -> Rejected(ProtocolError(ProtocolErrorCode.CHUNK_TOO_LARGE, "Mission chunk is too large"))
+        else -> Accepted(Unit)
+    }
 }
 
 private fun validateMissionPhase(frame: MissionPhaseFrame): ProtocolResult<Unit> {
@@ -416,6 +480,17 @@ private fun isSafeMissionFileName(fileName: String): Boolean {
     return fileName.isNotBlank() &&
         fileName.codePointCount(0, fileName.length) <= ProtocolLimits.maxFileNameCodePoints &&
         fileName.lowercase().endsWith(".kmz") &&
+        !fileName.contains("..") &&
+        !fileName.contains('/') &&
+        !fileName.contains('\\') &&
+        !fileName.any(Char::isISOControl)
+}
+
+private fun isSafeMediaFileName(fileName: String): Boolean {
+    val lower = fileName.lowercase()
+    return fileName.isNotBlank() &&
+        fileName.codePointCount(0, fileName.length) <= ProtocolLimits.maxFileNameCodePoints &&
+        (lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".dng")) &&
         !fileName.contains("..") &&
         !fileName.contains('/') &&
         !fileName.contains('\\') &&

@@ -156,6 +156,7 @@ dependencies {
     implementation(project(":live-stream")); implementation(project(":live-stream:android-dji-stream-adapter")); implementation(project(":live-stream:camera-frame-observer")); implementation(project(":live-stream:android-camera-frame-observer-adapter")); implementation(project(":live-stream:camera-stream-source")); implementation(project(":live-stream:android-camera-stream-adapter")); implementation(project(":live-stream:android-whip-publisher-adapter")); implementation(project(":live-stream:whip-live-stream"))
     implementation(project(":flight-control")); implementation(project(":flight-control:android-dji-flight-adapter"))
     implementation(project(":device-settings")); implementation(project(":device-settings:android-dji-settings-adapter"))
+    implementation(project(":camera-photo")); implementation(project(":camera-photo:android-dji-photo-adapter"))
     implementation(project(":wayline-mission")); implementation(project(":wayline-mission:android-dji-wayline-adapter")); implementation(project(":wayline-mission:android-mission-staging-adapter"))
     implementation(project(":relay-settings")); implementation(project(":relay-settings:android-settings-adapter"))
     implementation(project(":app-runtime")); implementation(project(":app-runtime:permission-coordinator")); implementation(project(":app-runtime:foreground-service")); implementation(project(":app-runtime:app-bootstrap")); implementation(project(":app-runtime:android-permission-adapter")); implementation(project(":app-runtime:android-foreground-service-adapter"))

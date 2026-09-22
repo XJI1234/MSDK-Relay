@@ -259,7 +259,7 @@ OrderedStateNotifier.enqueue(event, listeners)
 
 `connection-session` 只依赖 `protocol-core` 已公开的帧模型和 `decode` 结果。字段格式、版本字段校验和 `Decoded / Rejected / Ignored` 的产生由 `protocol-core` 负责；当前连接处于五态中的哪一态、当前是否允许 `paired`，由本模块负责。出站 `hello` 以 `HelloFrame` 交给 `SessionOutbound`，由发送模块统一调用 `protocol-core.encode`，本模块不保存编码字节。
 
-本模块不得调用或维护任务传输状态机。`mission-begin/chunk/complete` 在 `ACTIVE` 后原样交给 gateway 后续路由，顺序、累计字节、摘要和取消只由 `mission-transfer` 拥有。这样不会在会话模块和任务模块之间形成两份传输状态。
+本模块不得调用或维护任务传输状态机。`mission-begin/chunk/complete` 在 `ACTIVE` 后原样交给 gateway 后续路由，顺序、累计字节、摘要和取消只由 `mission-transfer` 拥有。这样不会在会话模块和任务模块之间形成两份传输状态。电脑端 `media-result` 在 `ACTIVE` 后原样交给已注册的媒体结果处理器；本模块不累计照片字节。手机端发出的 `media-begin/chunk/complete` 不是入站帧。
 
 ### 5.1 与 `protocol-core` 的无状态边界
 

@@ -35,7 +35,7 @@ object DeviceCapabilityReader {
         val flightReady = sdkReady && flightControllerConnected
 
         return DeviceCapabilities(
-            canStartPairing = sdkReady && remoteConnected && snapshot.flightController == LinkState.DISCONNECTED && pairingCanStart,
+            canStartPairing = sdkReady && remoteConnected && snapshot.flightController != LinkState.CONNECTED && pairingCanStart,
             canStopPairing = pairingActive,
             canReadTelemetry = flightReady,
             canStreamVideo = sdkReady && airLinkConnected && cameraConnected,

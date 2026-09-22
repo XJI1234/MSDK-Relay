@@ -50,7 +50,6 @@ sealed interface FlushResult {
     data object Sent : FlushResult
     data object NothingPending : FlushResult
     data object NotActive : FlushResult
-    data object WindowFull : FlushResult
     data object Rejected : FlushResult
 }
 
@@ -116,7 +115,7 @@ class GatewayDiagnosticPublisher private constructor(
     private fun flushLocked(): FlushResult {
         if (gateway.currentState() != SessionState.ACTIVE) return FlushResult.NotActive
         var sent = false
-        while (inFlightEnds.size < MAX_IN_FLIGHT_BATCHES) {
+        while (true) {
             val events = journal.pendingAfter(lastSentSequence, DiagnosticJournal.MAX_BATCH)
             if (events.isEmpty()) break
             if (gateway.publish(toReport(events)) != PublishResult.Delivered) {
@@ -131,7 +130,6 @@ class GatewayDiagnosticPublisher private constructor(
         armTimeoutLocked()
         return when {
             sent -> FlushResult.Sent
-            inFlightEnds.size >= MAX_IN_FLIGHT_BATCHES -> FlushResult.WindowFull
             else -> FlushResult.NothingPending
         }
     }
@@ -186,7 +184,6 @@ class GatewayDiagnosticPublisher private constructor(
         )
 
     companion object {
-        const val MAX_IN_FLIGHT_BATCHES = 4
         const val ACK_TIMEOUT_MS = 3_000L
         const val ACK_TIMEOUT_MAX_MS = 15_000L
         val NO_TIMEOUT = DiagnosticTimeoutScheduler { _, _ -> DiagnosticRegistration { } }

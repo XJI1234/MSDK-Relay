@@ -17,6 +17,10 @@ class MobileRelayGraphContractTest {
         assertTrue(source.contains("handshakeTimeoutMillis = 15_000"))
         assertTrue(source.contains("publishLinkSnapshot"))
         assertTrue(source.contains("SnapshotAssembler.assemble(device.snapshot())"))
+        assertTrue(source.contains("msdk-relay-timeout"))
+        assertTrue(source.contains("timeoutExecutor.schedule"))
+        assertTrue(source.contains("timeoutExecutor.shutdownNow"))
+        assertTrue(source.contains("PHOTO_MEDIA_PUBLISH_REJECTED"))
     }
 
     @Test
@@ -151,7 +155,7 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
-    fun flightWaylinePairingAndSettingsUseSeparateControlQueues() {
+    fun flightWaylinePairingSettingsAndPhotoUseSeparateControlQueues() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
@@ -163,10 +167,16 @@ class MobileRelayGraphContractTest {
             .substringBefore("val deviceSettings = DeviceSettings.create(")
         val settingsWiring = source.substringAfter("val deviceSettings = DeviceSettings.create(")
             .substringBefore("val gateway = RelayGateway.create(")
+        val photoWiring = source.substringAfter("val cameraPhoto = CameraPhoto.create(")
+            .substringBefore("registerCommands(")
 
         assertTrue(waylineWiring.contains("device.waylineOperations()"))
         assertTrue(flightWiring.contains("device.flightOperations()"))
         assertTrue(settingsWiring.contains("device.settingsOperations()"))
+        assertTrue(photoWiring.contains("device.photoOperations()"))
+        assertFalse(photoWiring.contains("LiveCameraDecodeHold"))
+        assertFalse(photoWiring.contains("stopStream"))
+        assertFalse(photoWiring.contains("liveStreamManager"))
         assertFalse(waylineWiring.contains("device.operations()"))
         assertFalse(flightWiring.contains("device.operations()"))
         assertFalse(settingsWiring.contains("device.operations()"))
@@ -221,6 +231,21 @@ class MainActivityRetentionContractTest {
         assertTrue(source.contains("RelayRuntimeHolder"))
         assertTrue(source.contains("permissionAdapter.rebind"))
         assertTrue(!source.contains("graph?.close()\n        graph = null\n        permissionAdapter.close()"))
+    }
+}
+
+class MainActivityRtmpBoundaryContractTest {
+    @Test
+    fun doesNotOwnTheRtmpCameraDecodeSurface() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
+        ).first { it.exists() }.readText()
+        assertFalse(source.contains("TextureView"))
+        assertFalse(source.contains("setDefaultBufferSize(1920, 1080)"))
+        assertFalse(source.contains("LiveDecodeSurface"))
+        assertFalse(source.contains("LiveCameraDecodeHold"))
+        assertFalse(source.contains("ImageReader"))
     }
 }
 

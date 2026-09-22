@@ -39,7 +39,7 @@ Gradle 路径：`:relay-gateway:command-dispatcher`
 - 不生成 `SessionGeneration`、`ActiveSession`、`sessionId`，不判断连接是否 `ACTIVE`；
 - 不打开、关闭、重连网络，或直接持有 writer；
 - 不执行 DJI 飞行、直播、配对、航线生成或上传；
-- 不管理任务传输、KMZ 文件、摘要、路径或临时文件；
+- 不管理任务传输、KMZ 文件、摘要、路径、临时文件或原图分块；
 - 不创建线程、协程作用域、定时器或重试策略；处理器选择自己的业务执行模型；
 - 不重放、持久化或在重连后恢复未完成命令；
 - 不把处理器异常、堆栈、路径、原始参数、凭证或 SDK 对象写入结果。
@@ -69,6 +69,8 @@ device.settings.camera.read
 device.settings.camera.write
 device.settings.transmission.read
 device.settings.transmission.write
+camera.photo.capture
+camera.photo.fetch
 ```
 
 `live-stream-webrtc.start` 和 `live-stream-webrtc.stop` 与旧 `live-stream.*` 命令并列注册，不能替换、复用或改写旧处理器。它们仍只经过本分发器做命令名白名单和结果关联；`whipUrl` 字段、空停止字段和 WHIP 业务状态由独立的 `whip-live-stream` 处理器校验。

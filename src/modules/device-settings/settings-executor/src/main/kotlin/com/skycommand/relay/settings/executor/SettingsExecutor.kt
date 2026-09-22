@@ -44,7 +44,8 @@ sealed interface SettingsSubmissionResult {
 
 class SettingsExecutor private constructor(
     private val port: DjiSettingsPort,
-    private val coordinator: DjiOperationCoordinator,
+    private val cameraCoordinator: DjiOperationCoordinator,
+    private val transmissionCoordinator: DjiOperationCoordinator,
     private val timeoutMillis: Long,
 ) {
     fun execute(
@@ -53,7 +54,7 @@ class SettingsExecutor private constructor(
     ): SettingsSubmissionResult {
         var snapshot: SettingsSnapshot? = null
         var failure: SettingsDjiFailure? = null
-        val submission = coordinator.submit(
+        val submission = coordinatorFor(request).submit(
             DjiOperation { completion ->
                 port.execute(request, object : SettingsDjiCompletion {
                     override fun succeed(value: SettingsSnapshot) {
@@ -95,11 +96,17 @@ class SettingsExecutor private constructor(
         is SettingsRequest.WriteTransmission -> SettingsDomain.TRANSMISSION
     }
 
+    private fun coordinatorFor(request: SettingsRequest): DjiOperationCoordinator = when (request.domain()) {
+        SettingsDomain.CAMERA -> cameraCoordinator
+        SettingsDomain.TRANSMISSION -> transmissionCoordinator
+    }
+
     companion object {
         fun create(
             port: DjiSettingsPort,
-            coordinator: DjiOperationCoordinator,
+            cameraCoordinator: DjiOperationCoordinator,
+            transmissionCoordinator: DjiOperationCoordinator,
             timeoutMillis: Long = 30_000,
-        ): SettingsExecutor = SettingsExecutor(port, coordinator, timeoutMillis)
+        ): SettingsExecutor = SettingsExecutor(port, cameraCoordinator, transmissionCoordinator, timeoutMillis)
     }
 }

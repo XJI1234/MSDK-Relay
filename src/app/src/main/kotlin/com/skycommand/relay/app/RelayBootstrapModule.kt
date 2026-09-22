@@ -36,6 +36,8 @@ interface RelayLifecyclePorts {
     fun markMissionUnavailable()
     fun markFlightControlUnavailable()
     fun markDeviceSettingsUnavailable()
+    fun markCameraPhotoUnavailable()
+    fun abortCameraPhotoTransfer()
     fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind)
 }
 
@@ -185,7 +187,10 @@ class RelayBootstrapModule(
                 ports.resetTelemetryPublicationBaseline()
                 publishAvailableSnapshot()
             }
-            GatewayStateAction.DEACTIVATED -> ports.markStreamUnavailable()
+            GatewayStateAction.DEACTIVATED -> {
+                ports.markStreamUnavailable()
+                ports.abortCameraPhotoTransfer()
+            }
             GatewayStateAction.PUBLISH -> publishAvailableSnapshot()
             GatewayStateAction.NONE -> Unit
         }
@@ -221,6 +226,7 @@ class RelayBootstrapModule(
             ports.markMissionUnavailable()
             ports.markFlightControlUnavailable()
             ports.markDeviceSettingsUnavailable()
+            ports.markCameraPhotoUnavailable()
         }
         runCatching { work.gatewayRegistration?.unregister() }
             .onFailure { report(RelayBootstrapDiagnosticKind.REGISTRATION_RELEASE_FAILURE) }
@@ -257,6 +263,7 @@ class RelayBootstrapModule(
         ports.markMissionUnavailable()
         ports.markFlightControlUnavailable()
         ports.markDeviceSettingsUnavailable()
+        ports.markCameraPhotoUnavailable()
     }
 
     private fun stopGateway() {

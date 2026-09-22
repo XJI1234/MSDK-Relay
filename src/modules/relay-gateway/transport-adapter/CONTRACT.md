@@ -37,7 +37,7 @@ connection.close(reason) -> CloseRequested | AlreadyClosed
 2. 每次成功 `open` 返回拥有完全相同传入 generation 的独立 `TransportConnection`；`open` 返回 `OpenAccepted` 前不得调用 `TransportListener`，同步网络回调必须缓冲。这个极短的接管窗口内，除打开/终态回调外最多缓冲 16 条二进制帧；第 17 条到达时必须丢弃已缓冲回调、请求关闭当前 socket，并在 `enableCallbacks()` 后只投递一次标准 `onFailure(generation, "Transport failed")`。该本地过载不解释任何协议帧，也不产生业务结果；它使 `connection-session` 走既有断线清理和重连路径。
 3. `connection-session` 在拥有连接后恰好调用一次 `enableCallbacks()`；之后按序投递缓冲回调。`onOpen` 只调用一次 `onOpened(connection)`；二进制消息以复制后的字节和自身 generation 按库回调顺序调用 `onBytes`；文本消息必须丢弃；`onClosing` 只请求正常关闭；`onClosed` 与 `onFailure` 中先到者产生唯一匹配终态，后者丢弃。
 4. 适配器不比较 generation、不判定过期、不关闭新连接；该策略属于 `connection-session`。收到字节交付前复制，回调返回后不保留。
-5. `write` 仅在连接已打开且未终态时发送二进制消息，且先复制调用方字节；库拒绝/异常、打开前/终态后写入返回 `WriteRejected` 不抛出。不重排也不排队，顺序属于 `outbound-publisher`。
+5. `write` 仅在连接已打开且未终态时发送二进制消息，且先复制调用方字节；库拒绝/异常、打开前/终态后写入返回 `WriteRejected` 不抛出。不重排也不自建发送队列，顺序属于 `outbound-publisher`。OkHttp 因默认 16 MiB 出站队列满而 `send` 失败时，必须对同一份已复制字节重试直到库接受、连接已关闭，或已等待 60 秒。写入前若出站队列已超过 2 MiB，必须先等待队列降到该水位以下再发送，不得把原图分块一次性灌满 16 MiB 队列。等待出站队列排空时不得持有连接锁。
 6. `close` 幂等：第一次用固定非敏感原因请求正常关闭并返回 `CloseRequested`，之后 `AlreadyClosed`。库拒绝/异常仍使适配器视为关闭且不抛出；显式关闭不得同步回调监听器，网络关闭回调才是终态通知路径。
 
 ## 4. 错误、隐私、测试与变更

@@ -19,7 +19,11 @@ port.stop(completion) -> Unit
 
 每个开始或停止调用必须至多完成一次。只有 MSDK `CompletionCallback.onFailure(IDJIError)` 才映射为 `completion.fail(failure)`；适配器调用 MSDK 方法时发生的同步异常可能已经越过 DJI 调用边界，必须原样抛回图传专用 `dji-operation-coordinator`，绝不能伪造 `completion.fail()`。在这种未确认结果下，适配器必须保留该操作占用和有效状态监听，直到对应的真实 MSDK 终态回调或 `close()`；不得自行释放并允许下一条图传 DJI 调用。对于 MSDK `CompletionCallback.onFailure(IDJIError)`，必须在手机边界立即读取 `error.errorCode()` 和 `error.description()`，经过控制字符清理和有界复制后，以 `StreamDjiFailure` 随 `completion.fail(failure)` 逐层传递；它必须最终作为中继结构化结果 `{ domain: "live-stream", outcome: "ACTION_REJECTED", errorCode, errorDescription }` 到达桌面。只有 MSDK 实际调用 `onFailure` 才能使用该结果，绝不能以本地异常、超时、取消、断线或中继失败伪造它。成功开始后，`LiveStreamStatusListener` 的每个 `isStreaming` 值均经 `status` 回调逐值交给上层；`true` 同时携带指标，`false` 不携带旧指标。开始完成前的 `false` 只是启动前基线，不得误报失败；开始完成前的最新 `true` 必须在成功回调已交付后补发，不能丢失。运行期 `onError(IDJIError)` 只调用该代次的 `runtimeFailure`，并用同一规则复制原始错误码和说明；它不是开始或停止命令的完成回调，不得伪造 `isStreaming=false` 或覆盖相应按钮的命令结果。停止、失败或新开始后到达的旧状态、指标和错误必须忽略。
 
-固定使用 `LiveStreamType.RTMP`、主相机 `LEFT_OR_MAIN`、`StreamQuality.HD`（1280×720）与 `LiveVideoBitrateMode.MANUAL`（约 220 KByte/s）。手机热点场景优先流畅，避免 `FULL_HD`+高码率导致卡顿；也避免 `AUTO` 为流畅反复降码。`LiveStreamStatus` 的全部 v5.17 字段均一对一进入平台无关事实：`isStreaming`、resolution、FPS、vbps、packetLoss、packetCacheLen、RTT。分辨率仅在宽高均为正数时输出 `宽x高`；其余整数指标仅在非负时输出；`packetLoss` 和 `packetCacheLen` 保持 DJI 原始整数值，不擅自解释为百分比或时间。调用方异常必须隔离。
+固定使用 `LiveStreamType.RTMP`、主相机 `LEFT_OR_MAIN`、`StreamQuality.FULL_HD`（1920×1080）、`LiveVideoBitrateMode.AUTO` 和 `setLiveStreamScaleType(FIX_XY)`。图传清晰度固定 `FULL_HD`，不得降到 `HD`/`SD`/`ORIGINAL`。不得再用 `MANUAL` 码率：Mini 4 Pro 上 3 Mbit/s 和 8 Mbit/s 都会 `startStream` 成功但推不出视频包。
+
+`ILiveStreamManager` 是本模块唯一持有的 MSDK 管理器。`ICameraStreamManager` 属于本地预览和原始帧读取：本模块不得取得 `cameraStreamManager`、增删 `Surface`、切换相机流启用状态或后台解码；也不得调用 `MediaDataCenter.mediaManager`、`KeyManager` 或任一相机模式 Key。相册、相机模式和本地预览分别由对应模块拥有，Activity 不得通过全局 Surface 参与 RTMP 开始或停止。这样预览或拍照转换就无法改写 RTMP 输入生命周期。
+
+适配器必须在图传操作协调器提交的同一线程同步调用 `ILiveStreamManager`，不得自行 post 到 `Looper.getMainLooper()` 后等待。这会保持图传模块的接口与 UI 解耦，避免引入另一个未受协调器控制的 MSDK 初始化路径。`LiveStreamStatus` 的全部 v5.17 字段均一对一进入平台无关事实：`isStreaming`、resolution、FPS、vbps、packetLoss、packetCacheLen、RTT。分辨率仅在宽高均为正数时输出 `宽x高`；其余整数指标仅在非负时输出；`packetLoss` 和 `packetCacheLen` 保持 DJI 原始整数值，不擅自解释为百分比或时间。调用方异常必须隔离。
 
 DJI 直播管理器只有一个状态监听槽位，本适配器必须进程内独占。每次开始建立一个代次；失败或成功停止时释放监听器。停止失败时保留当前监听器。模块仅依赖 `:live-stream:dji-stream-adapter` 和 DJI MSDK v5.17。
 

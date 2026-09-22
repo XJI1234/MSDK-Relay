@@ -200,7 +200,7 @@ class RelayFrameCodecTest {
 
     @Test
     fun rejectsOversizedFrameBeforeJsonParsing() {
-        val bytes = ByteArray(98_305) { ' '.code.toByte() }
+        val bytes = ByteArray(ProtocolLimits.maxFrameBytes + 1) { ' '.code.toByte() }
 
         val result = RelayFrameCodec.decode(bytes)
 
@@ -227,7 +227,7 @@ class RelayFrameCodecTest {
 
     @Test
     fun rejectsOversizedMissionChunkTextBeforeBase64Decoding() {
-        val json = """{"type":"mission-chunk","id":"id","data":"${"%".repeat(65_540)}"}"""
+        val json = """{"type":"mission-chunk","id":"id","data":"${"%".repeat(ProtocolLimits.maxMissionChunkBase64Chars + 4)}"}"""
 
         val result = RelayFrameCodec.decode(json.toByteArray())
 
@@ -266,7 +266,7 @@ class RelayFrameCodecTest {
 
     @Test
     fun rejectsGenericJsonStringBeyondContractLimit() {
-        val value = "a".repeat(65_537)
+        val value = "a".repeat(ProtocolLimits.maxJsonStringCodePoints + 1)
         val json = """{"type":"telemetry","payload":{"value":"$value"},"capabilities":{}}"""
 
         val result = RelayFrameCodec.decode(json.toByteArray())
@@ -311,8 +311,8 @@ class RelayFrameCodecTest {
         val frame = TelemetryFrame(
             payload = JsonObject(
                 mapOf(
-                    "first" to JsonString("a".repeat(60_000)),
-                    "second" to JsonString("b".repeat(60_000)),
+                    "first" to JsonString("a".repeat(270_000)),
+                    "second" to JsonString("b".repeat(270_000)),
                 )
             ),
             capabilities = JsonObject(emptyMap()),
@@ -334,8 +334,35 @@ class RelayFrameCodecTest {
     }
 
     @Test
+    fun roundTripsMediaFramesAndRejectsUnsafeMediaFileNames() {
+        val hash = "0".repeat(64)
+        val begin = MediaBeginFrame("photo-1", "shot.jpg", 3, hash)
+        val chunk = MediaChunkFrame("photo-1", byteArrayOf(1, 2, 3))
+        val complete = MediaCompleteFrame("photo-1")
+        val result = MediaResultFrame("photo-1", true, "stored")
+
+        assertEquals(begin, decode(encode(begin)))
+        assertContentEquals(chunk.bytes, assertIs<MediaChunkFrame>(decode(encode(chunk))).bytes)
+        assertEquals(complete, decode(encode(complete)))
+        assertEquals(result, decode(encode(result)))
+
+        listOf("shot.JPG", "shot.jpeg", "raw.DNG").forEach { fileName ->
+            assertEquals(
+                MediaBeginFrame("photo-1", fileName, 1, hash),
+                decode(encode(MediaBeginFrame("photo-1", fileName, 1, hash))),
+            )
+        }
+        listOf("route.kmz", "../shot.jpg", "shot.png", "a/shot.jpg").forEach { fileName ->
+            assertEquals(
+                ProtocolErrorCode.INVALID_FILE_NAME,
+                assertIs<Rejected>(validate(MediaBeginFrame("photo-1", fileName, 1, hash))).error.code,
+            )
+        }
+    }
+
+    @Test
     fun validatesGenericStringsBeforeIgnoringUnknownFrame() {
-        val value = "a".repeat(65_537)
+        val value = "a".repeat(ProtocolLimits.maxJsonStringCodePoints + 1)
         val json = """{"type":"future-event","value":"$value"}"""
 
         val result = RelayFrameCodec.decode(json.toByteArray())

@@ -14,13 +14,23 @@ import com.skycommand.relay.settings.command.*
 import com.skycommand.relay.settings.executor.*
 import java.util.concurrent.atomic.AtomicBoolean
 
-data class DeviceSettingsDependencies(val djiPort: DjiSettingsPort, val operationCoordinator: DjiOperationCoordinator, val timeoutMillis: Long = 30_000)
+data class DeviceSettingsDependencies(
+    val djiPort: DjiSettingsPort,
+    val cameraOperationCoordinator: DjiOperationCoordinator,
+    val transmissionSettingsOperationCoordinator: DjiOperationCoordinator,
+    val timeoutMillis: Long = 30_000,
+)
 
 class DeviceSettings private constructor(private val dependencies: DeviceSettingsDependencies) {
     private val active = mutableSetOf<OperationCancellationHandle>()
     private val lock = Any()
     private var requestInFlight = false
-    private val executor = SettingsExecutor.create(dependencies.djiPort, dependencies.operationCoordinator, dependencies.timeoutMillis)
+    private val executor = SettingsExecutor.create(
+        dependencies.djiPort,
+        dependencies.cameraOperationCoordinator,
+        dependencies.transmissionSettingsOperationCoordinator,
+        dependencies.timeoutMillis,
+    )
     private val commands = SettingsCommandHandler.create(Actions())
     fun commandHandler(): CommandHandler = CommandHandler(::handle)
     fun markDeviceUnavailable() {

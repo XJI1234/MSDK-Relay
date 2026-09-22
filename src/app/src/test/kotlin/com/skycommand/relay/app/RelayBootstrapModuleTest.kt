@@ -76,7 +76,7 @@ class RelayBootstrapModuleTest {
         ports.gatewayStateChanged(SessionState.ACTIVE)
 
         assertEquals(
-            listOf("stream-unavailable", "telemetry-publication-reset", "telemetry-publish"),
+            listOf("stream-unavailable", "camera-photo-abort", "telemetry-publication-reset", "telemetry-publish"),
             ports.events,
         )
     }
@@ -96,6 +96,7 @@ class RelayBootstrapModuleTest {
             "mission-unavailable",
             "flight-control-unavailable",
             "device-settings-unavailable",
+            "camera-photo-unavailable",
         ).forEach { event ->
             assertTrue(ports.events.indexOf(event) in 0 until firstRelease, event)
         }
@@ -112,7 +113,7 @@ class RelayBootstrapModuleTest {
         assertEquals(
             listOf(
                 "device-listen", "gateway-listen", "device-start", "gateway-start", "telemetry-start",
-                "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable",
+                "stream-unavailable", "mission-unavailable", "flight-control-unavailable", "device-settings-unavailable", "camera-photo-unavailable",
                 "telemetry-stop", "gateway-unlisten", "device-unlisten",
                 "gateway-stop", "flight-close", "device-stop",
             ),
@@ -316,5 +317,7 @@ class RelayBootstrapModuleTest {
         override fun markMissionUnavailable() { events += "mission-unavailable" }
         override fun markFlightControlUnavailable() { events += "flight-control-unavailable" }
         override fun markDeviceSettingsUnavailable() { events += "device-settings-unavailable" }
+        override fun markCameraPhotoUnavailable() { events += "camera-photo-unavailable" }
+        override fun abortCameraPhotoTransfer() { events += "camera-photo-abort" }
     }
 }

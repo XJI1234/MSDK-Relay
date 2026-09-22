@@ -22,6 +22,16 @@ import kotlin.test.assertTrue
 class PairingControllerContractTest {
 
     @Test
+    fun startsPairingWhenTheFlightControllerIsUnknownBecauseNoAircraftHasReported() {
+        val fixture = Fixture()
+        fixture.store.apply(DeviceStatePatch.remoteController(1, LinkState.CONNECTED, "RC"))
+        fixture.store.apply(DeviceStatePatch.pairing(1, PairingState.IDLE))
+        fixture.store.apply(DeviceStatePatch.sdk(1, SdkAvailability.READY))
+
+        assertIs<PairingRequestResult.Accepted>(fixture.controller.start(1_000) { })
+    }
+
+    @Test
     fun startsPairingWhenTheFlightControllerIsDisconnectedEvenIfProductKeyIsConnected() {
         val fixture = Fixture()
         fixture.makeReady()

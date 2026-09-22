@@ -98,6 +98,18 @@ class DeviceCapabilityReaderContractTest {
     }
 
     @Test
+    fun allowsPairingWhenFlightControllerHasNotReportedBecauseNoAircraftIsPresent() {
+        val snapshot = initialSnapshot().copy(
+            sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED,
+            flightController = LinkState.UNKNOWN,
+            pairing = PairingState.IDLE,
+        )
+
+        assertEquals(true, DeviceCapabilityReader.read(snapshot).canStartPairing)
+    }
+
+    @Test
     fun refusesPairingWhenFlightControllerIsAlreadyConnected() {
         val snapshot = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.READY,

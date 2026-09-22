@@ -160,6 +160,7 @@ private fun commandModule(name: String): String = when {
     name.startsWith("live-stream.") -> "live-stream"
     name.startsWith("flight.") -> "flight-control"
     name.startsWith("device.settings.") -> "device-settings"
+    name.startsWith("camera.photo.") -> "camera-photo"
     name.startsWith("pairing.") -> "device-connection"
     name.startsWith("telemetry.") -> "telemetry"
     else -> "relay-gateway"

@@ -82,12 +82,11 @@ object RelayFrameCodec {
         }
 
         return try {
-            val missionChunkData = if (root.get("type")?.textValue() == "mission-chunk") {
-                root.get("data")
-            } else {
-                null
+            val chunkData = when (root.get("type")?.textValue()) {
+                "mission-chunk", "media-chunk" -> root.get("data")
+                else -> null
             }
-            validateJsonTree(root, missionChunkData)
+            validateJsonTree(root, chunkData)
             decodeKnownFrame(root)
         } catch (error: CodecFailure) {
             DecodeResult.Rejected(error.error)
@@ -227,6 +226,32 @@ object RelayFrameCodec {
                 ),
             )
 
+            "media-begin" -> decoded(
+                MediaBeginFrame(
+                    id = requiredText(root, "id"),
+                    fileName = requiredText(root, "fileName"),
+                    size = requiredLong(root, "size"),
+                    sha256 = requiredText(root, "sha256"),
+                )
+            )
+
+            "media-chunk" -> decoded(
+                MediaChunkFrame(
+                    id = requiredText(root, "id"),
+                    bytes = decodeBase64(requiredText(root, "data")),
+                )
+            )
+
+            "media-complete" -> decoded(MediaCompleteFrame(requiredText(root, "id")))
+
+            "media-result" -> decoded(
+                MediaResultFrame(
+                    id = requiredText(root, "id"),
+                    ok = requiredBoolean(root, "ok"),
+                    detail = optionalText(root, "detail") ?: "",
+                )
+            )
+
             else -> DecodeResult.Ignored(type)
         }
     }
@@ -333,6 +358,32 @@ object RelayFrameCodec {
                 root.put("type", "diagnostic-ack")
                 root.put("runId", frame.runId)
                 root.put("acknowledgedSequence", frame.acknowledgedSequence)
+            }
+
+            is MediaBeginFrame -> {
+                root.put("type", "media-begin")
+                root.put("id", frame.id)
+                root.put("fileName", frame.fileName)
+                root.put("size", frame.size)
+                root.put("sha256", frame.sha256)
+            }
+
+            is MediaChunkFrame -> {
+                root.put("type", "media-chunk")
+                root.put("id", frame.id)
+                root.put("data", Base64.getEncoder().encodeToString(frame.bytes))
+            }
+
+            is MediaCompleteFrame -> {
+                root.put("type", "media-complete")
+                root.put("id", frame.id)
+            }
+
+            is MediaResultFrame -> {
+                root.put("type", "media-result")
+                root.put("id", frame.id)
+                root.put("ok", frame.ok)
+                root.put("detail", frame.detail)
             }
         }
         return root

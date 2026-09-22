@@ -15,10 +15,38 @@ import kotlin.test.assertIs
 
 class SettingsExecutorContractTest {
     @Test
+    fun dispatchesCameraAndTransmissionRequestsThroughTheirRespectiveOperationCoordinators() {
+        val cameraExecutor = ManualExecutor()
+        val transmissionExecutor = ManualExecutor()
+        val port = Port()
+        val settings = SettingsExecutor.create(
+            port = port,
+            cameraCoordinator = DjiOperationCoordinator.create(cameraExecutor, Scheduler()),
+            transmissionCoordinator = DjiOperationCoordinator.create(transmissionExecutor, Scheduler()),
+            timeoutMillis = 1_000,
+        )
+
+        assertIs<SettingsSubmissionResult.Accepted>(settings.execute(SettingsRequest.Read(SettingsDomain.CAMERA)))
+        assertIs<SettingsSubmissionResult.Accepted>(settings.execute(SettingsRequest.Read(SettingsDomain.TRANSMISSION)))
+
+        cameraExecutor.runNext()
+        assertEquals(listOf<SettingsRequest>(SettingsRequest.Read(SettingsDomain.CAMERA)), port.requests)
+        transmissionExecutor.runNext()
+        assertEquals(
+            listOf<SettingsRequest>(
+                SettingsRequest.Read(SettingsDomain.CAMERA),
+                SettingsRequest.Read(SettingsDomain.TRANSMISSION),
+            ),
+            port.requests,
+        )
+    }
+
+    @Test
     fun serializesRequestsAndReturnsOnlyMatchingConfirmedSnapshots() {
         val executor = ManualExecutor()
         val port = Port()
-        val settings = SettingsExecutor.create(port, DjiOperationCoordinator.create(executor, Scheduler()), 1_000)
+        val coordinator = DjiOperationCoordinator.create(executor, Scheduler())
+        val settings = SettingsExecutor.create(port, coordinator, coordinator, 1_000)
         val outcomes = mutableListOf<SettingsExecutionOutcome>()
 
         assertIs<SettingsSubmissionResult.Accepted>(settings.execute(SettingsRequest.Read(SettingsDomain.CAMERA)) { outcomes += it })
@@ -37,7 +65,8 @@ class SettingsExecutorContractTest {
         val executor = ManualExecutor()
         val scheduler = Scheduler()
         val port = Port()
-        val settings = SettingsExecutor.create(port, DjiOperationCoordinator.create(executor, scheduler), 1_000)
+        val coordinator = DjiOperationCoordinator.create(executor, scheduler)
+        val settings = SettingsExecutor.create(port, coordinator, coordinator, 1_000)
         val outcomes = mutableListOf<SettingsExecutionOutcome>()
 
         assertIs<SettingsSubmissionResult.Accepted>(settings.execute(SettingsRequest.Read(SettingsDomain.CAMERA)) { outcomes += it })
@@ -55,7 +84,8 @@ class SettingsExecutorContractTest {
     fun forwardsOnlyARealDjiFailureSummaryToTheExecutionListener() {
         val executor = ManualExecutor()
         val port = Port()
-        val settings = SettingsExecutor.create(port, DjiOperationCoordinator.create(executor, Scheduler()), 1_000)
+        val coordinator = DjiOperationCoordinator.create(executor, Scheduler())
+        val settings = SettingsExecutor.create(port, coordinator, coordinator, 1_000)
         val failure = SettingsDjiFailure.fromDjiError("COMMON_SYSTEM_BUSY", "The camera is busy")
         var received: SettingsDjiFailure? = null
 

@@ -6,12 +6,16 @@ import android.text.InputType
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.skycommand.relay.device.pairing.PairingRequestResult
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.runtime.RuntimeState
@@ -42,6 +46,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
         settings = RelaySettings.create(AndroidRelaySettingsBackend.create(this))
         val restored = RelayRuntimeHolder.restore()
         if (restored != null) {
@@ -89,14 +95,15 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun buildContent(): LinearLayout {
+    private fun buildContent(): View {
         val density = resources.displayMetrics.density
         val padding = (24 * density).toInt()
-        val root = LinearLayout(this).apply {
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(padding, padding, padding, padding)
+            setPadding(padding, padding, padding, padding * 4)
         }
-        root.addView(TextView(this).apply {
+        page.addView(TextView(this).apply {
             text = getString(R.string.app_name)
             textSize = 26f
             setTextColor(0xFF17211F.toInt())
@@ -107,18 +114,15 @@ class MainActivity : ComponentActivity() {
             setPadding(16, 16, 16, 16)
             setBackgroundColor(0xFFE9EFED.toInt())
         }
-        root.addView(statusView, matchWrap())
+        page.addView(statusView, matchWrap())
         messageView = TextView(this).apply {
             textSize = 14f
             setTextColor(0xFF8A3A32.toInt())
             setPadding(0, 12, 0, 0)
             visibility = View.GONE
         }
-        root.addView(messageView, matchWrap())
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        content.addView(TextView(this).apply {
+        page.addView(messageView, matchWrap())
+        page.addView(TextView(this).apply {
             text = getString(R.string.endpoint_label)
             textSize = 14f
             setPadding(0, padding, 0, 8)
@@ -129,7 +133,7 @@ class MainActivity : ComponentActivity() {
             minHeight = (52 * density).toInt()
             setSingleLine(true)
         }
-        content.addView(endpointInput, matchWrap())
+        page.addView(endpointInput, matchWrap())
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 16, 0, 16)
@@ -148,8 +152,8 @@ class MainActivity : ComponentActivity() {
             stopButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
         )
-        content.addView(actions, matchWrap())
-        content.addView(TextView(this).apply {
+        page.addView(actions, matchWrap())
+        page.addView(TextView(this).apply {
             text = getString(R.string.pairing_hint)
             textSize = 13f
             setTextColor(0xFF5B6B67.toInt())
@@ -174,8 +178,24 @@ class MainActivity : ComponentActivity() {
             stopPairingButton,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
         )
-        content.addView(pairingActions, matchWrap())
-        val scroll = ScrollView(this).apply { addView(content) }
+        page.addView(pairingActions, matchWrap())
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            addView(page, matchWrap())
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom + ime.bottom)
+            if (endpointInput.isFocused) {
+                scroll.post { scroll.smoothScrollTo(0, endpointInput.top) }
+            }
+            insets
+        }
+        endpointInput.setOnFocusChangeListener { view, focused ->
+            if (focused) scroll.post { scroll.smoothScrollTo(0, view.top) }
+        }
         root.addView(
             scroll,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),

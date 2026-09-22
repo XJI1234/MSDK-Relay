@@ -11,6 +11,9 @@ import com.skycommand.relay.protocol.Accepted
 import com.skycommand.relay.protocol.CommandResultFrame
 import com.skycommand.relay.protocol.DiagnosticReportFrame
 import com.skycommand.relay.protocol.HelloFrame
+import com.skycommand.relay.protocol.MediaBeginFrame
+import com.skycommand.relay.protocol.MediaChunkFrame
+import com.skycommand.relay.protocol.MediaCompleteFrame
 import com.skycommand.relay.protocol.MissionResultFrame
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.RelayFrame
@@ -71,7 +74,10 @@ class OutboundPublisher : SessionOutbound {
             frame !is CommandResultFrame &&
             frame !is MissionResultFrame &&
             frame !is MissionPhaseFrame &&
-            frame !is DiagnosticReportFrame
+            frame !is DiagnosticReportFrame &&
+            frame !is MediaBeginFrame &&
+            frame !is MediaChunkFrame &&
+            frame !is MediaCompleteFrame
         ) {
             return PublishResult.Rejected(PublishRejectionKind.DIRECTION_NOT_ALLOWED)
         }

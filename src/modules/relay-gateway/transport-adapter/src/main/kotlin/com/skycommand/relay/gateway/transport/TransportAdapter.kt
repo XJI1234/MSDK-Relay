@@ -61,6 +61,31 @@ internal interface SocketHandle {
     fun close(): Boolean
 }
 
+internal const val WEBSOCKET_SEND_WATERMARK_BYTES = 2L * 1024 * 1024
+
+internal fun enqueueWebSocketBytes(
+    payload: ByteArray,
+    send: (ByteArray) -> Boolean,
+    queuedBytes: () -> Long,
+    waitForDrain: () -> Unit,
+    maxAttempts: Int = 3_000,
+    watermarkBytes: Long = WEBSOCKET_SEND_WATERMARK_BYTES,
+): Boolean {
+    val limit = maxAttempts.coerceAtLeast(1)
+    var attempts = 0
+    while (attempts < limit) {
+        attempts += 1
+        if (queuedBytes() > watermarkBytes) {
+            waitForDrain()
+            continue
+        }
+        if (send(payload)) return true
+        if (queuedBytes() <= 0L) return false
+        waitForDrain()
+    }
+    return false
+}
+
 internal class EngineTransportConnector(
     private val engine: SocketEngine,
 ) : TransportConnector {
@@ -125,13 +150,19 @@ private class AdapterConnection(
         callbacks.forEach { pending -> deliver(pending.callback) }
     }
 
-    override fun write(bytes: ByteArray): TransportWriteResult = lock.withLock {
-        val currentSocket = socket
-        if (!opened || closeRequested || terminalDelivered || currentSocket == null) {
-            return TransportWriteResult.WriteRejected
+    override fun write(bytes: ByteArray): TransportWriteResult {
+        val currentSocket: SocketHandle
+        val payload: ByteArray
+        lock.withLock {
+            val socket = this.socket
+            if (!opened || closeRequested || terminalDelivered || socket == null) {
+                return TransportWriteResult.WriteRejected
+            }
+            currentSocket = socket
+            payload = bytes.copyOf()
         }
-        val accepted = runCatching { currentSocket.send(bytes.copyOf()) }.getOrDefault(false)
-        if (accepted) TransportWriteResult.WriteAccepted else TransportWriteResult.WriteRejected
+        val accepted = runCatching { currentSocket.send(payload) }.getOrDefault(false)
+        return if (accepted) TransportWriteResult.WriteAccepted else TransportWriteResult.WriteRejected
     }
 
     override fun close(reason: String): TransportCloseResult {
@@ -278,7 +309,12 @@ private class OkHttpSocketEngine(
 private class OkHttpSocketHandle(
     private val socket: WebSocket,
 ) : SocketHandle {
-    override fun send(bytes: ByteArray): Boolean = socket.send(ByteString.of(*bytes))
+    override fun send(bytes: ByteArray): Boolean = enqueueWebSocketBytes(
+        bytes,
+        send = { socket.send(ByteString.of(*it)) },
+        queuedBytes = { socket.queueSize() },
+        waitForDrain = { Thread.sleep(20) },
+    )
 
     override fun close(): Boolean = socket.close(1000, "Relay transport closing")
 }

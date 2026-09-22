@@ -101,6 +101,12 @@ includeRelayModule(":device-settings:settings-command-handler")
 includeRelayModule(":device-settings:settings-executor")
 includeRelayModule(":device-settings:android-dji-settings-adapter")
 
+includeRelayModule(":camera-photo")
+includeRelayModule(":camera-photo:photo-command-handler")
+includeRelayModule(":camera-photo:photo-executor")
+includeRelayModule(":camera-photo:photo-media-publisher")
+includeRelayModule(":camera-photo:android-dji-photo-adapter")
+
 includeRelayModule(":relay-settings")
 includeRelayModule(":relay-settings:endpoint-settings")
 includeRelayModule(":relay-settings:device-identity")

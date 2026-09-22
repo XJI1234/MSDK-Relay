@@ -88,7 +88,11 @@ class DeviceSettingsContractTest {
     private fun settings(port: DjiSettingsPort): DeviceSettings = DeviceSettings.create(
         DeviceSettingsDependencies(
             djiPort = port,
-            operationCoordinator = DjiOperationCoordinator.create(
+            cameraOperationCoordinator = DjiOperationCoordinator.create(
+                executor = OperationExecutor { it() },
+                scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+            ),
+            transmissionSettingsOperationCoordinator = DjiOperationCoordinator.create(
                 executor = OperationExecutor { it() },
                 scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
             ),

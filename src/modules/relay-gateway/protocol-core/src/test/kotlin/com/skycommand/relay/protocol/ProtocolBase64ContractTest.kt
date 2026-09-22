@@ -63,11 +63,11 @@ class ProtocolBase64ContractTest {
 
     @Test
     fun rejectsDecodedChunkOneByteBeyondLimit() {
-        val data = Base64.getEncoder().encodeToString(ByteArray(49_153))
+        val data = Base64.getEncoder().encodeToString(ByteArray(ProtocolLimits.maxMissionChunkBytes + 1))
 
         val result = decodeChunk(data)
 
-        assertEquals(65_540, data.length)
+        assertEquals(ProtocolLimits.maxMissionChunkBase64Chars, data.length)
         assertEquals(
             ProtocolErrorCode.CHUNK_TOO_LARGE,
             assertIs<DecodeResult.Rejected>(result).error.code,

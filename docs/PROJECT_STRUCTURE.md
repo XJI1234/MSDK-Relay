@@ -105,6 +105,12 @@ src/modules/
     settings-executor/              settings execution
     android-dji-settings-adapter/   Android DJI settings adapter
 
+  camera-photo/                     camera still-photo facade
+    photo-command-handler/          photo command interpretation
+    photo-executor/                 photo capture and aircraft download
+    photo-media-publisher/          outbound original-photo chunk transfer
+    android-dji-photo-adapter/      Android DJI shutter and media-download adapter
+
   runtime-diagnostics/              restricted diagnostic publication
     diagnostic-core/                diagnostic value model
     gateway-diagnostic-publisher/   gateway diagnostic publication

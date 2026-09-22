@@ -29,6 +29,7 @@ import com.skycommand.relay.protocol.RelayFrameCodec
 import com.skycommand.relay.protocol.TelemetryFrame
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -319,6 +320,77 @@ class TransportAdapterContractTest {
         override fun onClosed(generation: SessionGeneration, reason: String) = error("listener secret")
 
         override fun onFailure(generation: SessionGeneration, reason: String) = error("listener secret")
+    }
+
+    @Test
+    fun retriesAFullOutgoingQueueUntilTheSameBytesAreAccepted() {
+        var attempts = 0
+        assertTrue(
+            enqueueWebSocketBytes(
+                byteArrayOf(7),
+                send = {
+                    attempts += 1
+                    attempts >= 3
+                },
+                queuedBytes = { 1L },
+                waitForDrain = { },
+            ),
+        )
+        assertEquals(3, attempts)
+    }
+
+    @Test
+    fun waitsUntilTheOutgoingQueueFallsToTheWatermarkBeforeSending() {
+        var queued = 3L * 1024 * 1024
+        var waits = 0
+        var sent = 0
+        assertTrue(
+            enqueueWebSocketBytes(
+                byteArrayOf(7),
+                send = {
+                    sent += 1
+                    true
+                },
+                queuedBytes = { queued },
+                waitForDrain = {
+                    waits += 1
+                    queued = 1024 * 1024
+                },
+            ),
+        )
+        assertEquals(1, waits)
+        assertEquals(1, sent)
+    }
+
+    @Test
+    fun retriesAFullOutgoingQueueForSixtySecondsWorthOfAttemptsBeforeGivingUp() {
+        var attempts = 0
+        assertFalse(
+            enqueueWebSocketBytes(
+                byteArrayOf(7),
+                send = {
+                    attempts += 1
+                    false
+                },
+                queuedBytes = { 1L },
+                waitForDrain = { },
+            ),
+        )
+        assertEquals(3_000, attempts)
+    }
+
+    @Test
+    fun doesNotWaitWhenTheSocketHasAlreadyClosed() {
+        var waited = false
+        assertFalse(
+            enqueueWebSocketBytes(
+                byteArrayOf(7),
+                send = { false },
+                queuedBytes = { 0L },
+                waitForDrain = { waited = true },
+            ),
+        )
+        assertFalse(waited)
     }
 
     private fun generationForTest(): SessionGeneration {

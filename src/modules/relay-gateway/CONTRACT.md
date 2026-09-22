@@ -18,7 +18,7 @@
 - 使用 `relay-settings` 提供的端点和设备身份建立会话；
 - 发送 `hello` 并验证 `paired`；
 - 接收电脑命令并交给已注册的处理器；
-- 发布遥测、命令结果、航线传输结果、航线阶段事实和已脱敏诊断报告；
+- 发布遥测、命令结果、航线传输结果、航线阶段事实、已脱敏诊断报告和原图媒体分块；
 - 识别断线、替换连接、无效帧和协议错误；
 - 在会话结束时取消未完成的传输和命令等待。
 
@@ -28,8 +28,9 @@
 - 读取或聚合 DJI 状态；
 - 生成、校验或上传 KMZ；
 - 启动或停止直播；
+- 调用快门、从飞行器下载原图或把照片写入电脑磁盘；
 - 显示 Android UI；
-- 解释飞行、直播或航线业务规则。
+- 解释飞行、直播、航线或拍照业务规则。
 
 ## 3. 外部接口
 
@@ -48,6 +49,10 @@ RelayGateway.publishMissionResult(missionResultFrame) -> PublishResult
 RelayGateway.publishMissionPhase(missionPhaseFrame) -> PublishResult
 RelayGateway.publishDiagnosticReport(diagnosticReportFrame) -> PublishResult
 RelayGateway.registerDiagnosticAcknowledgementHandler(handler) -> Registration
+RelayGateway.publishMediaBegin(mediaBeginFrame) -> PublishResult
+RelayGateway.publishMediaChunk(mediaChunkFrame) -> PublishResult
+RelayGateway.publishMediaComplete(mediaCompleteFrame) -> PublishResult
+RelayGateway.registerMediaResultHandler(handler) -> Registration
 
 RelayGateway.onStateChanged(listener) -> Registration
 ```
@@ -66,6 +71,8 @@ RelayGateway.onStateChanged(listener) -> Registration
 - `publishMissionPhase()` 只接受 `protocol-core` 定义的 `MissionPhaseFrame`；调用方必须是应用组合层的 `wayline-mission` 阶段事件桥接，不得由 gateway、电脑端请求或 DJI 原始状态直接构造。它不缓存、重排、确认或重发阶段事实。
 - `publishDiagnosticReport()` 只允许发送已经由 `runtime-diagnostics` 脱敏、排序和限量的报告；返回 `Delivered` 仅表示交给当前传输层，绝不表示电脑已持久化。
 - `registerDiagnosticAcknowledgementHandler()` 只转发合法的 `diagnostic-ack`；它不得保存、解释或确认任何业务状态。
+- `publishMediaBegin()` / `publishMediaChunk()` / `publishMediaComplete()` 只发送 `camera-photo` 已构造的媒体帧；`Delivered` 只表示交给当前传输层。同一活动会话由业务模块保证最多一个媒体发送。
+- `registerMediaResultHandler()` 只转发合法的 `media-result`；gateway 不累计字节、不计算摘要、不写文件。
 
 ## 3.1 二级模块划分
 
@@ -100,6 +107,7 @@ transport-adapter
 - command-dispatcher 只接收手机端允许的 `command` 帧；
 - mission-transfer 只接收手机端允许的三种任务传输帧；
 - 诊断确认处理器只接收电脑端的 `diagnostic-ack` 并转交 `runtime-diagnostics`；
+- 媒体结果处理器只接收电脑端的 `media-result` 并转交 `camera-photo`；
 - outbound-publisher 只发送当前会话产生的帧，旧会话的异步结果必须被丢弃。
 
 ### 二级模块边界规则
@@ -216,6 +224,8 @@ device.settings.camera.read
 device.settings.camera.write
 device.settings.transmission.read
 device.settings.transmission.write
+camera.photo.capture
+camera.photo.fetch
 ```
 
 实验低延迟链路另外使用 `live-stream-webrtc.start` 与 `live-stream-webrtc.stop`。这两个命令必须保持与旧 `live-stream.start` / `live-stream.stop` 的注册和状态隔离：旧链路可继续运行，新链路失败时不得改变旧链路状态。新命令的字段约束由手机端 `whip-live-stream` 处理器承担，命令成功只表示手机端 WHIP 发布器的业务终态，不表示电脑端 WHEP 首帧已经显示。

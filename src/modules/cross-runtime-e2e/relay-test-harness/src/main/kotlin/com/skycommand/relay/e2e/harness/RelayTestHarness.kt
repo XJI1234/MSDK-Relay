@@ -304,7 +304,12 @@ class RelayTestHarness private constructor(
                 FlightControlDependencies(ports.flight, device.flightOperations(), timeoutMillis = 1_000),
             )
             val deviceSettings = DeviceSettings.create(
-                DeviceSettingsDependencies(ports.settings, device.settingsOperations(), timeoutMillis = 1_000),
+                DeviceSettingsDependencies(
+                    djiPort = ports.settings,
+                    cameraOperationCoordinator = device.settingsOperations(),
+                    transmissionSettingsOperationCoordinator = device.settingsOperations(),
+                    timeoutMillis = 1_000,
+                ),
             )
             val stream = LiveStream.create(
                 LiveStreamDependencies(
@@ -405,6 +410,12 @@ class RelayTestHarness private constructor(
             val pairing = pairingHandler(device, telemetry)
             listOf("pairing.start", "pairing.stop", "pairing.status").forEach { handlers[it] = pairing }
             listOf("live-stream.start", "live-stream.stop").forEach { handlers[it] = stream.commandHandler() }
+            listOf("camera.photo.capture", "camera.photo.fetch").forEach { name ->
+                handlers[name] = CommandHandler { command, completion ->
+                    if (command.fields.fields.isNotEmpty()) completion.reject("Photo command fields are invalid")
+                    else completion.reject("Photo hardware is unavailable")
+                }
+            }
             listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing").forEach { handlers[it] = flightControl.commandHandler() }
             listOf(
                 "device.settings.camera.read", "device.settings.camera.write",

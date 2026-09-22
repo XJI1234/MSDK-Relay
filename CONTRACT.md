@@ -41,6 +41,7 @@
 7. 在每次明确确认后，提交起飞、降落和返航命令，并把 DJI 终态结果与后续遥测分别回传。
 8. 读取或修改相机和图传设置，并在写入后重新读取完整设置快照。
 9. 在连接断开、设备未就绪或 DJI SDK 拒绝操作时，返回明确的失败结果，而不是假装操作成功。
+10. 拍摄一张相机原图，并按请求把该原图分块回传到电脑。
 
 这些能力分别属于以下一级模块：
 
@@ -55,6 +56,7 @@
 | `live-stream` | RTMP 地址校验、直播启动、停止和状态回报 |
 | `flight-control` | 经明确确认后串行提交起飞、降落和返航，并返回 DJI 操作终态 |
 | `device-settings` | 读取和修改相机、图传设置，写入后回读完整快照 |
+| `camera-photo` | 拍摄相机原图，并把指定那张原图分块回传到电脑 |
 | `runtime-diagnostics` | 脱敏记录运行诊断，并经既有电脑会话可靠交付给电脑端 |
 
 模块之间应通过清晰的接口协作。`relay-gateway` 不得直接依赖 DJI SDK；业务模块不得自己创建 WebSocket 连接。这样更换网络库、JSON 库或 DJI SDK 版本时，不需要同时修改所有模块。
@@ -188,6 +190,17 @@
 
 `device-settings` 写入成功后必须重新读取完整快照，作为 `command-result.result` 返回；它不管理 RTMP 推流或视频数据。实现已完成，目标机型上各 DJI 键的实际可用性待实机验证。
 
+#### `camera-photo`
+
+| 二级模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `photo-command-handler` | 严格解析 `camera.photo.capture` 与 `camera.photo.fetch`，且字段必须为空 | 保存状态、创建线程或调用 DJI |
+| `photo-executor` | 经拍照域 DJI 操作协调器执行一次快门或一次从飞行器下载 | 协议解析、Android SDK 类型、WebSocket 分块 |
+| `android-dji-photo-adapter` | 唯一调用 `CameraKey` 快门和 `IMediaManager` 下载 | 命令校验、排队、超时或网关结果 |
+| `photo-media-publisher` | 按 `media-begin/chunk/complete` 把已下载原图发给电脑并等待 `media-result` | DJI 调用、命令解析、桌面落盘 |
+
+`camera-photo` 的拍照成功只表示 DJI 已确认快门；回传成功只表示电脑 `media-result.ok=true`。它不停止图传，不截视频帧，不浏览飞行器相册。契约已批准，实现未开始。
+
 #### `runtime-diagnostics`
 
 | 二级模块 | 只负责 | 明确不负责 |
@@ -236,6 +249,10 @@ device-settings
   -> device-connection 的只读状态接口和 DJI 操作调度接口
   -> relay-gateway 的命令注册和结果发布接口
 
+camera-photo
+  -> device-connection 的只读状态接口和拍照域 DJI 操作调度接口
+  -> relay-gateway 的命令注册、媒体分块发布和 media-result 注册接口
+
 runtime-diagnostics
   -> relay-gateway 的诊断发布与确认注册接口
   -> 各一级模块的只读诊断事件接口
@@ -243,7 +260,7 @@ runtime-diagnostics
 
 `wayline-mission` 和 `live-stream` 执行 DJI 操作时，必须使用 `device-connection` 提供的统一 DJI 操作调度接口。它们不能各自创建执行器或直接并发调用 DJI SDK。
 
-`flight-control` 和 `device-settings` 也必须使用同一 DJI 操作调度接口。四类 DJI 业务操作不得绕开该协调器并发调用 DJI SDK。
+`flight-control`、`device-settings` 和 `camera-photo` 也必须使用同一 DJI 操作调度接口。拍照、飞行、航线、设置、图传不得绕开该协调器并发调用同一域的 DJI SDK。原图 WebSocket 分块不属于 DJI 操作槽位。
 
 以下依赖永远禁止：
 
@@ -285,6 +302,7 @@ runtime-diagnostics
 | Android 前台运行和权限 | `app-runtime` | `foreground-service`、`permission-coordinator` |
 | 起飞、降落、返航 | `flight-control` | `flight-command-handler`、`dji-flight-adapter`、`android-dji-flight-adapter` |
 | 读取/修改相机与图传设置 | `device-settings` | `settings-command-handler`、`settings-executor`、`android-dji-settings-adapter` |
+| 拍照与原图回传 | `camera-photo` | `photo-command-handler`、`photo-executor`、`android-dji-photo-adapter`、`photo-media-publisher` |
 | 无线故障定位日志 | `runtime-diagnostics` + 电脑端 | `diagnostic-core`、`android-diagnostic-adapter`、`gateway-diagnostic-publisher` |
 
 没有列在表中的一级或二级模块不得自行增加新的业务能力；新增能力必须先更新本表和对应契约。
@@ -348,6 +366,7 @@ runtime-diagnostics
 - 负责外部航线文件的选择、导入、预览和电脑端文件管理；不在 Sky Command 内规划、编辑或生成航线。
 - 不得调用已移除的 `wayline.generate`；只发送经桌面端合格性判定的 KMZ 文件。
 - 负责接收 RTMP、转码、播放和媒体状态展示。
+- 负责接收手机回传的相机原图，写入本机照片目录，并在飞行页提供打开入口。
 - 根据遥测和结果向用户展示可理解的状态和错误。
 - 不直接依赖手机端的 Kotlin 类、Android 类或 DJI SDK 类型。
 
@@ -617,6 +636,19 @@ device.settings.transmission.write
 
 `ok: true` 表示 DJI 已确认该次读写且写入后完整快照回读成功，不表示桌面端已持久化或显示它。该模块实现已完成，实际 DJI 键在目标机型上的可用性和写入结果仍待实机验证。
 
+### 7.11 拍照与原图回传
+
+命令如下：
+
+```text
+camera.photo.capture
+camera.photo.fetch
+```
+
+两个命令的请求字段都必须是空对象。`capture` 调用主相机快门；成功时 `command-result.result` 携带 `{ "domain": "photo", "outcome": "CAPTURED", "fileName", "index" }`，只表示飞行器存储里已有该张原图。`fetch` 只能回传本手机当前代次里最近一次拍照成功的那张；没有该身份时必须失败。`fetch` 先经 `IMediaManager` 把文件拉到手机，再发 `media-begin` / `media-chunk` / `media-complete`；只有电脑 `media-result.ok=true` 后命令才成功，此时 `result` 为 `{ "domain": "photo", "outcome": "DELIVERED", "fileName", "size", "sha256" }`。
+
+媒体分块的大小、Base64 和 SHA-256 规则与航线 KMZ 相同，文件名必须是安全的 `.jpg` / `.jpeg` / `.dng` 基名。回传失败不得自动停止图传。旧版本把未知命令或未知媒体帧按既有规则拒绝或忽略，不得断开会话。该模块契约已批准，实现未开始。
+
 ---
 
 ## 8. 遥测契约
@@ -759,7 +791,7 @@ mission-begin
 ### 9.2 不可变规则
 
 - 最大文件大小为 `100 MiB`。
-- 当前电脑端使用的分块上限为 `48 KiB`；手机端必须接受不超过该上限的分块。
+- 当前电脑端使用的分块上限为 `256 KiB`；手机端必须接受不超过该上限的分块。
 - `mission-begin` 中的 `size` 必须大于 `0`，且不能超过上限。
 - 文件名必须是安全的 `.kmz` 基名，不能包含路径、`..`、控制字符或目录分隔符。
 - 手机端必须根据实际收到的字节重新计算 SHA-256，不能只相信电脑端给出的摘要。

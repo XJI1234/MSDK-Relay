@@ -29,6 +29,10 @@ import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.CommandResultFrame
 import com.skycommand.relay.protocol.DiagnosticAcknowledgementFrame
 import com.skycommand.relay.protocol.DiagnosticReportFrame
+import com.skycommand.relay.protocol.MediaBeginFrame
+import com.skycommand.relay.protocol.MediaChunkFrame
+import com.skycommand.relay.protocol.MediaCompleteFrame
+import com.skycommand.relay.protocol.MediaResultFrame
 import com.skycommand.relay.protocol.MissionBeginFrame
 import com.skycommand.relay.protocol.MissionChunkFrame
 import com.skycommand.relay.protocol.MissionCompleteFrame
@@ -58,6 +62,7 @@ class RelayGateway private constructor(
     private val outbound: OutboundPublisher,
     private val commands: CommandDispatcher,
     private val diagnosticAcknowledgements: DiagnosticAcknowledgementDispatcher,
+    private val mediaResults: MediaResultDispatcher,
 ) {
     fun start(): StartResult = session.start()
 
@@ -80,9 +85,17 @@ class RelayGateway private constructor(
 
     fun publishDiagnosticReport(frame: DiagnosticReportFrame): PublishResult = publish(frame)
 
+    fun publishMediaBegin(frame: MediaBeginFrame): PublishResult = publish(frame)
+
+    fun publishMediaChunk(frame: MediaChunkFrame): PublishResult = publish(frame)
+
+    fun publishMediaComplete(frame: MediaCompleteFrame): PublishResult = publish(frame)
+
     fun registerDiagnosticAcknowledgementHandler(
         handler: DiagnosticAcknowledgementHandler,
     ): Registration = diagnosticAcknowledgements.register(handler)
+
+    fun registerMediaResultHandler(handler: MediaResultHandler): Registration = mediaResults.register(handler)
 
     fun onStateChanged(listener: SessionStateListener): Registration = session.onStateChanged(listener)
 
@@ -105,6 +118,7 @@ class RelayGateway private constructor(
                 MissionResultPublisher { activeSession, frame -> outbound.publish(activeSession, frame) },
             )
             val diagnosticAcknowledgements = DiagnosticAcknowledgementDispatcher()
+            val mediaResults = MediaResultDispatcher()
             val activeFrameConsumer = ActiveFrameConsumer { activeSession, frame ->
                 when (frame) {
                     is CommandFrame -> commands.dispatch(activeSession, frame)
@@ -114,6 +128,7 @@ class RelayGateway private constructor(
                     -> missions.accept(activeSession, frame)
 
                     is DiagnosticAcknowledgementFrame -> diagnosticAcknowledgements.dispatch(frame)
+                    is MediaResultFrame -> mediaResults.dispatch(frame)
 
                     else -> Unit
                 }
@@ -138,7 +153,13 @@ class RelayGateway private constructor(
                 ),
             )
             return when (creation) {
-                is SessionCreated -> RelayGateway(creation.session, outbound, commands, diagnosticAcknowledgements)
+                is SessionCreated -> RelayGateway(
+                    creation.session,
+                    outbound,
+                    commands,
+                    diagnosticAcknowledgements,
+                    mediaResults,
+                )
                 is ConfigurationRejected -> throw IllegalArgumentException(creation.detail)
             }
         }
@@ -147,6 +168,10 @@ class RelayGateway private constructor(
 
 fun interface DiagnosticAcknowledgementHandler {
     fun acknowledge(frame: DiagnosticAcknowledgementFrame)
+}
+
+fun interface MediaResultHandler {
+    fun accept(frame: MediaResultFrame)
 }
 
 private class DiagnosticAcknowledgementDispatcher {
@@ -161,5 +186,20 @@ private class DiagnosticAcknowledgementDispatcher {
     fun dispatch(frame: DiagnosticAcknowledgementFrame) {
         val targets = synchronized(lock) { handlers.toList() }
         targets.forEach { handler -> runCatching { handler.acknowledge(frame) } }
+    }
+}
+
+private class MediaResultDispatcher {
+    private val lock = Any()
+    private val handlers = mutableListOf<MediaResultHandler>()
+
+    fun register(handler: MediaResultHandler): Registration {
+        synchronized(lock) { handlers += handler }
+        return Registration { synchronized(lock) { handlers.remove(handler) } }
+    }
+
+    fun dispatch(frame: MediaResultFrame) {
+        val targets = synchronized(lock) { handlers.toList() }
+        targets.forEach { handler -> runCatching { handler.accept(frame) } }
     }
 }

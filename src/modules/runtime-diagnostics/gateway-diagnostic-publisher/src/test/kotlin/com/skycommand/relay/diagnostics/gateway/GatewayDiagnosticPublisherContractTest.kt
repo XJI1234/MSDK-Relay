@@ -90,29 +90,22 @@ class GatewayDiagnosticPublisherContractTest {
     }
 
     @Test
-    fun capsUnacknowledgedSendsAtFourBatches() {
+    fun sendsEveryPendingBatchWithoutWaitingForAcknowledgement() {
         val journal = DiagnosticJournal.create("run-1", 256, FixedClock)
-        repeat(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH + 8) {
-            journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "EVENT", null, "safe")
-        }
+        val eventCount = 5 * DiagnosticJournal.MAX_BATCH + 8
+        repeat(eventCount) { journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "EVENT", null, "safe") }
         val gateway = RecordingGateway(SessionState.ACTIVE)
         val publisher = GatewayDiagnosticPublisher.create(journal, gateway)
 
         publisher.start()
 
-        assertEquals(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES, gateway.reports.size)
+        assertEquals(6, gateway.reports.size)
         assertEquals(1L, gateway.reports.first().events.first().sequence)
-        assertEquals(
-            (GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH).toLong(),
-            gateway.reports.last().events.last().sequence,
-        )
+        assertEquals(eventCount.toLong(), gateway.reports.last().events.last().sequence)
+        assertEquals(eventCount, journal.snapshot().pendingEvents)
         gateway.acknowledge("run-1", DiagnosticJournal.MAX_BATCH.toLong())
-
-        assertEquals(GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES + 1, gateway.reports.size)
-        assertEquals(
-            (GatewayDiagnosticPublisher.MAX_IN_FLIGHT_BATCHES * DiagnosticJournal.MAX_BATCH + 8).toLong(),
-            gateway.reports.last().events.last().sequence,
-        )
+        assertEquals(eventCount - DiagnosticJournal.MAX_BATCH, journal.snapshot().pendingEvents)
+        assertEquals(6, gateway.reports.size)
     }
 
     @Test

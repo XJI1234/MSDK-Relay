@@ -39,7 +39,7 @@ import kotlin.test.assertTrue
 
 class DeviceConnectionContractTest {
     @Test
-    fun exposesIndependentPairingFlightWaylineSettingsAndRtmpQueues() {
+    fun exposesIndependentPairingFlightWaylineSettingsRtmpAndPhotoQueues() {
         val events = mutableListOf<String>()
         val connection = DeviceConnection.create(
             DeviceConnectionDependencies(
@@ -59,8 +59,9 @@ class DeviceConnectionContractTest {
             connection.waylineOperations(),
             connection.settingsOperations(),
             connection.streamOperations(),
+            connection.photoOperations(),
         )
-        assertEquals(5, queues.distinct().size)
+        assertEquals(6, queues.distinct().size)
     }
 
     @Test
