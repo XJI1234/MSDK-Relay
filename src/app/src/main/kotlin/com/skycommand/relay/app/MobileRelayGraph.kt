@@ -98,6 +98,8 @@ import com.skycommand.relay.wayline.android.AndroidDjiWaylineAdapter
 import com.skycommand.relay.wayline.staging.android.AndroidMissionStagingStorage
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -140,7 +142,9 @@ class MobileRelayGraph private constructor(
     private val foregroundPort: AndroidForegroundServicePort,
     private val executor: ScheduledThreadPoolExecutor,
     private val timeoutExecutor: ScheduledThreadPoolExecutor,
+    private val captureDiagnosticExecutor: ExecutorService,
     private val journal: DiagnosticJournal,
+    private val liveCaptureDiagnostics: LiveCaptureDiagnosticRecorder,
     private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
     private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
@@ -209,6 +213,9 @@ class MobileRelayGraph private constructor(
     }
 
     private fun installStatusNotifications() {
+        registrations += cameraFrameObserver.onChanged { snapshot ->
+            liveCaptureDiagnostics.recordCamera(snapshot)
+        }.let { registration -> CloseableRegistration(registration::unregister) }
         registrations += runtime.onChanged {
             notifyStatus()
             if (runtime.snapshot() == RuntimeState.RUNNING) watchUsbAccessory()
@@ -403,6 +410,7 @@ class MobileRelayGraph private constructor(
         runCatching { deviceSettings.close() }
         runCatching { cameraPhoto.close() }
         runCatching { stream.close() }
+        captureDiagnosticExecutor.shutdown()
         runCatching { waylineAdapter.close() }
         runCatching { staging.close() }
         runCatching { foregroundPort.close() }
@@ -424,6 +432,9 @@ class MobileRelayGraph private constructor(
             val timeoutExecutor = ScheduledThreadPoolExecutor(1) { task ->
                 Thread(task, "msdk-relay-timeout").apply { isDaemon = true }
             }.apply { removeOnCancelPolicy = true }
+            val captureDiagnosticExecutor = Executors.newSingleThreadExecutor { task ->
+                Thread(task, "msdk-capture-diagnostics").apply { isDaemon = true }
+            }
             val operationExecutor = OperationExecutor { task -> executor.execute(task) }
             val operationScheduler = OperationScheduler { delay, callback ->
                 val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
@@ -443,6 +454,7 @@ class MobileRelayGraph private constructor(
             )
             val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
             val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
+            val liveCaptureDiagnostics = LiveCaptureDiagnosticRecorder(journal) { task -> captureDiagnosticExecutor.execute(task) }
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),
@@ -536,18 +548,12 @@ class MobileRelayGraph private constructor(
             val cameraFrameObserver = CameraFrameObserver.create(
                 AndroidCameraFrameObservationPort.create(),
                 diagnosticSink = { kind ->
-                    journal.record(
-                        DiagnosticLevel.WARN,
-                        "camera-frame-observer",
-                        kind.name,
-                        null,
-                        "DJI camera frame observation could not be processed",
-                    )
+                    liveCaptureDiagnostics.recordCameraFailure(kind)
                 },
             )
             val stream = LiveStream.create(
                 LiveStreamDependencies(
-                    AndroidDjiStreamPort.create(),
+                    AndroidDjiStreamPort.create { event -> liveCaptureDiagnostics.recordRtmp(event) },
                     device.streamOperations(),
                     StreamStartGate { device.capabilities().canStreamVideo },
                     diagnosticSink = { kind ->
@@ -777,7 +783,7 @@ class MobileRelayGraph private constructor(
             )
             return MobileRelayGraph(
                 runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, timeoutExecutor, journal, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
+                staging, foregroundPort, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }
 

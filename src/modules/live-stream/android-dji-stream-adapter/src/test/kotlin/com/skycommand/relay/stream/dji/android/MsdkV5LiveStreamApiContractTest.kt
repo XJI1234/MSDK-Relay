@@ -9,22 +9,63 @@ import kotlin.test.assertTrue
 
 class MsdkV5LiveStreamApiContractTest {
     @Test
-    fun configuresRtmpThroughLiveStreamManagerWithoutOwningPreviewOrCameraMode() {
+    fun recordsSettingsAndInvocationSeparatelyWithoutChangingSdkOrdering() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+            Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+        ).first { it.exists() }.readText()
+        val start = source.substringAfter("override fun start").substringBefore("override fun stop")
+        assertTrue(start.indexOf("setLiveVideoBitrateMode") < start.indexOf("LiveStreamDiagnosticKind.SETTINGS_APPLIED"))
+        assertTrue(start.indexOf("LiveStreamDiagnosticKind.SETTINGS_APPLIED") < start.indexOf("manager.startStream"))
+        assertTrue(start.contains("LiveStreamDiagnosticKind.START_INVOKED"))
+        assertFalse(start.contains("record(url"))
+    }
+
+    @Test
+    fun recordsReadOnlyCameraInputFactsAtTheThreeStreamingBoundaries() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+            Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("CameraInputCheckpoint.BEFORE_START"))
+        assertTrue(source.contains("CameraInputCheckpoint.AFTER_START_INVOKED"))
+        assertTrue(source.contains("CameraInputCheckpoint.FIRST_STATUS"))
+        assertTrue(source.contains("LiveStreamDiagnosticKind.CAMERA_INPUT_SNAPSHOT"))
+        assertFalse(source.contains("enableStream("))
+        assertFalse(source.contains("setValue(modeKey"))
+        assertFalse(source.contains("setValue(playbackKey"))
+    }
+
+    @Test
+    fun logsOnlyTheFirstStartCompletionButPreservesEverySdkCallbackForThePort() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+            Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+        ).first { it.exists() }.readText()
+        val completion = source.substringAfter("private fun DjiLiveStreamCompletion.toSdkCompletion")
+            .substringBefore("private fun record(")
+        assertTrue(completion.contains("firstCompletion.compareAndSet(false, true)"))
+        assertTrue(completion.contains("succeed()"))
+        assertTrue(completion.contains("fail("))
+    }
+
+    @Test
+    fun configuresMini4ProWithTheKnownGoodRtmpProfileWithoutOwningPreviewOrCameraMode() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
             Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
         ).first { it.exists() }.readText()
         val start = source.substringAfter("override fun start").substringBefore("override fun stop")
         val stop = source.substringAfter("override fun stop")
-        assertTrue(start.contains("ICameraStreamManager.ScaleType.FIX_XY"))
-        assertTrue(start.contains("setLiveStreamScaleType"))
-        assertTrue(start.contains("StreamQuality.FULL_HD"))
-        assertTrue(start.contains("LiveVideoBitrateMode.AUTO"))
-        assertFalse(start.contains("StreamQuality.HD\n") || start.contains("StreamQuality.HD)"))
+        assertTrue(start.contains("StreamQuality.HD"))
+        assertTrue(start.contains("LiveVideoBitrateMode.MANUAL"))
+        assertTrue(start.contains("setLiveVideoBitrate(MINI_4_PRO_HD_BITRATE_BPS)"))
+        assertFalse(start.contains("setLiveStreamScaleType"))
+        assertFalse(start.contains("StreamQuality.FULL_HD"))
         assertFalse(start.contains("StreamQuality.SD"))
         assertFalse(start.contains("StreamQuality.ORIGINAL"))
-        assertFalse(start.contains("LiveVideoBitrateMode.MANUAL"))
-        assertFalse(start.contains("setLiveVideoBitrate("))
+        assertFalse(start.contains("LiveVideoBitrateMode.AUTO"))
         assertFalse(start.contains("cameraStreamManager"))
         assertFalse(start.contains("setKeepAliveDecoding"))
         assertFalse(start.contains("enableStream("))

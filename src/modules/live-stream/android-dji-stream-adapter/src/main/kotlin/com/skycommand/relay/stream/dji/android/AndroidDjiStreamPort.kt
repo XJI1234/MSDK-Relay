@@ -218,5 +218,8 @@ class AndroidDjiStreamPort internal constructor(
     private data class PreparedStart(val previous: Active?, val operation: Active)
     private data class StopOperation(val active: Active?)
 
-    companion object { fun create(): DjiStreamPort = AndroidDjiStreamPort(MsdkV5LiveStreamApi()) }
+    companion object {
+        fun create(diagnosticSink: LiveStreamDiagnosticSink = LiveStreamDiagnosticSink { }): DjiStreamPort =
+            AndroidDjiStreamPort(MsdkV5LiveStreamApi(diagnosticSink = diagnosticSink))
+    }
 }
