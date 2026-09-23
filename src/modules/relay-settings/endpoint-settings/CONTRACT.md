@@ -1,6 +1,6 @@
 # endpoint-settings 模块契约
 
-状态：已批准实现
+状态：已实施
 版本：1.0.0
 所属一级模块：relay-settings
 Gradle 路径：:relay-settings:endpoint-settings
