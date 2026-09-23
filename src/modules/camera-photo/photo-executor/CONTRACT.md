@@ -16,7 +16,7 @@
 - 经注入的 `photoOperations()` 提交一次 `Capture` 或 `Download` 动作；
 - `Capture` 超时 15_000 ms，`Download` 超时 60_000 ms；范围外的自定义超时在提交前拒绝；
 - 把协调器的 `SUCCEEDED` / `FAILED` / `TIMED_OUT` / `CANCELLED` 映射为一级模块规定的终态；
-- 超时或取消后调用端口 `abort()`，再 `confirmHardwareSettled()`，以免相册下载把拍照域永久隔离；
+- 超时或取消后仅中止本次端口会话；中止请求不是硬件已稳定的证据，不调用 `confirmHardwareSettled()`；新请求可替换已超时隔离的槽位，由 DJI 实际调用和回调裁决；
 - 成功时附带适配器给出的文件身份（拍照）或本地可读句柄（下载）。
 
 ### 明确不负责
@@ -43,7 +43,7 @@ DownloadSucceeded(fileName, size, sha256, readable)
 
 ## 4. 状态和生命周期
 
-执行器不保存“最近一张照片”。超时或取消后进入该域的硬件未确认隔离，由协调器拥有；本模块不得解除隔离。关闭时取消尚未开始的提交。
+执行器不保存“最近一张照片”。超时或取消后本次结果仍未确认，协调器可接受新的拍照或下载尝试；旧请求的迟到回调不能推进新请求。关闭时取消尚未开始的提交。
 
 ## 5. 数据所有权
 
@@ -64,10 +64,10 @@ DownloadSucceeded(fileName, size, sha256, readable)
 | --- | --- | --- | --- |
 | 协调器拒绝入队 | 本地失败 | 不开始 DJI | 槽位空闲后可重试 |
 | DJI `onFailure` | `ACTION_REJECTED` | 槽位释放 | 可由操作者重试 |
-| 同步抛出 | `INVOCATION_FAILED` | 由协调器隔离 | 否，直到确认稳定 |
-| 超时/取消 | `RESULT_UNCONFIRMED` | 本域隔离 | 否，直到确认稳定 |
+| 同步抛出 | `INVOCATION_FAILED` | 本次结果未确认 | 可重新尝试，由 DJI 裁决 |
+| 超时/取消 | `RESULT_UNCONFIRMED` | 本次结果未确认 | 可重新尝试，由 DJI 裁决 |
 
-同一时刻本域只启动一个 DJI 动作。分块发送不得占用该槽位。
+协调器不会同时启动两个仍在等待回执的本域请求；超时请求可能仍在 DJI 内部执行，重试不把这种未知状态伪装为已稳定。分块发送不得占用该槽位。
 
 ## 8. 测试要求
 

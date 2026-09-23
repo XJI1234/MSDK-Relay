@@ -83,17 +83,50 @@ class PhotoExecutorContractTest {
         assertEquals(failure, received)
     }
 
+    @Test
+    fun timeoutAllowsAnotherAttemptWithoutLettingTheOldCallbackCompleteIt() {
+        val executor = ManualExecutor()
+        val scheduler = Scheduler()
+        val port = Port()
+        val photo = PhotoExecutor.create(port, DjiOperationCoordinator.create(executor, scheduler))
+        val outcomes = mutableListOf<PhotoExecutionOutcome>()
+
+        assertIs<PhotoSubmissionResult.Accepted>(photo.execute(PhotoHardwareRequest.Capture) { outcomes += it })
+        executor.runNext()
+        val first = port.completions.first()
+        scheduler.fire()
+        assertEquals(listOf<PhotoExecutionOutcome>(PhotoExecutionOutcome.TimedOut), outcomes)
+        assertEquals(listOf(first), port.aborted)
+
+        assertIs<PhotoSubmissionResult.Accepted>(photo.execute(PhotoHardwareRequest.Capture) { outcomes += it })
+        executor.runNext()
+        first.captured(PhotoCaptureIdentity("late.jpg", 1))
+        assertEquals(listOf<PhotoExecutionOutcome>(PhotoExecutionOutcome.TimedOut), outcomes)
+
+        val failure = PhotoDjiFailure.fromDjiError("CAMERA_BUSY", "Camera busy")
+        port.fail(failure)
+        assertEquals(listOf(PhotoExecutionOutcome.TimedOut, PhotoExecutionOutcome.Failed), outcomes)
+        assertIs<PhotoSubmissionResult.Accepted>(photo.execute(PhotoHardwareRequest.Capture) { outcomes += it })
+        executor.runNext()
+        port.captured(PhotoCaptureIdentity("new.jpg", 2))
+        assertEquals(PhotoExecutionOutcome.Captured(PhotoCaptureIdentity("new.jpg", 2)), outcomes.last())
+    }
+
     private fun file(name: String) = PhotoLocalFile(name, 1, "a".repeat(64), PhotoReadable { byteArrayOf(1) })
 
     private class Port : DjiPhotoPort {
         val requests = mutableListOf<PhotoHardwareRequest>()
         var abortCount = 0
+        val aborted = mutableListOf<PhotoDjiCompletion>()
+        val completions = mutableListOf<PhotoDjiCompletion>()
         private var completion: PhotoDjiCompletion? = null
         override fun execute(request: PhotoHardwareRequest, completion: PhotoDjiCompletion) {
             requests += request
             this.completion = completion
+            completions += completion
         }
-        override fun abort() {
+        override fun abort(completion: PhotoDjiCompletion) {
+            aborted += completion
             abortCount += 1
         }
         fun captured(identity: PhotoCaptureIdentity) = checkNotNull(completion).captured(identity)

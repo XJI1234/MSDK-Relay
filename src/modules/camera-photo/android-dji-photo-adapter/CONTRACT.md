@@ -31,14 +31,14 @@
 ```text
 PhotoHardwarePort.capture(completion)
 PhotoHardwarePort.download(fileName, index, completion)
-PhotoHardwarePort.abort()
+PhotoHardwarePort.abort(completion)
 ```
 
 成功回调不得包含 Android `Context`、`File`、DJI 枚举对象或绝对路径。下载句柄只能被 `photo-media-publisher` 读成字节后删除。`abort` 必须尽力取消未完成的下载并删除未完成的临时文件。
 
 ## 4. 状态和生命周期
 
-适配器不跨命令保存相册。关闭或 `abort` 后到达的 DJI 回调必须丢弃。私有缓存文件只存活到本次 `download` 成功交接或失败清理。
+适配器不跨命令保存相册。每次请求持有独立 SDK 监听与可变状态；按本次 completion 中止，关闭或 `abort` 后到达的 DJI 回调必须丢弃，不得对新请求的 SDK 会话继续下载或恢复模式。私有缓存文件只存活到本次 `download` 成功交接或失败清理。`KeyNewlyGeneratedMediaFile` 不带请求身份，迟到的硬件媒体事件归属仍须实机验证。
 
 ## 5. 数据所有权
 
@@ -63,7 +63,7 @@ PhotoHardwarePort.abort()
 | 同步抛出 | 不调用失败回调，原样传播 | 由协调器隔离 | 否 |
 | 缺少文件名或非法扩展名 | 端口失败，非 DJI 拒绝 | 无公开身份 | 否 |
 
-同一适配器实例不得并行调用快门和下载。
+适配器在新请求开始前先尽力中止旧请求；不能把 DJI 的异步中止视为硬件已停止，重试若被拒绝应回传 DJI 本身的失败。
 
 ## 8. 测试要求
 

@@ -65,6 +65,8 @@ camera.photo.fetch      fields: {}
 
 拍照域只串行本域的 DJI 写操作（模式切换、快门、媒体下载），不得因超时隔离拒绝飞行、航线、配对、设置或图传提交。下载完成后的 WebSocket 分块不属于 DJI 操作槽位。`capture` 超时 15_000 ms，`fetch` 的 DJI 下载超时 60_000 ms；均仍受协调器 `1_000..60_000` ms 限制。电脑确认分块的等待另计，由 `photo-media-publisher` 使用注入时钟，上限 120_000 ms。超时、取消后不得假装 DJI 已拍下或电脑已收到。
 
+拍照或下载超时后可以再次尝试，不增加等待硬件恢复的本地门禁。旧请求的中止和迟到回调只归属于旧会话；重试若因 DJI 尚未就绪而失败，以该次 DJI 回调为准。旧请求在 DJI 内部是否仍执行、无请求 ID 的媒体事件归属，须实机验证。
+
 真实 DJI `onFailure(IDJIError)` 必须在 Android 边界清除控制字符并限制为 128/512 个 Unicode 码点后，以 `{ "domain": "photo", "outcome": "ACTION_REJECTED", "errorCode", "errorDescription" }` 回传；不得泄露 `IDJIError` 对象或堆栈。同步调用异常不得伪造为 DJI 拒绝，必须标为 `{ "domain": "photo", "outcome": "INVOCATION_FAILED" }`；超时或取消使用 `RESULT_UNCONFIRMED`。媒体发送失败、电脑 `media-result.ok=false`、会话失效使用 `{ "domain": "photo", "outcome": "TRANSFER_FAILED" }`，且不得把已拍成功改写成未拍。
 
 设备失效或组合根关闭必须取消在途拍照/下载/分块，清除未回传身份，丢弃迟到回调。电脑会话离开 `ACTIVE` 时必须中止分块并失败在途 `fetch`，但保留最近一次已确认拍照身份，以便重连后再次 `fetch`；不得自动重试快门或回传。

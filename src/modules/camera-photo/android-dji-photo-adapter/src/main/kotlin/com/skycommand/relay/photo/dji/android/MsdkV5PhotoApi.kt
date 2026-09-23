@@ -58,9 +58,6 @@ internal class MsdkV5PhotoApi(
     private val downloadDest = AtomicReference<File?>(null)
     private val downloadCompletion = AtomicReference<DjiPhotoDownloadCompletion?>(null)
     private val modeWatchTask = AtomicReference<ScheduledFuture<*>?>(null)
-    private val modeWatch = Executors.newSingleThreadScheduledExecutor { runnable ->
-        Thread(runnable, "photo-mode-watch").apply { isDaemon = true }
-    }
     private var downloadFile: MediaFile? = null
 
     override fun capture(completion: DjiPhotoCaptureCompletion) {
@@ -147,13 +144,13 @@ internal class MsdkV5PhotoApi(
         aborted.set(true)
         cancelModeWatch()
         captureCompletion.set(null)
-        downloadCompletion.set(null)
+        val downloading = downloadCompletion.getAndSet(null) != null
         stopGeneratedListen()
-        runCatching {
-            downloadFile?.stopPullOriginalMediaFileFromCamera(ignoredCallback())
+        if (downloading) {
+            runCatching { downloadFile?.stopPullOriginalMediaFileFromCamera(ignoredCallback()) }
+            runCatching { MediaDataCenter.getInstance().mediaManager.stopPullMediaFileListFromCamera() }
+            runCatching { MediaDataCenter.getInstance().mediaManager.disable(ignoredCallback()) }
         }
-        runCatching { MediaDataCenter.getInstance().mediaManager.stopPullMediaFileListFromCamera() }
-        runCatching { MediaDataCenter.getInstance().mediaManager.disable(ignoredCallback()) }
         restoreLiveCameraMode { }
     }
 
@@ -175,10 +172,12 @@ internal class MsdkV5PhotoApi(
         }
         media.enable(object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() {
+                if (aborted.get()) return
                 enableSucceeded.set(true)
                 confirmPlaybackThenPull()
             }
             override fun onFailure(error: IDJIError) {
+                if (aborted.get()) return
                 if (playingBack.get()) {
                     enableSucceeded.set(true)
                     pullWhenPlaybackReady()
@@ -218,9 +217,10 @@ internal class MsdkV5PhotoApi(
     }
 
     private fun failCapture(completion: DjiPhotoCaptureCompletion, failure: PhotoDjiFailure) {
+        if (!captureCompletion.compareAndSet(completion, null)) return
+        aborted.set(true)
         cancelModeWatch()
         stopGeneratedListen()
-        captureCompletion.set(null)
         restoreLiveCameraMode { completion.fail(failure) }
     }
 
@@ -228,7 +228,6 @@ internal class MsdkV5PhotoApi(
         cancelModeWatch()
         val task = modeWatch.schedule({
             if (aborted.get() || shootStarted.get()) return@schedule
-            aborted.set(true)
             failCapture(
                 completion,
                 PhotoDjiFailure.fromDjiError("CAMERA_MODE_NOT_PHOTO", "相机没有进入拍照模式"),
@@ -414,10 +413,12 @@ internal class MsdkV5PhotoApi(
         val media = MediaDataCenter.getInstance().mediaManager
         media.disable(object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() {
+                if (aborted.get()) return
                 playingBack.set(false)
                 restoreLiveCameraMode(done)
             }
             override fun onFailure(error: IDJIError) {
+                if (aborted.get()) return
                 playingBack.set(false)
                 restoreLiveCameraMode(done)
             }
@@ -446,6 +447,7 @@ internal class MsdkV5PhotoApi(
                 .build(),
             object : CommonCallbacks.CompletionCallback {
                 override fun onSuccess() {
+                    if (aborted.get()) return
                     val match = media.mediaFileListData.data.firstOrNull { file ->
                         file.fileName == identity.fileName || file.fileIndex.toLong() == identity.index
                     }
@@ -476,6 +478,10 @@ internal class MsdkV5PhotoApi(
                 override fun onFinish() {
                     runCatching { output.close() }
                     downloadFile = null
+                    if (aborted.get()) {
+                        destFile.delete()
+                        return
+                    }
                     leavePlaybackThen {
                         if (aborted.get() || !destFile.isFile || destFile.length() <= 0) {
                             destFile.delete()
@@ -489,6 +495,7 @@ internal class MsdkV5PhotoApi(
                     runCatching { output.close() }
                     destFile.delete()
                     downloadFile = null
+                    if (aborted.get()) return
                     leavePlaybackThen {
                         if (!aborted.get()) completion.fail(failureOf(error))
                     }
@@ -542,4 +549,10 @@ internal class MsdkV5PhotoApi(
 
     private fun errorText(read: () -> Any?): String? =
         runCatching { read()?.toString()?.trim() }.getOrNull()?.takeIf { it.isNotEmpty() && it != "null" }
+
+    companion object {
+        private val modeWatch = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "photo-mode-watch").apply { isDaemon = true }
+        }
+    }
 }

@@ -9,6 +9,25 @@ import kotlin.test.assertTrue
 
 class MsdkV5PhotoApiContractTest {
     @Test
+    fun abortedSessionDoesNotContinueMediaOrModeCleanupFromLateCallbacks() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/photo/dji/android/MsdkV5PhotoApi.kt"),
+            Path("src/modules/camera-photo/android-dji-photo-adapter/src/main/kotlin/com/skycommand/relay/photo/dji/android/MsdkV5PhotoApi.kt"),
+        ).first { it.exists() }.readText()
+        val failCapture = source.substringAfter("private fun failCapture").substringBefore("private fun armModeWatch")
+        assertTrue(failCapture.contains("captureCompletion.compareAndSet(completion, null)"))
+        val pull = source.substringAfter("private fun pullThenDownload").substringBefore("private fun writeOriginal")
+        assertTrue(pull.contains("if (aborted.get()) return"))
+        val finish = source.substringAfter("override fun onFinish").substringBefore("override fun onFailure")
+        assertTrue(finish.contains("if (aborted.get())"))
+        val leave = source.substringAfter("private fun leavePlaybackThen").substringBefore("private fun completeCaptureIfReady")
+        assertTrue(leave.contains("if (aborted.get()) return"))
+        val abort = source.substringAfter("override fun abort").substringBefore("override fun close")
+        assertTrue(abort.contains("if (downloading)"))
+        assertFalse(source.contains("modeWatch.shutdownNow()"))
+    }
+
+    @Test
     fun onlyShootsAfterAsyncPhotoModeIsConfirmedAndNeverOnStaleListenOrFailedModeSwitch() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/photo/dji/android/MsdkV5PhotoApi.kt"),

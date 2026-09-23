@@ -7,6 +7,7 @@ import com.skycommand.relay.device.operation.OperationCompletion
 import com.skycommand.relay.device.operation.OperationOutcome
 import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
+import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
 import java.util.concurrent.atomic.AtomicReference
@@ -33,7 +34,7 @@ interface PhotoDjiCompletion {
 
 interface DjiPhotoPort {
     fun execute(request: PhotoHardwareRequest, completion: PhotoDjiCompletion)
-    fun abort() = Unit
+    fun abort(completion: PhotoDjiCompletion) = Unit
     fun close() = Unit
 }
 
@@ -71,11 +72,13 @@ class PhotoExecutor private constructor(
         var failure: PhotoDjiFailure? = null
         val submission = coordinator.submit(
             object : DjiOperation {
-                private val operationCompletion = AtomicReference<OperationCompletion?>(null)
+                private val portCompletion = AtomicReference<PhotoDjiCompletion?>(null)
+
+                override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
+                    UnconfirmedOutcomeAdmission.SUPERSEDE_UNCONFIRMED
 
                 override fun run(completion: OperationCompletion) {
-                    operationCompletion.set(completion)
-                    port.execute(request, object : PhotoDjiCompletion {
+                    val callback = object : PhotoDjiCompletion {
                         override fun captured(identity: PhotoCaptureIdentity) {
                             captured = identity
                             completion.succeed()
@@ -92,12 +95,13 @@ class PhotoExecutor private constructor(
                             failure = value
                             completion.fail()
                         }
-                    })
+                    }
+                    portCompletion.set(callback)
+                    port.execute(request, callback)
                 }
 
                 override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) {
-                    runCatching { port.abort() }
-                    operationCompletion.get()?.confirmHardwareSettled()
+                    portCompletion.get()?.let { runCatching { port.abort(it) } }
                 }
             },
             timeoutMillis(request),

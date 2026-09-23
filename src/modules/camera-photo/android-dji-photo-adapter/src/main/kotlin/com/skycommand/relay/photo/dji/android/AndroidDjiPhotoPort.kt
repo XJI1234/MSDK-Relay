@@ -9,8 +9,8 @@ import com.skycommand.relay.photo.executor.PhotoLocalFile
 import com.skycommand.relay.photo.executor.PhotoReadable
 import java.io.File
 import java.security.MessageDigest
+import java.util.IdentityHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 internal interface DjiPhotoCaptureCompletion {
     fun succeed(identity: PhotoCaptureIdentity)
@@ -28,44 +28,35 @@ internal interface DjiPhotoApi {
     fun capture(completion: DjiPhotoCaptureCompletion)
     fun download(identity: PhotoCaptureIdentity, destFile: File, completion: DjiPhotoDownloadCompletion)
     fun abort()
+    fun close() = Unit
 }
 
 class AndroidDjiPhotoPort internal constructor(
     private val cacheDir: File,
-    private val platform: DjiPhotoApi,
+    private val platformFactory: () -> DjiPhotoApi,
 ) : DjiPhotoPort {
     private val lock = Any()
     private var closed = false
     private var active: Active? = null
+    private val operations = IdentityHashMap<PhotoDjiCompletion, Active>()
     private val delivery = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "photo-delivery").apply { isDaemon = true }
     }
 
     override fun execute(request: PhotoHardwareRequest, completion: PhotoDjiCompletion) {
-        val operation = synchronized(lock) {
-            if (closed) null else Active(completion).also { active = it }
-        }
-        if (operation == null) {
-            runCatching { completion.fail() }
-            return
-        }
-        when (request) {
-            PhotoHardwareRequest.Capture -> platform.capture(object : DjiPhotoCaptureCompletion {
-                override fun succeed(identity: PhotoCaptureIdentity) {
-                    runCatching { delivery.execute { captured(operation, identity) } }
-                }
-                override fun fail() {
-                    runCatching { delivery.execute { fail(operation) } }
-                }
-                override fun fail(failure: PhotoDjiFailure?) {
-                    runCatching { delivery.execute { fail(operation, failure) } }
-                }
-            })
-            is PhotoHardwareRequest.Download -> {
-                val dest = File(cacheDir, "sky-command-${System.nanoTime()}.bin")
-                platform.download(request.identity, dest, object : DjiPhotoDownloadCompletion {
-                    override fun succeed(file: File) {
-                        runCatching { delivery.execute { delivered(operation, request.identity, file) } }
+        synchronized(lock) {
+            if (closed) {
+                runCatching { completion.fail() }
+                return
+            }
+            active?.let(::stop)
+            val operation = Active(completion, platformFactory())
+            active = operation
+            operations[completion] = operation
+            when (request) {
+                PhotoHardwareRequest.Capture -> operation.platform.capture(object : DjiPhotoCaptureCompletion {
+                    override fun succeed(identity: PhotoCaptureIdentity) {
+                        runCatching { delivery.execute { captured(operation, identity) } }
                     }
                     override fun fail() {
                         runCatching { delivery.execute { fail(operation) } }
@@ -74,40 +65,45 @@ class AndroidDjiPhotoPort internal constructor(
                         runCatching { delivery.execute { fail(operation, failure) } }
                     }
                 })
+                is PhotoHardwareRequest.Download -> {
+                    val dest = File(cacheDir, "sky-command-${System.nanoTime()}.bin")
+                    operation.platform.download(request.identity, dest, object : DjiPhotoDownloadCompletion {
+                        override fun succeed(file: File) {
+                            runCatching { delivery.execute { delivered(operation, request.identity, file) } }
+                        }
+                        override fun fail() {
+                            runCatching { delivery.execute { fail(operation) } }
+                        }
+                        override fun fail(failure: PhotoDjiFailure?) {
+                            runCatching { delivery.execute { fail(operation, failure) } }
+                        }
+                    })
+                }
             }
         }
     }
 
-    override fun abort() {
-        runCatching { platform.abort() }
+    override fun abort(completion: PhotoDjiCompletion) {
+        synchronized(lock) { operations[completion]?.let(::stop) }
     }
 
     override fun close() {
         synchronized(lock) {
             closed = true
-            active = null
+            operations.values.toList().forEach(::stop)
         }
-        runCatching { platform.abort() }
         delivery.shutdownNow()
     }
 
     private fun captured(operation: Active, identity: PhotoCaptureIdentity) {
-        if (!operation.completeOnce()) return
-        val deliver = synchronized(lock) {
-            if (active === operation) active = null
-            !closed
-        }
+        val deliver = finish(operation)
         if (deliver) runCatching { operation.completion.captured(identity) }
     }
 
     private fun delivered(operation: Active, identity: PhotoCaptureIdentity, file: File) {
-        if (!operation.completeOnce()) return
-        val bytes = runCatching { file.readBytes() }.getOrNull()
+        val deliver = finish(operation)
+        val bytes = if (deliver) runCatching { file.readBytes() }.getOrNull() else null
         runCatching { file.delete() }
-        val deliver = synchronized(lock) {
-            if (active === operation) active = null
-            !closed
-        }
         if (!deliver) return
         if (bytes == null || bytes.isEmpty()) {
             runCatching { operation.completion.fail() }
@@ -126,21 +122,38 @@ class AndroidDjiPhotoPort internal constructor(
     }
 
     private fun fail(operation: Active, failure: PhotoDjiFailure? = null) {
-        if (!operation.completeOnce()) return
-        val deliver = synchronized(lock) {
-            if (active === operation) active = null
-            !closed
-        }
+        val deliver = finish(operation)
         if (deliver) runCatching { operation.completion.fail(failure) }
     }
 
-    private class Active(val completion: PhotoDjiCompletion) {
-        private val completed = AtomicBoolean(false)
-        fun completeOnce(): Boolean = completed.compareAndSet(false, true)
+    private fun finish(operation: Active): Boolean = synchronized(lock) {
+        if (!operation.completeOnce()) return@synchronized false
+        operations.remove(operation.completion)
+        val deliver = active === operation && !closed
+        if (active === operation) active = null
+        runCatching { operation.platform.close() }
+        deliver
+    }
+
+    private fun stop(operation: Active) {
+        if (!operation.completeOnce()) return
+        operations.remove(operation.completion)
+        if (active === operation) active = null
+        runCatching { operation.platform.abort() }
+        runCatching { operation.platform.close() }
+    }
+
+    private class Active(val completion: PhotoDjiCompletion, val platform: DjiPhotoApi) {
+        private var completed = false
+        fun completeOnce(): Boolean {
+            if (completed) return false
+            completed = true
+            return true
+        }
     }
 
     companion object {
-        fun create(cacheDir: File): DjiPhotoPort = AndroidDjiPhotoPort(cacheDir, MsdkV5PhotoApi())
+        fun create(cacheDir: File): DjiPhotoPort = AndroidDjiPhotoPort(cacheDir) { MsdkV5PhotoApi() }
 
         private fun sha256Hex(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
