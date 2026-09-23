@@ -41,6 +41,8 @@ class MsdkV5PhotoApiContractTest {
         assertTrue(source.contains("availablePhotoCount"))
         assertTrue(source.contains("NOT_INSERTED"))
         assertFalse(source.contains("left == 0"))
+        val storageCheck = source.substringAfter("private fun unusableStorage").substringBefore("private fun storageSummary")
+        assertFalse(storageCheck.contains("if (items.isEmpty()) return false"))
         val download = source.substringAfter("override fun download")
         assertTrue(download.contains("setMediaFileDataSource"))
         assertTrue(download.contains("MediaFileFilter.ALL"))

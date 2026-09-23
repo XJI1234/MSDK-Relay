@@ -5,7 +5,7 @@
 - 模块名称：`photo-media-publisher`
 - 所属一级模块：`camera-photo`
 - 当前版本：0.1.0
-- 状态：待实现
+- 状态：已实现
 - Gradle 路径：`:camera-photo:photo-media-publisher`
 - 唯一职责：把一份已在手机本地、已计算摘要的原图，按航线 KMZ 的反方向分块发给当前电脑会话，并只在匹配的 `media-result` 上结束。
 
@@ -28,14 +28,14 @@
 ## 3. 对外接口
 
 ```text
-publish(activeSession, localFile, completion)
-  -> Accepted | Rejected(BUSY | INVALID_FILE | STALE_SESSION)
+publish(localFile, completion)
+  -> Accepted | Rejected(BUSY | INVALID_FILE)
 
-acceptResult(generation, mediaResultFrame) -> void
-abort(generation) -> void
+acceptResult(mediaResultFrame) -> void
+abort() -> void
 ```
 
-`localFile` 只含 `transferId`、安全 `fileName`、`size`、小写 `sha256` 和抽象 `readable`。发送前必须再读全部字节并核对大小与摘要；不符则拒绝且不发帧。`Delivered` 只表示当前 writer 接受了某一帧，不表示电脑已落盘。
+`localFile` 只含安全 `fileName`、`size`、小写 `sha256` 和抽象 `readable`。发送端为每次已接受发布生成新的传输 ID，发送前必须再读全部字节并核对大小与摘要；不符则拒绝且不发帧。`Delivered` 只表示同一传输 ID 的电脑 `media-result.ok=true`，不表示操作员已打开照片。
 
 ## 4. 状态和生命周期
 
@@ -49,7 +49,7 @@ SENDING | AWAITING_RESULT -> FAILED
 
 ## 5. 数据所有权
 
-发送期间拥有可读句柄。终态后必须关闭并让适配器删除临时文件。不在模块内保留完整照片字节超过当前分块窗口。
+发送开始时读取并校验完整字节，读取后立即关闭可读句柄。终态后由适配器删除临时文件。模块不保存跨请求的照片字节。
 
 ## 6. 依赖和替身
 

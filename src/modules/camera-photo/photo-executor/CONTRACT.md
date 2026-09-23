@@ -5,7 +5,7 @@
 - 模块名称：`photo-executor`
 - 所属一级模块：`camera-photo`
 - 当前版本：0.1.0
-- 状态：待实现
+- 状态：已实现
 - Gradle 路径：`:camera-photo:photo-executor`
 - 唯一职责：把单个拍照或下载请求提交到拍照域 DJI 操作协调器，统一超时、取消、异常和一次性终态。
 

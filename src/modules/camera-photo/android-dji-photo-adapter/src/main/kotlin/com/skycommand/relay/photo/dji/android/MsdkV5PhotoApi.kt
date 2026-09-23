@@ -361,7 +361,6 @@ internal class MsdkV5PhotoApi(
 
     private fun unusableStorage(infos: CameraStorageInfos): Boolean {
         val items = infos.cameraStorageInfoList.orEmpty()
-        if (items.isEmpty()) return false
         return items.none { info ->
             val state = info.storageState?.toString().orEmpty()
             val photos = info.availablePhotoCount ?: 0

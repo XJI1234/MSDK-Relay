@@ -1,6 +1,6 @@
 # camera-photo 一级模块契约
 
-状态：契约已批准；实现未开始
+状态：已实现
 Gradle 路径：`:camera-photo`
 
 ## 唯一职责

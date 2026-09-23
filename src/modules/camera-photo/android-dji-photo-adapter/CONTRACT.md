@@ -5,7 +5,7 @@
 - 模块名称：`android-dji-photo-adapter`
 - 所属一级模块：`camera-photo`
 - 当前版本：0.1.0
-- 状态：待实现
+- 状态：已实现
 - Gradle 路径：`:camera-photo:android-dji-photo-adapter`
 - 唯一职责：唯一允许接触 DJI 拍照键和媒体下载 API 的 Android 实现。
 

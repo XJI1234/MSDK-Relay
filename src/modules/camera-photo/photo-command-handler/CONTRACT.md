@@ -5,7 +5,7 @@
 - 模块名称：`photo-command-handler`
 - 所属一级模块：`camera-photo`
 - 当前版本：0.1.0
-- 状态：待实现
+- 状态：已实现
 - Gradle 路径：`:camera-photo:photo-command-handler`
 - 唯一职责：把 `camera.photo.capture` 与 `camera.photo.fetch` 转成不可变请求，并在调用动作端口之前拒绝一切非法字段。
 
