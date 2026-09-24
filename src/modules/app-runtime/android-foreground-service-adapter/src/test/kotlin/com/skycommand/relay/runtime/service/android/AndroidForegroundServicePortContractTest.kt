@@ -4,6 +4,7 @@ import com.skycommand.relay.runtime.service.ForegroundServiceCallback
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -218,14 +219,16 @@ class ForegroundNotificationSpecContractTest {
 
 class RelayForegroundServiceLifecycleContractTest {
     @Test
-    fun reportsUnexpectedServiceDestructionAsFailureButKeepsExplicitStopAsStopped() {
+    fun keepsTheRelayForegroundServiceStickyUntilTheRelayExplicitlyStopsIt() {
         val source = listOf(
             Path.of("src/modules/app-runtime/android-foreground-service-adapter/src/main/kotlin/com/skycommand/relay/runtime/service/android/AndroidForegroundServicePlatform.kt"),
             Path.of("src/main/kotlin/com/skycommand/relay/runtime/service/android/AndroidForegroundServicePlatform.kt"),
         ).first { it.toFile().exists() }.toFile().readText()
 
         assertTrue(source.contains("activeStart = intent"))
-        assertTrue(source.contains("activeStart?.let { status(it, ACTION_FAILED_SUFFIX) }"))
         assertTrue(source.contains("pendingStop?.let { status(it, ACTION_STOPPED_SUFFIX) }"))
+        assertTrue(source.contains("status(intent, ACTION_STARTED_SUFFIX)\n            return START_STICKY"))
+        assertTrue(source.contains("stopSelfResult(startId)\n            return START_NOT_STICKY"))
+        assertFalse(source.contains("activeStart?.let { status(it, ACTION_FAILED_SUFFIX) }"))
     }
 }

@@ -187,10 +187,7 @@ class RelayBootstrapModule(
                 ports.resetTelemetryPublicationBaseline()
                 publishAvailableSnapshot()
             }
-            GatewayStateAction.DEACTIVATED -> {
-                ports.markStreamUnavailable()
-                ports.abortCameraPhotoTransfer()
-            }
+            GatewayStateAction.DEACTIVATED -> Unit
             GatewayStateAction.PUBLISH -> publishAvailableSnapshot()
             GatewayStateAction.NONE -> Unit
         }

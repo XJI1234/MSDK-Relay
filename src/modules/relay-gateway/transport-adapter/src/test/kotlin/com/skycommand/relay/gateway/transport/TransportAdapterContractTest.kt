@@ -157,6 +157,27 @@ class TransportAdapterContractTest {
     }
 
     @Test
+    fun treatsRemoteClosingAsTerminalBeforeTheFinalClosedCallback() {
+        val engine = RecordingSocketEngine()
+        val connector = EngineTransportConnector(engine)
+        val listener = RecordingTransportListener()
+        val generation = generationForTest()
+        val connection = assertIs<TransportOpenResult.OpenAccepted>(
+            connector.open("wss://desktop.example/relay", generation, listener),
+        ).connection
+
+        connection.enableCallbacks()
+        engine.openCurrent()
+        engine.closingCurrent()
+
+        assertEquals(listOf(generation), listener.closed)
+        assertEquals(1, engine.current.closeCalls)
+
+        engine.closedCurrent()
+        assertEquals(listOf(generation), listener.closed)
+    }
+
+    @Test
     fun containsEngineCloseAndListenerFailuresWithoutLeakingThem() {
         val generation = generationForTest()
         val rejectedEngine = RecordingSocketEngine().apply { throwOnOpen = true }
@@ -239,6 +260,8 @@ class TransportAdapterContractTest {
         fun receiveCurrent(bytes: ByteArray) = callbacks.onBinary(bytes)
 
         fun textCurrent() = callbacks.onText()
+
+        fun closingCurrent() = callbacks.onClosing()
 
         fun closedCurrent() = callbacks.onClosed()
 

@@ -74,15 +74,16 @@ class AndroidCameraStreamApi internal constructor(
 
     companion object {
         fun create(): CameraStreamApi = AndroidCameraStreamApi(
-            MsdkCameraStreamPlatform(MediaDataCenter.getInstance().cameraStreamManager),
+            MsdkCameraStreamPlatform(managerProvider = { MediaDataCenter.getInstance().cameraStreamManager }),
         )
     }
 }
 
 private class MsdkCameraStreamPlatform(
-    private val manager: ICameraStreamManager,
+    private val managerProvider: () -> ICameraStreamManager,
     private val cameraIndex: ComponentIndexType = ComponentIndexType.LEFT_OR_MAIN,
 ) : AndroidCameraStreamPlatform {
+    private val manager by lazy(managerProvider)
     private val lock = Any()
     private val listeners = IdentityHashMap<AndroidCameraStreamListener, ICameraStreamManager.ReceiveStreamListener>()
 

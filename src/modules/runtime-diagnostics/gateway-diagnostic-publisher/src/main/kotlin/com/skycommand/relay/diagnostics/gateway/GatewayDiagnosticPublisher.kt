@@ -66,6 +66,8 @@ class GatewayDiagnosticPublisher private constructor(
     private var lastSentSequence = 0L
     private val inFlightEnds = ArrayDeque<Long>()
     private var timeoutDelayMs = ACK_TIMEOUT_MS
+    private var sendWindowVersion = 0L
+    private var flushing = false
 
     fun start() {
         lock.withLock {
@@ -85,9 +87,9 @@ class GatewayDiagnosticPublisher private constructor(
                             inFlightEnds.removeFirst()
                         }
                         timeoutDelayMs = ACK_TIMEOUT_MS
-                        flushLocked()
                         armTimeoutLocked()
                     }
+                    flush()
                 }
             }
             recordRegistration = journal.onRecorded { flush() }
@@ -110,31 +112,63 @@ class GatewayDiagnosticPublisher private constructor(
         registrations.second?.let { runCatching { it() } }
     }
 
-    fun flush(): FlushResult = lock.withLock { flushLocked() }
-
-    private fun flushLocked(): FlushResult {
+    fun flush(): FlushResult {
         if (gateway.currentState() != SessionState.ACTIVE) return FlushResult.NotActive
-        var sent = false
-        while (true) {
-            val events = journal.pendingAfter(lastSentSequence, DiagnosticJournal.MAX_BATCH)
-            if (events.isEmpty()) break
-            if (gateway.publish(toReport(events)) != PublishResult.Delivered) {
-                if (!sent) return FlushResult.Rejected
-                armTimeoutLocked()
-                return FlushResult.Sent
+        val canFlush = lock.withLock {
+            if (flushing) false
+            else {
+                flushing = true
+                true
             }
-            lastSentSequence = events.last().sequence
-            inFlightEnds.addLast(lastSentSequence)
-            sent = true
         }
-        armTimeoutLocked()
-        return when {
-            sent -> FlushResult.Sent
-            else -> FlushResult.NothingPending
+        if (!canFlush) return FlushResult.NothingPending
+
+        var sent = false
+        var result: FlushResult = FlushResult.NothingPending
+        var flushAgain = false
+        try {
+            while (gateway.currentState() == SessionState.ACTIVE) {
+                val batch = lock.withLock {
+                    val events = journal.pendingAfter(lastSentSequence, DiagnosticJournal.MAX_BATCH)
+                    if (events.isEmpty()) null else PendingBatch(sendWindowVersion, events)
+                } ?: break
+
+                if (gateway.publish(toReport(batch.events)) != PublishResult.Delivered) {
+                    result = if (sent) FlushResult.Sent else FlushResult.Rejected
+                    break
+                }
+                val applied = lock.withLock {
+                    if (batch.windowVersion != sendWindowVersion) {
+                        false
+                    } else {
+                        lastSentSequence = batch.events.last().sequence
+                        inFlightEnds.addLast(lastSentSequence)
+                        true
+                    }
+                }
+                if (!applied) {
+                    result = FlushResult.NotActive
+                    break
+                }
+                sent = true
+                result = FlushResult.Sent
+            }
+            if (gateway.currentState() != SessionState.ACTIVE && !sent) {
+                result = FlushResult.NotActive
+            }
+        } finally {
+            flushAgain = lock.withLock {
+                flushing = false
+                if (sent) armTimeoutLocked()
+                result == FlushResult.NothingPending &&
+                    journal.pendingAfter(lastSentSequence, DiagnosticJournal.MAX_BATCH).isNotEmpty()
+            }
         }
+        return if (flushAgain) flush() else result
     }
 
     private fun resetSendWindow() {
+        sendWindowVersion += 1
         lastSentSequence = 0L
         inFlightEnds.clear()
         timeoutDelayMs = ACK_TIMEOUT_MS
@@ -151,21 +185,30 @@ class GatewayDiagnosticPublisher private constructor(
         }
         val delay = timeoutDelayMs
         timeoutRegistration = scheduler.schedule(delay) {
-            lock.withLock {
-                timeoutRegistration = null
-                if (gateway.currentState() != SessionState.ACTIVE) return@withLock
-                resendOldestLocked()
-                timeoutDelayMs = (timeoutDelayMs * 2).coerceAtMost(ACK_TIMEOUT_MAX_MS)
-                armTimeoutLocked()
-            }
+            resendOldest()
         }
     }
 
-    private fun resendOldestLocked() {
-        val events = journal.pending(DiagnosticJournal.MAX_BATCH)
+    private fun resendOldest() {
+        val events = lock.withLock {
+            timeoutRegistration = null
+            if (inFlightEnds.isEmpty()) emptyList()
+            else journal.pending(DiagnosticJournal.MAX_BATCH)
+        }
         if (events.isEmpty()) return
+        if (gateway.currentState() != SessionState.ACTIVE) return
         gateway.publish(toReport(events))
+        lock.withLock {
+            if (inFlightEnds.isEmpty()) return
+            timeoutDelayMs = (timeoutDelayMs * 2).coerceAtMost(ACK_TIMEOUT_MAX_MS)
+            armTimeoutLocked()
+        }
     }
+
+    private data class PendingBatch(
+        val windowVersion: Long,
+        val events: List<DiagnosticEvent>,
+    )
 
     private fun toReport(events: List<DiagnosticEvent>): DiagnosticReportFrame =
         DiagnosticReportFrame(

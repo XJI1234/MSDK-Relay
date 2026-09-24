@@ -220,8 +220,8 @@
 | --- | --- | --- | --- |
 | `setCameraIndex(LEFT_OR_MAIN)` | 选择主/左相机。 | 设置需要直播的相机索引。 | 没有证明该相机正在输出有效画面。 |
 | `setLiveStreamSettings(LiveStreamSettings)` + `LiveStreamType.RTMP` + `RtmpSettings.url` | 设置桌面 RTMP URL。 | 设置直播设置；RTMP 是一种直播类型。 | 设置成功不等于网络端点已可达。 |
-| `setLiveStreamQuality(StreamQuality.HD)` | 当前固定 `HD`。 | 设置直播视频质量类型。 | 此配置与 `1_802_240` bps 手动码率共同构成 Mini 4 Pro 最后一次确认有 H.264 输出的基线。 |
-| `setLiveVideoBitrateMode(MANUAL)` + `setLiveVideoBitrate(1_802_240)` | 当前固定手动码率。 | `MANUAL` 后设置直播码率。 | Mini 4 Pro 上 3/8 Mbit/s 会推流成功但没有视频包；也不能改为 `FULL_HD + AUTO` 后假定已恢复。 |
+| `setLiveStreamQuality(StreamQuality.FULL_HD)` | 当前固定 `FULL_HD`。 | 设置直播视频质量类型。 | DJI 将其定义为 1920x1080@30；实际输出仍须以状态和桌面首帧确认。 |
+| `setLiveVideoBitrateMode(MANUAL)` + `setLiveVideoBitrate(4_096_000)` | 当前固定手动 4 Mbps。 | `MANUAL` 后设置直播码率。 | 这是曾用于 Mini 4 Pro Full HD 实机对照的历史配置；3/8 Mbit/s 会推流成功但没有视频包。 |
 | `setLiveStreamScaleType` | 生产 RTMP 不调用。 | 可设置直播画面缩放方式。 | `FIX_XY` 与 `FULL_HD + AUTO` 的组合会让 Mini 4 Pro 显示正在推流而没有编码帧，未做真机验证不得恢复。 |
 | `addLiveStreamStatusListener` | 开始前注册状态监听。 | 添加直播状态监听。 | `LiveStreamStatus.isStreaming` 只能说明 DJI 直播侧状态，不等同于桌面播放器已经播放。 |
 | `startStream(callback)` | 启动推流。 | 开始直播。 | 成功回调不等于 RTMP 已被桌面接收、HTTP-FLV 已生成或视频已渲染。 |

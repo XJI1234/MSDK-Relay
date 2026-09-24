@@ -23,6 +23,7 @@ import com.skycommand.relay.protocol.MediaResultFrame
 import com.skycommand.relay.protocol.RelayFrame
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CameraPhotoContractTest {
@@ -113,15 +114,45 @@ class CameraPhotoContractTest {
         assertTrue(writer.frames.isNotEmpty())
     }
 
-    private fun photo(port: DjiPhotoPort, writer: PhotoMediaWriter = RecordingWriter()): CameraPhoto =
+    @Test
+    fun keepsTheCameraMediaGateClosedUntilAnUnconfirmedPhotoOperationReleasesHardware() {
+        val port = Port()
+        val scheduler = Scheduler()
+        var cameraMediaReady = true
+        val photo = photo(
+            port = port,
+            scheduler = scheduler,
+            onCameraMediaBusy = { cameraMediaReady = false },
+            onCameraMediaReleased = { cameraMediaReady = true },
+        )
+
+        photo.commandHandler().handle(capture(), Completion())
+        assertFalse(cameraMediaReady)
+
+        scheduler.fire()
+        assertFalse(cameraMediaReady)
+
+        port.releaseHardware()
+        assertTrue(cameraMediaReady)
+    }
+
+    private fun photo(
+        port: DjiPhotoPort,
+        writer: PhotoMediaWriter = RecordingWriter(),
+        scheduler: OperationScheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+        onCameraMediaBusy: () -> Unit = {},
+        onCameraMediaReleased: () -> Unit = {},
+    ): CameraPhoto =
         CameraPhoto.create(
             CameraPhotoDependencies(
                 djiPort = port,
                 operationCoordinator = DjiOperationCoordinator.create(
                     executor = OperationExecutor { it() },
-                    scheduler = OperationScheduler { _, _ -> OperationCancellation { } },
+                    scheduler = scheduler,
                 ),
                 mediaPublisher = PhotoMediaPublisher.create(writer, Clock(), timeoutMillis = 1_000),
+                onCameraMediaBusy = onCameraMediaBusy,
+                onCameraMediaReleased = onCameraMediaReleased,
             ),
         )
 
@@ -153,6 +184,12 @@ class CameraPhotoContractTest {
         fun captured(identity: PhotoCaptureIdentity) = checkNotNull(completion).captured(identity)
         fun delivered(file: PhotoLocalFile) = checkNotNull(completion).delivered(file)
         fun fail(failure: PhotoDjiFailure? = null) = checkNotNull(completion).fail(failure)
+        private var hardwareReleased: (() -> Unit)? = null
+        override fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {
+            check(checkNotNull(this.completion) === completion)
+            hardwareReleased = onHardwareReleased
+        }
+        fun releaseHardware() = checkNotNull(hardwareReleased).invoke()
     }
 
     private class RecordingWriter : PhotoMediaWriter {
@@ -166,5 +203,14 @@ class CameraPhotoContractTest {
     private class Clock : PhotoMediaClock {
         override fun schedule(delayMillis: Long, callback: () -> Unit): PhotoMediaCancellation =
             PhotoMediaCancellation { }
+    }
+
+    private class Scheduler : OperationScheduler {
+        private var callback: (() -> Unit)? = null
+        override fun schedule(delayMillis: Long, callback: () -> Unit): OperationCancellation {
+            this.callback = callback
+            return OperationCancellation { }
+        }
+        fun fire() = checkNotNull(callback).invoke()
     }
 }

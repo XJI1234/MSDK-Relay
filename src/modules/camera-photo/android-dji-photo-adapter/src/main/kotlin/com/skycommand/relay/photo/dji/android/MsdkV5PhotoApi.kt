@@ -140,18 +140,44 @@ internal class MsdkV5PhotoApi(
         })
     }
 
-    override fun abort() {
+    override fun abort() = abort { }
+
+    override fun abort(onHardwareReleased: () -> Unit) {
         aborted.set(true)
         cancelModeWatch()
         captureCompletion.set(null)
-        val downloading = downloadCompletion.getAndSet(null) != null
+        downloadCompletion.getAndSet(null)
         stopGeneratedListen()
-        if (downloading) {
-            runCatching { downloadFile?.stopPullOriginalMediaFileFromCamera(ignoredCallback()) }
-            runCatching { MediaDataCenter.getInstance().mediaManager.stopPullMediaFileListFromCamera() }
-            runCatching { MediaDataCenter.getInstance().mediaManager.disable(ignoredCallback()) }
+        runCatching { downloadFile?.stopPullOriginalMediaFileFromCamera(ignoredCallback()) }
+        runCatching { MediaDataCenter.getInstance().mediaManager.stopPullMediaFileListFromCamera() }
+        leavePlaybackThen(
+            continueWhenAborted = true,
+            done = onHardwareReleased,
+        )
+    }
+
+    override fun recoverVideoInput(completion: (Boolean) -> Unit) {
+        val completed = AtomicBoolean(false)
+        val done = { recovered: Boolean ->
+            if (completed.compareAndSet(false, true)) completion(recovered)
         }
-        restoreLiveCameraMode { }
+        aborted.set(true)
+        cancelModeWatch()
+        captureCompletion.set(null)
+        downloadCompletion.getAndSet(null)
+        stopGeneratedListen()
+        runCatching { downloadFile?.stopPullOriginalMediaFileFromCamera(ignoredCallback()) }
+        runCatching { MediaDataCenter.getInstance().mediaManager.stopPullMediaFileListFromCamera() }
+        MediaDataCenter.getInstance().mediaManager.disable(object : CommonCallbacks.CompletionCallback {
+            override fun onSuccess() {
+                playingBack.set(false)
+                restoreVideoInput(done)
+            }
+            override fun onFailure(error: IDJIError) {
+                playingBack.set(false)
+                restoreVideoInput(done)
+            }
+        })
     }
 
     private fun startPlayback(
@@ -409,16 +435,35 @@ internal class MsdkV5PhotoApi(
         })
     }
 
-    private fun leavePlaybackThen(done: () -> Unit) {
+    private fun restoreVideoInput(done: (Boolean) -> Unit) {
+        if (observedMode.get() == CameraMode.VIDEO_NORMAL) {
+            done(true)
+            return
+        }
+        manager.setValue(modeKey, CameraMode.VIDEO_NORMAL, object : CommonCallbacks.CompletionCallback {
+            override fun onSuccess() = done(true)
+            override fun onFailure(error: IDJIError) {
+                manager.getValue(modeKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraMode> {
+                    override fun onSuccess(value: CameraMode) = done(value == CameraMode.VIDEO_NORMAL)
+                    override fun onFailure(error: IDJIError) = done(false)
+                })
+            }
+        })
+    }
+
+    private fun leavePlaybackThen(
+        continueWhenAborted: Boolean = false,
+        done: () -> Unit,
+    ) {
         val media = MediaDataCenter.getInstance().mediaManager
         media.disable(object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() {
-                if (aborted.get()) return
+                if (aborted.get() && !continueWhenAborted) return
                 playingBack.set(false)
                 restoreLiveCameraMode(done)
             }
             override fun onFailure(error: IDJIError) {
-                if (aborted.get()) return
+                if (aborted.get() && !continueWhenAborted) return
                 playingBack.set(false)
                 restoreLiveCameraMode(done)
             }

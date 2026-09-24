@@ -65,7 +65,7 @@ class RelayBootstrapModuleTest {
         assertEquals(1, ports.events.count { it == "telemetry-publish" })
     }
 
-    @Test fun enteringANewGatewaySessionResetsTelemetryDeduplicationBeforePublishingItsFirstSnapshot() {
+    @Test fun enteringANewGatewaySessionResetsTelemetryDeduplicationWithoutInvalidatingDeviceFeatures() {
         val ports = FakePorts().apply { sdk = SdkAvailability.READY }
         val module = RelayBootstrapModule(ports)
         module.start()
@@ -76,7 +76,7 @@ class RelayBootstrapModuleTest {
         ports.gatewayStateChanged(SessionState.ACTIVE)
 
         assertEquals(
-            listOf("stream-unavailable", "camera-photo-abort", "telemetry-publication-reset", "telemetry-publish"),
+            listOf("telemetry-publication-reset", "telemetry-publish"),
             ports.events,
         )
     }
@@ -176,19 +176,20 @@ class RelayBootstrapModuleTest {
         assertEquals(1, ports.events.count { it == "device-stop" })
     }
 
-    @Test fun leavingActiveGatewayInvalidatesVideoTransportsWithoutStoppingTheRelay() {
+    @Test fun leavingActiveGatewayKeepsDeviceFeaturesAvailableWithoutStoppingTheRelay() {
         val ports = FakePorts().apply { sdk = SdkAvailability.READY }
         val module = RelayBootstrapModule(ports)
         module.start()
         ports.gatewayStateChanged(SessionState.ACTIVE)
         ports.gatewayStateChanged(SessionState.RECONNECT_WAIT)
 
-        assertEquals(1, ports.events.count { it == "stream-unavailable" })
+        assertEquals(0, ports.events.count { it == "stream-unavailable" })
+        assertEquals(0, ports.events.count { it == "camera-photo-abort" })
         assertEquals(0, ports.events.count { it == "gateway-stop" })
         assertEquals(0, ports.events.count { it == "mission-unavailable" })
 
         ports.gatewayStateChanged(SessionState.CONNECTING)
-        assertEquals(1, ports.events.count { it == "stream-unavailable" })
+        assertEquals(0, ports.events.count { it == "stream-unavailable" })
     }
 
     @Test fun callbacksAfterStopCannotPublishOrRestartRelay() {

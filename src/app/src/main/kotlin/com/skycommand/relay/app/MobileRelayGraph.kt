@@ -74,6 +74,8 @@ import com.skycommand.relay.settings.DeviceSettingsDependencies
 import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.photo.CameraPhoto
 import com.skycommand.relay.photo.CameraPhotoDependencies
+import com.skycommand.relay.photo.CameraMediaReadiness
+import com.skycommand.relay.photo.dji.android.AndroidCameraMediaRecoveryPort
 import com.skycommand.relay.photo.dji.android.AndroidDjiPhotoPort
 import com.skycommand.relay.photo.media.PhotoMediaCancellation
 import com.skycommand.relay.photo.media.PhotoMediaClock
@@ -131,6 +133,7 @@ class MobileRelayGraph private constructor(
     private val flightControl: FlightControl,
     private val deviceSettings: DeviceSettings,
     private val cameraPhoto: CameraPhoto,
+    private val cameraMediaReadiness: CameraMediaReadiness,
     private val stream: LiveStream,
     private val cameraFrameObserver: CameraFrameObserver,
     private val cameraFrameEvaluation: ScheduledFuture<*>,
@@ -223,6 +226,7 @@ class MobileRelayGraph private constructor(
             CloseableRegistration { registration.unregister() }
         }
         registrations += device.onChanged {
+            synchronizeCameraMediaReadiness()
             synchronizeRtmpStreamWithVideoSource()
             synchronizeFlightTelemetryWithFlightController()
             notifyStatus()
@@ -288,6 +292,7 @@ class MobileRelayGraph private constructor(
         registrations += wayline.onChanged { notifyStatus() }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
+        synchronizeCameraMediaReadiness()
     }
 
     private fun watchUsbAccessory() {
@@ -380,6 +385,10 @@ class MobileRelayGraph private constructor(
         if (shouldStop) stream.markSourceUnavailable()
     }
 
+    private fun synchronizeCameraMediaReadiness() {
+        cameraMediaReadiness.onVideoSourceChanged(device.capabilities().canStreamVideo)
+    }
+
     private fun cancelUsbWatch() {
         usbCancellation?.cancel()
         usbCancellation = null
@@ -455,6 +464,7 @@ class MobileRelayGraph private constructor(
             val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
             val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
             val liveCaptureDiagnostics = LiveCaptureDiagnosticRecorder(journal) { task -> captureDiagnosticExecutor.execute(task) }
+            val cameraMediaReadiness = CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),
@@ -555,7 +565,7 @@ class MobileRelayGraph private constructor(
                 LiveStreamDependencies(
                     AndroidDjiStreamPort.create { event -> liveCaptureDiagnostics.recordRtmp(event) },
                     device.streamOperations(),
-                    StreamStartGate { device.capabilities().canStreamVideo },
+                    StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() },
                     diagnosticSink = { kind ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -713,6 +723,8 @@ class MobileRelayGraph private constructor(
                             PhotoMediaCancellation { future.cancel(false) }
                         },
                     ),
+                    onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
+                    onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
                 ),
             )
             gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
@@ -782,7 +794,7 @@ class MobileRelayGraph private constructor(
                 AppBootstrap.create(listOf(lifecycle)),
             )
             return MobileRelayGraph(
-                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
+                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, cameraMediaReadiness, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
                 staging, foregroundPort, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
             ).also { it.installStatusNotifications() }
         }

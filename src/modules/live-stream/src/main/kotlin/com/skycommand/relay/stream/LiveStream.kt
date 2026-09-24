@@ -117,20 +117,19 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
                 return StreamActionResult.Rejected
             }
             val tracked = TrackedOperation()
-            val terminalOutcome = java.util.concurrent.atomic.AtomicReference<StreamDjiTerminalOutcome?>(null)
             val result = adapter.start(config, object : StreamDjiTerminalListener {
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome) = onCompleted(outcome, null)
 
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) {
-                    terminalOutcome.set(outcome)
-                    if (outcome != StreamDjiTerminalOutcome.SUCCEEDED) dependencies.cameraFrameObserver?.stop()
+                    if (outcome == StreamDjiTerminalOutcome.SUCCEEDED) {
+                        dependencies.cameraFrameObserver?.start()
+                    } else {
+                        dependencies.cameraFrameObserver?.stop()
+                    }
                     completeTrackedOperation(tracked)
                     completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
                 }
             })
-            if (result is DjiStreamStartResult.Accepted && terminalOutcome.get() != StreamDjiTerminalOutcome.FAILED && terminalOutcome.get() != StreamDjiTerminalOutcome.TIMED_OUT && terminalOutcome.get() != StreamDjiTerminalOutcome.CANCELLED) {
-                dependencies.cameraFrameObserver?.start()
-            }
             track(result, tracked)
         }
 
@@ -140,11 +139,11 @@ class LiveStream private constructor(private val dependencies: LiveStreamDepende
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome) = onCompleted(outcome, null)
 
                 override fun onCompleted(outcome: StreamDjiTerminalOutcome, failure: StreamDjiFailure?) {
+                    dependencies.cameraFrameObserver?.stop()
                     completeTrackedOperation(tracked)
                     completion.complete(outcome.toActionOutcome(), failure?.toActionFailure())
                 }
             })
-            if (result is DjiStreamStopResult.Accepted) dependencies.cameraFrameObserver?.stop()
             track(result, tracked)
         }
     }

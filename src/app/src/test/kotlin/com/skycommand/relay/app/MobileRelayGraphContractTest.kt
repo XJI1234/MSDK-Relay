@@ -151,7 +151,37 @@ class MobileRelayGraphContractTest {
             .substringBefore("val whipStream = WhipLiveStream.create(")
 
         assertTrue(streamWiring.contains("device.streamOperations()"))
-        assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo }"))
+        assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() }"))
+    }
+
+    @Test
+    fun recoversTheCameraMediaInputBeforeOpeningTheRtmpStartGate() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val deviceNotifications = source.substringAfter("registrations += device.onChanged")
+            .substringBefore("registrations += permissionAdapter")
+        val streamWiring = source.substringAfter("val stream = LiveStream.create(")
+            .substringBefore("val whipStream = WhipLiveStream.create(")
+
+        assertTrue(source.contains("CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())"))
+        assertTrue(deviceNotifications.contains("synchronizeCameraMediaReadiness()"))
+        assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() }"))
+    }
+
+    @Test
+    fun doesNotTouchTheDjiLiveStreamManagerWhenTheSdkBecomesReady() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
+        ).first { it.exists() }.readText()
+        val deviceNotifications = source.substringAfter("registrations += device.onChanged")
+            .substringBefore("registrations += permissionAdapter")
+
+        assertFalse(source.contains("LiveStreamManagerPreheater"))
+        assertFalse(deviceNotifications.contains("liveStreamManager"))
+        assertFalse(deviceNotifications.contains("setCameraIndex("))
     }
 
     @Test

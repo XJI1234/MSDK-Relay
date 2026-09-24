@@ -6,6 +6,7 @@
         <service
             android:name="com.skycommand.relay.runtime.service.android.RelayForegroundService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
     </application>
 </manifest>

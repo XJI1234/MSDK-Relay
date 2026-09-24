@@ -21,9 +21,10 @@ class MsdkV5PhotoApiContractTest {
         val finish = source.substringAfter("override fun onFinish").substringBefore("override fun onFailure")
         assertTrue(finish.contains("if (aborted.get())"))
         val leave = source.substringAfter("private fun leavePlaybackThen").substringBefore("private fun completeCaptureIfReady")
-        assertTrue(leave.contains("if (aborted.get()) return"))
+        assertTrue(leave.contains("if (aborted.get() && !continueWhenAborted) return"))
         val abort = source.substringAfter("override fun abort").substringBefore("override fun close")
-        assertTrue(abort.contains("if (downloading)"))
+        assertTrue(abort.contains("continueWhenAborted = true"))
+        assertTrue(abort.contains("done = onHardwareReleased"))
         assertFalse(source.contains("modeWatch.shutdownNow()"))
     }
 

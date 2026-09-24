@@ -35,6 +35,10 @@ interface PhotoDjiCompletion {
 interface DjiPhotoPort {
     fun execute(request: PhotoHardwareRequest, completion: PhotoDjiCompletion)
     fun abort(completion: PhotoDjiCompletion) = Unit
+    fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {
+        abort(completion)
+        onHardwareReleased()
+    }
     fun close() = Unit
 }
 
@@ -47,6 +51,8 @@ fun interface PhotoExecutionListener {
     fun onCompleted(outcome: PhotoExecutionOutcome)
 
     fun onCompleted(outcome: PhotoExecutionOutcome, failure: PhotoDjiFailure?) = onCompleted(outcome)
+
+    fun onHardwareReleased() = Unit
 }
 
 sealed interface PhotoExecutionOutcome {
@@ -101,7 +107,9 @@ class PhotoExecutor private constructor(
                 }
 
                 override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) {
-                    portCompletion.get()?.let { runCatching { port.abort(it) } }
+                    portCompletion.get()?.let { callback ->
+                        runCatching { port.abort(callback) { listener.onHardwareReleased() } }
+                    } ?: listener.onHardwareReleased()
                 }
             },
             timeoutMillis(request),

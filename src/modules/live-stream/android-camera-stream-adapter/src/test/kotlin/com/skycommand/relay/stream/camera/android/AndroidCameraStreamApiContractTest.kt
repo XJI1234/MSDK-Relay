@@ -3,11 +3,27 @@ package com.skycommand.relay.stream.camera.android
 import com.skycommand.relay.stream.camera.CameraStreamCodec
 import com.skycommand.relay.stream.camera.CameraStreamInfo
 import com.skycommand.relay.stream.camera.CameraStreamListener
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class AndroidCameraStreamApiContractTest {
+    @Test
+    fun defersResolvingTheCameraStreamManagerUntilTheRawStreamIsStarted() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/camera/android/AndroidCameraStreamApi.kt"),
+            Path("src/modules/live-stream/android-camera-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/camera/android/AndroidCameraStreamApi.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("MsdkCameraStreamPlatform(managerProvider = { MediaDataCenter.getInstance().cameraStreamManager })"))
+        assertTrue(source.contains("private val managerProvider: () -> ICameraStreamManager"))
+        assertTrue(source.contains("private val manager by lazy(managerProvider)"))
+    }
+
     @Test
     fun usesReceiveStreamListenerAndPreservesSdkMetadataAndArrayIdentity() {
         val probe = Probe()

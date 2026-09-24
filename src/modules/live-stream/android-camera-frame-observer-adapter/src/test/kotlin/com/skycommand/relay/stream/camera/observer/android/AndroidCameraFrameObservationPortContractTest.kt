@@ -7,8 +7,27 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
+import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.readText
 
 class AndroidCameraFrameObservationPortContractTest {
+    @Test
+    fun defersResolvingTheCameraStreamManagerUntilObservationStarts() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/camera/observer/android/AndroidCameraFrameObservationPort.kt"),
+            Path("src/modules/live-stream/android-camera-frame-observer-adapter/src/main/kotlin/com/skycommand/relay/stream/camera/observer/android/AndroidCameraFrameObservationPort.kt"),
+        ).first { it.exists() }.readText()
+
+        assertEquals(
+            1,
+            Regex("MediaDataCenter.getInstance().cameraStreamManager", RegexOption.LITERAL).findAll(source).count(),
+        )
+        assertTrue(source.contains("private val managerProvider: () -> ICameraStreamManager"))
+        assertTrue(source.contains("private val manager by lazy(managerProvider)"))
+    }
+
     @Test
     fun preservesOnlyValidFrameSliceMetadataAndExactListenerIdentity() {
         val platform = Probe()

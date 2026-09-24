@@ -223,6 +223,7 @@ private class AdapterConnection(
 
     override fun onClosing() {
         close("network closing")
+        if (markTerminal()) deliverWhenEnabled { listener.onClosed(generation, "Transport closing") }
     }
 
     override fun onClosed() {

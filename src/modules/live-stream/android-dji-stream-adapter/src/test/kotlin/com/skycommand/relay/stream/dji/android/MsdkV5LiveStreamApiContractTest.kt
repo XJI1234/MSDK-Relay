@@ -9,6 +9,21 @@ import kotlin.test.assertTrue
 
 class MsdkV5LiveStreamApiContractTest {
     @Test
+    fun defersAndThenReusesTheLiveStreamManagerForTheStreamLifetime() {
+        val source = listOf(
+            Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+            Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
+        ).first { it.exists() }.readText()
+        val start = source.substringAfter("override fun start").substringBefore("override fun stop")
+        val stop = source.substringAfter("override fun stop")
+
+        assertTrue(source.contains("private val managerProvider: () -> ILiveStreamManager"))
+        assertTrue(source.contains("private val manager by lazy(managerProvider)"))
+        assertFalse(start.contains("managerProvider()"))
+        assertFalse(stop.contains("managerProvider()"))
+    }
+
+    @Test
     fun recordsSettingsAndInvocationSeparatelyWithoutChangingSdkOrdering() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
@@ -51,18 +66,25 @@ class MsdkV5LiveStreamApiContractTest {
     }
 
     @Test
-    fun configuresMini4ProWithTheKnownGoodRtmpProfileWithoutOwningPreviewOrCameraMode() {
+    fun restoresTheHistoricalFullHdManualRtmpProfileWithoutOwningPreviewOrCameraMode() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
             Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
         ).first { it.exists() }.readText()
         val start = source.substringAfter("override fun start").substringBefore("override fun stop")
         val stop = source.substringAfter("override fun stop")
-        assertTrue(start.contains("StreamQuality.HD"))
+        assertTrue(start.contains("StreamQuality.FULL_HD"))
         assertTrue(start.contains("LiveVideoBitrateMode.MANUAL"))
-        assertTrue(start.contains("setLiveVideoBitrate(MINI_4_PRO_HD_BITRATE_BPS)"))
+        assertTrue(start.contains("setLiveVideoBitrate(MINI_4_PRO_FULL_HD_BITRATE_BPS)"))
+        assertTrue(source.contains("const val MINI_4_PRO_FULL_HD_BITRATE_BPS: Int = 500 * 1024 * 8"))
+        assertTrue(start.indexOf("setCameraIndex(ComponentIndexType.LEFT_OR_MAIN)") < start.indexOf("setLiveStreamSettings("))
+        assertTrue(start.indexOf("setLiveStreamSettings(") < start.indexOf("setLiveStreamQuality(StreamQuality.FULL_HD)"))
+        assertTrue(start.indexOf("setLiveStreamQuality(StreamQuality.FULL_HD)") < start.indexOf("setLiveVideoBitrateMode(LiveVideoBitrateMode.MANUAL)"))
+        assertTrue(start.indexOf("setLiveVideoBitrateMode(LiveVideoBitrateMode.MANUAL)") < start.indexOf("setLiveVideoBitrate(MINI_4_PRO_FULL_HD_BITRATE_BPS)"))
+        assertTrue(start.indexOf("setLiveVideoBitrate(MINI_4_PRO_FULL_HD_BITRATE_BPS)") < start.indexOf("manager.addLiveStreamStatusListener(sdkListener)"))
+        assertTrue(start.indexOf("manager.addLiveStreamStatusListener(sdkListener)") < start.indexOf("manager.startStream("))
         assertFalse(start.contains("setLiveStreamScaleType"))
-        assertFalse(start.contains("StreamQuality.FULL_HD"))
+        assertFalse(start.contains("StreamQuality.HD"))
         assertFalse(start.contains("StreamQuality.SD"))
         assertFalse(start.contains("StreamQuality.ORIGINAL"))
         assertFalse(start.contains("LiveVideoBitrateMode.AUTO"))

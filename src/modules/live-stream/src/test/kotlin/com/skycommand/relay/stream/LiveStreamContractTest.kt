@@ -173,7 +173,7 @@ class LiveStreamContractTest {
     fun bindsReadOnlyCameraFrameObservationToTheProductionRtmpGeneration() {
         val fixture = Fixture(withCameraFrameObserver = true)
         fixture.liveStream.commandHandler().handle(start(), Completion())
-        assertEquals(CameraFrameObservationState.UNOBSERVED, fixture.cameraFrameObserver!!.snapshot().state)
+        assertEquals(CameraFrameObservationState.UNAVAILABLE, fixture.cameraFrameObserver!!.snapshot().state)
 
         fixture.port.startCompletion!!.fail()
         assertEquals(CameraFrameObservationState.UNAVAILABLE, fixture.cameraFrameObserver!!.snapshot().state)
@@ -182,6 +182,8 @@ class LiveStreamContractTest {
         fixture.port.startCompletion!!.succeed()
         assertEquals(CameraFrameObservationState.UNOBSERVED, fixture.cameraFrameObserver!!.snapshot().state)
         fixture.liveStream.commandHandler().handle(stop(), Completion())
+        assertEquals(CameraFrameObservationState.UNOBSERVED, fixture.cameraFrameObserver!!.snapshot().state)
+        fixture.port.stopCompletion!!.succeed()
         assertEquals(CameraFrameObservationState.UNAVAILABLE, fixture.cameraFrameObserver!!.snapshot().state)
     }
 

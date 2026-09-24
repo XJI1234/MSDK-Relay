@@ -12,9 +12,24 @@ import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AndroidDjiPhotoPortContractTest {
+    @Test
+    fun cameraMediaRecoveryWaitsForThePlatformVideoInputResult() {
+        val platform = FakeApi()
+        val port = AndroidCameraMediaRecoveryPort { platform }
+        var recovered: Boolean? = null
+
+        port.recover { recovered = it }
+        assertNull(recovered)
+
+        platform.recovery!!.invoke(true)
+        assertEquals(true, recovered)
+    }
+
     @Test
     fun abortingAnOlderAttemptCannotAbortOrDeliverIntoTheNextAttempt() {
         val platforms = mutableListOf<FakeApi>()
@@ -65,12 +80,14 @@ class AndroidDjiPhotoPortContractTest {
     private class FakeApi : DjiPhotoApi {
         var capture: DjiPhotoCaptureCompletion? = null
         var download: DjiPhotoDownloadCompletion? = null
+        var recovery: ((Boolean) -> Unit)? = null
         var aborted = false
         override fun capture(completion: DjiPhotoCaptureCompletion) { capture = completion }
         override fun download(identity: PhotoCaptureIdentity, destFile: File, completion: DjiPhotoDownloadCompletion) {
             download = completion
         }
         override fun abort() { aborted = true }
+        override fun recoverVideoInput(completion: (Boolean) -> Unit) { recovery = completion }
     }
 
     @Test

@@ -64,6 +64,17 @@ class ConnectionSessionReconnectTest {
     }
 
     @Test
+    fun preservesTheTransportCloseReasonInTheReconnectStateEvent() {
+        val fixture = SessionFixture.create()
+        fixture.becomeActive()
+
+        fixture.connector.current.closed("Transport closing")
+
+        assertEquals(SessionState.RECONNECT_WAIT, fixture.session.snapshot().state)
+        assertEquals("Transport closing", fixture.notifier.events.last().endReason?.detail)
+    }
+
+    @Test
     fun manualStartDuringReconnectWaitCancelsTimerAndPreservesFailureCount() {
         val fixture = SessionFixture.create()
         fixture.connector.rejectNextReason = "offline"

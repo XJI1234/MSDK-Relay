@@ -7,9 +7,13 @@ import com.skycommand.relay.gateway.outbound.PublishResult
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.protocol.DiagnosticAcknowledgementFrame
 import com.skycommand.relay.protocol.DiagnosticReportFrame
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class GatewayDiagnosticPublisherContractTest {
 
@@ -125,6 +129,34 @@ class GatewayDiagnosticPublisherContractTest {
         assertEquals(listOf(1L), journal.pending(32).map { it.sequence })
     }
 
+    @Test
+    fun acknowledgementDoesNotWaitForAConcurrentGatewayPublish() {
+        val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
+        journal.record(DiagnosticLevel.INFO, "runtime-diagnostics", "STARTED", null, "safe")
+        val gateway = BlockingGateway()
+        val publisher = GatewayDiagnosticPublisher.create(journal, gateway)
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            publisher.start()
+            val activation = executor.submit { gateway.activate() }
+            assertTrue(gateway.publishEntered.await(1, TimeUnit.SECONDS))
+
+            val acknowledgementReturned = CountDownLatch(1)
+            executor.submit {
+                gateway.acknowledge("run-1", 1)
+                acknowledgementReturned.countDown()
+            }
+            assertTrue(acknowledgementReturned.await(1, TimeUnit.SECONDS))
+
+            gateway.releasePublish.countDown()
+            activation.get(1, TimeUnit.SECONDS)
+        } finally {
+            gateway.releasePublish.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     private object FixedClock : DiagnosticClock { override fun currentTimeMillis(): Long = 0 }
 
     private class ManualScheduler : DiagnosticTimeoutScheduler {
@@ -162,5 +194,40 @@ class GatewayDiagnosticPublisherContractTest {
         }
         fun transitionTo(next: SessionState) { state = next; listener?.invoke(next) }
         fun acknowledge(runId: String, sequence: Long) { acknowledgementHandler?.invoke(DiagnosticAcknowledgementFrame(runId, sequence)) }
+    }
+
+    private class BlockingGateway : DiagnosticGatewayPort {
+        private var listener: ((SessionState) -> Unit)? = null
+        private var acknowledgementHandler: ((DiagnosticAcknowledgementFrame) -> Unit)? = null
+        private var state = SessionState.RECONNECT_WAIT
+        val publishEntered = CountDownLatch(1)
+        val releasePublish = CountDownLatch(1)
+
+        override fun currentState(): SessionState = state
+
+        override fun publish(report: DiagnosticReportFrame): PublishResult {
+            publishEntered.countDown()
+            releasePublish.await()
+            return PublishResult.Delivered
+        }
+
+        override fun onStateChanged(listener: (SessionState) -> Unit): DiagnosticRegistration {
+            this.listener = listener
+            return DiagnosticRegistration { this.listener = null }
+        }
+
+        override fun onAcknowledged(handler: (DiagnosticAcknowledgementFrame) -> Unit): DiagnosticRegistration {
+            acknowledgementHandler = handler
+            return DiagnosticRegistration { acknowledgementHandler = null }
+        }
+
+        fun activate() {
+            state = SessionState.ACTIVE
+            listener?.invoke(state)
+        }
+
+        fun acknowledge(runId: String, sequence: Long) {
+            acknowledgementHandler?.invoke(DiagnosticAcknowledgementFrame(runId, sequence))
+        }
     }
 }

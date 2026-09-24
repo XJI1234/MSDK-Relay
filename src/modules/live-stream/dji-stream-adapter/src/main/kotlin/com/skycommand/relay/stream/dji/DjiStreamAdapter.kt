@@ -7,6 +7,7 @@ import com.skycommand.relay.device.operation.OperationCompletion
 import com.skycommand.relay.device.operation.OperationOutcome
 import com.skycommand.relay.device.operation.OperationResultListener
 import com.skycommand.relay.device.operation.SubmissionResult
+import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.stream.config.ValidatedStreamConfig
 import com.skycommand.relay.stream.state.StreamMetrics
 import com.skycommand.relay.stream.state.StreamRuntimeFailure
@@ -168,6 +169,10 @@ class DjiStreamAdapter private constructor(
                 }
 
                 override fun onHardwareOutcomeUnconfirmed(outcome: OperationOutcome) {
+                    if (outcome == OperationOutcome.FAILED) {
+                        requestContainmentStop()
+                        return
+                    }
                     if (recoveryPending.get() && operationCompletion.get()?.confirmHardwareSettled() == true) {
                         recoveryPending.set(false)
                         requestRecoveryStop()
@@ -175,7 +180,10 @@ class DjiStreamAdapter private constructor(
                 }
 
                 override fun onLateDjiCompletion(outcome: OperationOutcome) {
-                    if (recoveryPending.getAndSet(false)) requestRecoveryStop()
+                    val recoveryWasPending = recoveryPending.getAndSet(false)
+                    if (outcome == OperationOutcome.SUCCEEDED || recoveryWasPending) {
+                        requestRecoveryStop()
+                    }
                 }
             },
             timeoutMillis = timeoutMillis,
@@ -258,6 +266,15 @@ class DjiStreamAdapter private constructor(
 
     /** Schedules best-effort stream cleanup through the shared DJI operation queue. */
     fun requestRecoveryStop() {
+        requestStop(UnconfirmedOutcomeAdmission.STANDARD)
+    }
+
+    /** Contains only a synchronous invocation failure whose hardware outcome cannot be observed. */
+    private fun requestContainmentStop() {
+        requestStop(UnconfirmedOutcomeAdmission.CONTAINMENT)
+    }
+
+    private fun requestStop(admission: UnconfirmedOutcomeAdmission) {
         val shouldSubmit = recoveryLock.withLock {
             if (recoveryQueued) false else {
                 recoveryQueued = true
@@ -266,8 +283,13 @@ class DjiStreamAdapter private constructor(
         }
         if (!shouldSubmit) return
         val submission = coordinator.submit(
-            action = DjiOperation { completion ->
-                djiPort.stop(completion.asDjiCompletion(AtomicReference<StreamDjiFailure?>(null)))
+            action = object : DjiOperation {
+                override fun run(completion: OperationCompletion) {
+                    djiPort.stop(completion.asDjiCompletion(AtomicReference<StreamDjiFailure?>(null)))
+                }
+
+                override fun unconfirmedOutcomeAdmission(): UnconfirmedOutcomeAdmission =
+                    admission
             },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener {

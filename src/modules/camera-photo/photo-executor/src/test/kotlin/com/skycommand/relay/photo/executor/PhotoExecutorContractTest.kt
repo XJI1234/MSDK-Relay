@@ -112,6 +112,14 @@ class PhotoExecutorContractTest {
         assertEquals(PhotoExecutionOutcome.Captured(PhotoCaptureIdentity("new.jpg", 2)), outcomes.last())
     }
 
+    @Test
+    fun exposesASeparateHardwareReleaseNotificationForCancelledPhotoWork() {
+        assertEquals(
+            1,
+            PhotoExecutionListener::class.java.methods.count { method -> method.name == "onHardwareReleased" },
+        )
+    }
+
     private fun file(name: String) = PhotoLocalFile(name, 1, "a".repeat(64), PhotoReadable { byteArrayOf(1) })
 
     private class Port : DjiPhotoPort {

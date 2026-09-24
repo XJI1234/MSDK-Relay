@@ -137,6 +137,7 @@ class DjiStreamAdapterContractTest {
         fixture.port.throwOnStart = true
         assertIs<DjiStreamStartResult.Accepted>(fixture.adapter.start(config()))
         assertEquals(StreamLifecycleState.FAILED, fixture.store.snapshot().state)
+        assertEquals(1, fixture.port.stopCalls)
     }
 
     @Test

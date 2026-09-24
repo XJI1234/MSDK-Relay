@@ -17,9 +17,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 internal class MsdkV5LiveStreamApi(
-    private val manager: ILiveStreamManager = MediaDataCenter.getInstance().liveStreamManager,
+    private val managerProvider: () -> ILiveStreamManager = { MediaDataCenter.getInstance().liveStreamManager },
     private val diagnosticSink: LiveStreamDiagnosticSink = LiveStreamDiagnosticSink { },
 ) : DjiLiveStreamApi {
+    private val manager by lazy(managerProvider)
     private val nextAttempt = AtomicLong()
 
     override fun start(url: String, listener: DjiLiveStreamListener, completion: DjiLiveStreamCompletion) {
@@ -32,9 +33,9 @@ internal class MsdkV5LiveStreamApi(
                 LiveStreamSettings.Builder().setLiveStreamType(LiveStreamType.RTMP)
                     .setRtmpSettings(RtmpSettings.Builder().setUrl(url).build()).build(),
             )
-            manager.setLiveStreamQuality(StreamQuality.HD)
+            manager.setLiveStreamQuality(StreamQuality.FULL_HD)
             manager.setLiveVideoBitrateMode(LiveVideoBitrateMode.MANUAL)
-            manager.setLiveVideoBitrate(MINI_4_PRO_HD_BITRATE_BPS)
+            manager.setLiveVideoBitrate(MINI_4_PRO_FULL_HD_BITRATE_BPS)
         } catch (failure: Throwable) {
             record(LiveStreamDiagnosticKind.SETTINGS_FAILED, attempt)
             throw failure
@@ -123,6 +124,6 @@ internal class MsdkV5LiveStreamApi(
     }
 
     private companion object {
-        const val MINI_4_PRO_HD_BITRATE_BPS: Int = 220 * 1024 * 8
+        const val MINI_4_PRO_FULL_HD_BITRATE_BPS: Int = 500 * 1024 * 8
     }
 }

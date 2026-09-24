@@ -2,6 +2,7 @@ package com.skycommand.relay.photo.dji.android
 
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
+import com.skycommand.relay.photo.executor.CameraMediaRecoveryPort
 import com.skycommand.relay.photo.executor.DjiPhotoPort
 import com.skycommand.relay.photo.executor.PhotoDjiCompletion
 import com.skycommand.relay.photo.executor.PhotoHardwareRequest
@@ -28,7 +29,35 @@ internal interface DjiPhotoApi {
     fun capture(completion: DjiPhotoCaptureCompletion)
     fun download(identity: PhotoCaptureIdentity, destFile: File, completion: DjiPhotoDownloadCompletion)
     fun abort()
+    fun abort(onHardwareReleased: () -> Unit) {
+        abort()
+        onHardwareReleased()
+    }
+    fun recoverVideoInput(completion: (Boolean) -> Unit) {
+        abort { completion(true) }
+    }
     fun close() = Unit
+}
+
+class AndroidCameraMediaRecoveryPort internal constructor(
+    private val platformFactory: () -> DjiPhotoApi,
+) : CameraMediaRecoveryPort {
+    override fun recover(completion: (Boolean) -> Unit) {
+        val platform = platformFactory()
+        runCatching {
+            platform.recoverVideoInput { recovered ->
+                runCatching { platform.close() }
+                completion(recovered)
+            }
+        }.onFailure {
+            runCatching { platform.close() }
+            completion(false)
+        }
+    }
+
+    companion object {
+        fun create(): CameraMediaRecoveryPort = AndroidCameraMediaRecoveryPort { MsdkV5PhotoApi() }
+    }
 }
 
 class AndroidDjiPhotoPort internal constructor(
@@ -87,6 +116,10 @@ class AndroidDjiPhotoPort internal constructor(
         synchronized(lock) { operations[completion]?.let(::stop) }
     }
 
+    override fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {
+        synchronized(lock) { operations[completion]?.let { stop(it, onHardwareReleased) } ?: onHardwareReleased() }
+    }
+
     override fun close() {
         synchronized(lock) {
             closed = true
@@ -136,10 +169,15 @@ class AndroidDjiPhotoPort internal constructor(
     }
 
     private fun stop(operation: Active) {
+        stop(operation) { }
+    }
+
+    private fun stop(operation: Active, onHardwareReleased: () -> Unit) {
         if (!operation.completeOnce()) return
         operations.remove(operation.completion)
         if (active === operation) active = null
-        runCatching { operation.platform.abort() }
+        runCatching { operation.platform.abort(onHardwareReleased) }
+            .onFailure { onHardwareReleased() }
         runCatching { operation.platform.close() }
     }
 

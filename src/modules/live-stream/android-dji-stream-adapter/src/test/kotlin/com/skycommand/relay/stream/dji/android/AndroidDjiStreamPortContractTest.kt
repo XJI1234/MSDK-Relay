@@ -68,6 +68,9 @@ class AndroidDjiStreamPortContractTest {
             startPort.start(ValidatedStreamConfig("rtmp://host/live/device"), {}, {}, startCompletion)
         }
         assertEquals(emptyList(), startCompletion.events)
+        val cleanupCompletion = Completion()
+        startPort.stop(cleanupCompletion)
+        assertEquals(1, startPlatform.stopCalls)
 
         val stopPlatform = FakePlatform()
         val stopPort = AndroidDjiStreamPort(stopPlatform)
@@ -78,6 +81,14 @@ class AndroidDjiStreamPortContractTest {
 
         assertFailsWith<IllegalStateException> { stopPort.stop(stopCompletion) }
         assertEquals(emptyList(), stopCompletion.events)
+        stopPlatform.throwOnStop = false
+        val retryStopCompletion = Completion()
+        stopPort.stop(retryStopCompletion)
+        requireNotNull(stopPlatform.stopCompletion).succeed()
+        assertEquals(listOf("success"), retryStopCompletion.events)
+        val restartCompletion = Completion()
+        stopPort.start(ValidatedStreamConfig("rtmp://host/live/retry"), {}, {}, restartCompletion)
+        assertEquals(2, stopPlatform.startCalls)
     }
 
     @Test fun rejectsStartWhilePlatformStopIsStillInFlight() {

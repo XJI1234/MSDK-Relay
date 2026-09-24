@@ -37,11 +37,11 @@ class ConnectionSession private constructor(
         }
 
         override fun onClosed(generation: SessionGeneration, reason: String) {
-            eventLoop.executePriority { handleTransportEnded(generation, "Transport closed") }
+            eventLoop.executePriority { handleTransportEnded(generation, safeTransportEndDetail(reason, "Transport closed")) }
         }
 
         override fun onFailure(generation: SessionGeneration, reason: String) {
-            eventLoop.executePriority { handleTransportEnded(generation, "Transport failed") }
+            eventLoop.executePriority { handleTransportEnded(generation, safeTransportEndDetail(reason, "Transport failed")) }
         }
     }
 
@@ -427,6 +427,14 @@ class ConnectionSession private constructor(
 
     private fun reason(kind: SessionEndKind, detail: String): SessionEndReason =
         SessionEndReason.create(kind, detail)
+
+    private fun safeTransportEndDetail(reason: String, fallback: String): String = when (reason) {
+        "Transport closing",
+        "Transport closed",
+        "Transport failed",
+        -> reason
+        else -> fallback
+    }
 
     private class RetryToken {
         @Suppress("unused")

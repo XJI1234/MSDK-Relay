@@ -38,6 +38,8 @@ data class CameraPhotoDependencies(
     val djiPort: DjiPhotoPort,
     val operationCoordinator: DjiOperationCoordinator,
     val mediaPublisher: PhotoMediaPublisher,
+    val onCameraMediaBusy: () -> Unit = {},
+    val onCameraMediaReleased: () -> Unit = {},
 )
 
 class CameraPhoto private constructor(
@@ -142,6 +144,7 @@ class CameraPhoto private constructor(
                     }
                 }.also { requestInFlight = true }
             }
+            dependencies.onCameraMediaBusy()
             var cancellation: OperationCancellationHandle? = null
             val completed = AtomicBoolean(false)
             val result = executor.execute(hardware, object : PhotoExecutionListener {
@@ -149,8 +152,14 @@ class CameraPhoto private constructor(
 
                 override fun onCompleted(outcome: PhotoExecutionOutcome, failure: PhotoDjiFailure?) {
                     when (outcome) {
-                        is PhotoExecutionOutcome.Delivered -> publish(outcome.file, completion, cancellation, completed)
+                        is PhotoExecutionOutcome.Delivered -> {
+                            dependencies.onCameraMediaReleased()
+                            publish(outcome.file, completion, cancellation, completed)
+                        }
                         else -> {
+                            if (outcome is PhotoExecutionOutcome.Captured || outcome == PhotoExecutionOutcome.Failed) {
+                                dependencies.onCameraMediaReleased()
+                            }
                             finishRequest(cancellation, completed)
                             completion.complete(
                                 when (outcome) {
@@ -168,6 +177,10 @@ class CameraPhoto private constructor(
                         }
                     }
                 }
+
+                override fun onHardwareReleased() {
+                    dependencies.onCameraMediaReleased()
+                }
             })
             return when (result) {
                 is PhotoSubmissionResult.Accepted -> {
@@ -177,6 +190,7 @@ class CameraPhoto private constructor(
                 }
                 PhotoSubmissionResult.Rejected -> {
                     synchronized(lock) { requestInFlight = false }
+                    dependencies.onCameraMediaReleased()
                     PhotoActionResult.Rejected
                 }
             }

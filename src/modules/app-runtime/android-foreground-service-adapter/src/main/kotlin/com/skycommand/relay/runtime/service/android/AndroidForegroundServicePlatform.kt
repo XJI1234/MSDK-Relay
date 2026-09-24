@@ -173,17 +173,17 @@ class RelayForegroundService : Service() {
                 notification(intent),
             )
             status(intent, ACTION_STARTED_SUFFIX)
+            return START_STICKY
         } catch (_: Exception) {
             status(intent, ACTION_FAILED_SUFFIX)
             activeStart = null
             stopSelfResult(startId)
+            return START_NOT_STICKY
         }
-        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         pendingStop?.let { status(it, ACTION_STOPPED_SUFFIX) }
-            ?: activeStart?.let { status(it, ACTION_FAILED_SUFFIX) }
         pendingStop = null
         activeStart = null
         super.onDestroy()
