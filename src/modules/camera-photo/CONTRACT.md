@@ -74,3 +74,5 @@ camera.photo.fetch      fields: {}
 ## 与图传的边界
 
 拍照可以按 DJI 要求把相机模式切到 `PHOTO_NORMAL`。Mini 4 Pro 是单镜头，快门使用不带镜头参数的 `KeyStartShootPhoto`，不得改成变焦或广角镜头键，也不得为了拍照拆掉图传解码 Surface 或停止 RTMP。本模块不拥有图传，不得启动、停止或恢复 RTMP/WHIP，不得调用 `ILiveStreamManager`。快门成功或失败后必须把 `KeyCameraMode` 设回切换前的值；切换前未知或仍是 `PHOTO_NORMAL` 时设 `VIDEO_NORMAL`。回传拉完原图后必须 `IMediaManager.disable`，并且只在该 `disable` 回调返回后才完成下载，以便相册占用的图传链路先释放，再走 WebSocket 分块。
+
+应用冷启动或视频源重新连接时，图传门禁只依据视频源连接和在途照片任务，不得调用 `IMediaManager.disable`、修改 `KeyCameraMode` 或把照片媒体状态读回当作相机编码器就绪的证据。`fetch` 的媒体退出仍由其自身的 `IMediaManager.disable` 回调完成；该行为不属于图传启动路径。

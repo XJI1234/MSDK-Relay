@@ -38,7 +38,7 @@ object DeviceCapabilityReader {
             canStartPairing = sdkReady && remoteConnected && snapshot.flightController != LinkState.CONNECTED && pairingCanStart,
             canStopPairing = pairingActive,
             canReadTelemetry = flightReady,
-            canStreamVideo = sdkReady && airLinkConnected && cameraConnected,
+            canStreamVideo = sdkReady && airLinkConnected && cameraConnected && flightControllerConnected,
             canRunWayline = flightReady && remoteConnected,
         )
     }

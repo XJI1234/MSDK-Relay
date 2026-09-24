@@ -171,11 +171,15 @@ internal class MsdkV5PhotoApi(
         MediaDataCenter.getInstance().mediaManager.disable(object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() {
                 playingBack.set(false)
-                restoreVideoInput(done)
+                confirmPlaybackExited { exited ->
+                    if (exited) restoreVideoInput(done) else done(false)
+                }
             }
             override fun onFailure(error: IDJIError) {
                 playingBack.set(false)
-                restoreVideoInput(done)
+                confirmPlaybackExited { exited ->
+                    if (exited) restoreVideoInput(done) else done(false)
+                }
             }
         })
     }
@@ -436,18 +440,25 @@ internal class MsdkV5PhotoApi(
     }
 
     private fun restoreVideoInput(done: (Boolean) -> Unit) {
-        if (observedMode.get() == CameraMode.VIDEO_NORMAL) {
-            done(true)
-            return
+        fun confirmVideoMode() {
+            manager.getValue(modeKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraMode> {
+                override fun onSuccess(value: CameraMode) {
+                    observedMode.set(value)
+                    done(value == CameraMode.VIDEO_NORMAL)
+                }
+                override fun onFailure(error: IDJIError) = done(false)
+            })
         }
         manager.setValue(modeKey, CameraMode.VIDEO_NORMAL, object : CommonCallbacks.CompletionCallback {
-            override fun onSuccess() = done(true)
-            override fun onFailure(error: IDJIError) {
-                manager.getValue(modeKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraMode> {
-                    override fun onSuccess(value: CameraMode) = done(value == CameraMode.VIDEO_NORMAL)
-                    override fun onFailure(error: IDJIError) = done(false)
-                })
-            }
+            override fun onSuccess() = confirmVideoMode()
+            override fun onFailure(error: IDJIError) = confirmVideoMode()
+        })
+    }
+
+    private fun confirmPlaybackExited(done: (Boolean) -> Unit) {
+        manager.getValue(playbackKey, object : CommonCallbacks.CompletionCallbackWithParam<Boolean> {
+            override fun onSuccess(value: Boolean) = done(!value)
+            override fun onFailure(error: IDJIError) = done(false)
         })
     }
 

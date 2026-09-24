@@ -150,7 +150,7 @@ class DeviceCapabilityReaderContractTest {
     }
 
     @Test
-    fun videoCapabilityRequiresAirLinkAndPrimaryCameraButNotFlightController() {
+    fun videoCapabilityRequiresFlightControllerAlongsideAirLinkAndPrimaryCamera() {
         val streamingFacts = initialSnapshot().copy(
             sdkAvailability = SdkAvailability.READY,
             aircraft = LinkState.DISCONNECTED,
@@ -159,7 +159,8 @@ class DeviceCapabilityReaderContractTest {
             flightController = LinkState.DISCONNECTED,
         )
 
-        assertEquals(true, DeviceCapabilityReader.read(streamingFacts).canStreamVideo)
+        assertEquals(false, DeviceCapabilityReader.read(streamingFacts).canStreamVideo)
+        assertEquals(true, DeviceCapabilityReader.read(streamingFacts.copy(flightController = LinkState.CONNECTED)).canStreamVideo)
         assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(airLink = LinkState.UNKNOWN)).canStreamVideo)
         assertEquals(false, DeviceCapabilityReader.read(streamingFacts.copy(camera = LinkState.DISCONNECTED)).canStreamVideo)
     }
