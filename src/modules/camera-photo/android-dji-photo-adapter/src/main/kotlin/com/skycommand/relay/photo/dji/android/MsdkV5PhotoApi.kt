@@ -156,6 +156,13 @@ internal class MsdkV5PhotoApi(
         )
     }
 
+    override fun readPlaybackActive(completion: (Boolean?) -> Unit) {
+        manager.getValue(playbackKey, object : CommonCallbacks.CompletionCallbackWithParam<Boolean> {
+            override fun onSuccess(value: Boolean) = completion(value)
+            override fun onFailure(error: IDJIError) = completion(null)
+        })
+    }
+
     override fun recoverVideoInput(completion: (Boolean) -> Unit) {
         val completed = AtomicBoolean(false)
         val done = { recovered: Boolean ->
@@ -172,13 +179,13 @@ internal class MsdkV5PhotoApi(
             override fun onSuccess() {
                 playingBack.set(false)
                 confirmPlaybackExited { exited ->
-                    if (exited) restoreVideoInput(done) else done(false)
+                    done(exited)
                 }
             }
             override fun onFailure(error: IDJIError) {
                 playingBack.set(false)
                 confirmPlaybackExited { exited ->
-                    if (exited) restoreVideoInput(done) else done(false)
+                    done(exited)
                 }
             }
         })
@@ -436,22 +443,6 @@ internal class MsdkV5PhotoApi(
         manager.setValue(modeKey, previous, object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() = finish()
             override fun onFailure(error: IDJIError) = finish()
-        })
-    }
-
-    private fun restoreVideoInput(done: (Boolean) -> Unit) {
-        fun confirmVideoMode() {
-            manager.getValue(modeKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraMode> {
-                override fun onSuccess(value: CameraMode) {
-                    observedMode.set(value)
-                    done(value == CameraMode.VIDEO_NORMAL)
-                }
-                override fun onFailure(error: IDJIError) = done(false)
-            })
-        }
-        manager.setValue(modeKey, CameraMode.VIDEO_NORMAL, object : CommonCallbacks.CompletionCallback {
-            override fun onSuccess() = confirmVideoMode()
-            override fun onFailure(error: IDJIError) = confirmVideoMode()
         })
     }
 

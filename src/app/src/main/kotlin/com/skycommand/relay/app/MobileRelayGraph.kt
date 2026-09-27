@@ -75,6 +75,7 @@ import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.photo.CameraPhoto
 import com.skycommand.relay.photo.CameraPhotoDependencies
 import com.skycommand.relay.photo.CameraMediaReadiness
+import com.skycommand.relay.photo.dji.android.AndroidCameraMediaRecoveryPort
 import com.skycommand.relay.photo.dji.android.AndroidDjiPhotoPort
 import com.skycommand.relay.photo.media.PhotoMediaCancellation
 import com.skycommand.relay.photo.media.PhotoMediaClock
@@ -463,7 +464,7 @@ class MobileRelayGraph private constructor(
             val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
             val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
             val liveCaptureDiagnostics = LiveCaptureDiagnosticRecorder(journal) { task -> captureDiagnosticExecutor.execute(task) }
-            val cameraMediaReadiness = CameraMediaReadiness()
+            val cameraMediaReadiness = CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
                     AndroidDjiSdkPort.create(activity),

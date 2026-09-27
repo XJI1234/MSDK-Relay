@@ -155,7 +155,7 @@ class MobileRelayGraphContractTest {
     }
 
     @Test
-    fun keepsColdStartMediaOperationsOutOfTheRtmpStartGate() {
+    fun checksForStrandedPlaybackBeforeOpeningTheRtmpStartGate() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
@@ -165,8 +165,8 @@ class MobileRelayGraphContractTest {
         val streamWiring = source.substringAfter("val stream = LiveStream.create(")
             .substringBefore("val whipStream = WhipLiveStream.create(")
 
-        assertTrue(source.contains("CameraMediaReadiness()"))
-        assertFalse(source.contains("AndroidCameraMediaRecoveryPort"))
+        assertTrue(source.contains("CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())"))
+        assertTrue(source.contains("AndroidCameraMediaRecoveryPort.create()"))
         assertTrue(deviceNotifications.contains("synchronizeCameraMediaReadiness()"))
         assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() }"))
     }

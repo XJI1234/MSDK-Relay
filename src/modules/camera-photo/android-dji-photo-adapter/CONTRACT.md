@@ -24,7 +24,7 @@
 - 不发送 WebSocket，不写电脑目录；
 - 不调用 `ILiveStreamManager`、飞控、航线或设置键，不停止图传，也不拆掉图传解码 Surface；
 - 快门成功或失败后必须把 `KeyCameraMode` 设回切换前的值；切换前未知或仍是 `PHOTO_NORMAL` 时设 `VIDEO_NORMAL`。这是相机键恢复，不是图传启停。
-- 原图下载结束或失败后必须 `IMediaManager.disable`，并且只在该回调返回后再完成下载。
+- 原图下载结束或失败后必须 `IMediaManager.disable`，并且只在该回调返回后再完成下载。用于新连接的兜底先只读 `KeyIsPlayingBack`；明确为 `true` 才可调用一次 `disable`，并且必须读回 `false` 才报告恢复。`false` 或读取失败不得调用 `disable`，兜底不得修改 `KeyCameraMode`。
 
 ## 3. 对外接口
 

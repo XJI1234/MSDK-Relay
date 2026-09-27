@@ -1,6 +1,8 @@
 package com.skycommand.relay.photo
 
+import com.skycommand.relay.photo.executor.CameraMediaRecoveryPort
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -34,6 +36,34 @@ class CameraMediaReadinessTest {
 
         readiness.onCameraMediaReleased()
         assertTrue(readiness.isReady())
+    }
+
+    @Test
+    fun waitsForOnePlaybackCheckBeforeAllowingTheNewVideoSourceToStart() {
+        val recovery = RecordingRecovery()
+        val readiness = CameraMediaReadiness(recovery)
+
+        readiness.onVideoSourceChanged(available = true)
+
+        assertEquals(1, recovery.calls)
+        assertFalse(readiness.isReady())
+
+        recovery.complete(true)
+        assertTrue(readiness.isReady())
+    }
+
+    private class RecordingRecovery : CameraMediaRecoveryPort {
+        var calls = 0
+        private var completion: ((Boolean) -> Unit)? = null
+
+        override fun recover(completion: (Boolean) -> Unit) {
+            calls += 1
+            this.completion = completion
+        }
+
+        fun complete(recovered: Boolean) {
+            completion!!.invoke(recovered)
+        }
     }
 
 }

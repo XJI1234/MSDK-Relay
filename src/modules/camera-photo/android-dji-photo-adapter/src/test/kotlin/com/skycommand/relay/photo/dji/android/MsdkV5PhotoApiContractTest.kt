@@ -9,19 +9,17 @@ import kotlin.test.assertTrue
 
 class MsdkV5PhotoApiContractTest {
     @Test
-    fun cameraRecoveryReadsBackPlaybackAndVideoModeBeforeClaimingTheInputRecovered() {
+    fun cameraRecoveryOnlyDisablesAfterPlaybackWasConfirmedAndReadsBackTheExit() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/photo/dji/android/MsdkV5PhotoApi.kt"),
             Path("src/modules/camera-photo/android-dji-photo-adapter/src/main/kotlin/com/skycommand/relay/photo/dji/android/MsdkV5PhotoApi.kt"),
         ).first { it.exists() }.readText()
         val recovery = source.substringAfter("override fun recoverVideoInput").substringBefore("private fun startPlayback")
-        val restore = source.substringAfter("private fun restoreVideoInput").substringBefore("private fun leavePlaybackThen")
 
         assertTrue(recovery.contains("confirmPlaybackExited"))
         assertTrue(source.contains("KeyIsPlayingBack"))
-        assertTrue(restore.contains("confirmVideoMode"))
-        assertTrue(restore.contains("manager.getValue(modeKey"))
-        assertFalse(restore.contains("override fun onSuccess() = done(true)"))
+        assertFalse(recovery.contains("restoreVideoInput"))
+        assertTrue(source.contains("override fun readPlaybackActive"))
     }
 
     @Test

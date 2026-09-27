@@ -26,8 +26,23 @@ class AndroidDjiPhotoPortContractTest {
         port.recover { recovered = it }
         assertNull(recovered)
 
+        platform.playbackRead!!.invoke(true)
+        assertNull(recovered)
         platform.recovery!!.invoke(true)
         assertEquals(true, recovered)
+    }
+
+    @Test
+    fun cameraMediaRecoveryDoesNotDisableWhenPlaybackIsNotActive() {
+        val platform = FakeApi()
+        val port = AndroidCameraMediaRecoveryPort { platform }
+        var recovered: Boolean? = null
+
+        port.recover { recovered = it }
+        platform.playbackRead!!.invoke(false)
+
+        assertEquals(true, recovered)
+        assertNull(platform.recovery)
     }
 
     @Test
@@ -80,6 +95,7 @@ class AndroidDjiPhotoPortContractTest {
     private class FakeApi : DjiPhotoApi {
         var capture: DjiPhotoCaptureCompletion? = null
         var download: DjiPhotoDownloadCompletion? = null
+        var playbackRead: ((Boolean?) -> Unit)? = null
         var recovery: ((Boolean) -> Unit)? = null
         var aborted = false
         override fun capture(completion: DjiPhotoCaptureCompletion) { capture = completion }
@@ -87,6 +103,7 @@ class AndroidDjiPhotoPortContractTest {
             download = completion
         }
         override fun abort() { aborted = true }
+        override fun readPlaybackActive(completion: (Boolean?) -> Unit) { playbackRead = completion }
         override fun recoverVideoInput(completion: (Boolean) -> Unit) { recovery = completion }
     }
 

@@ -12,6 +12,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal interface DjiPhotoCaptureCompletion {
     fun succeed(identity: PhotoCaptureIdentity)
@@ -33,6 +34,7 @@ internal interface DjiPhotoApi {
         abort()
         onHardwareReleased()
     }
+    fun readPlaybackActive(completion: (Boolean?) -> Unit) = completion(null)
     fun recoverVideoInput(completion: (Boolean) -> Unit) {
         abort { completion(true) }
     }
@@ -44,14 +46,27 @@ class AndroidCameraMediaRecoveryPort internal constructor(
 ) : CameraMediaRecoveryPort {
     override fun recover(completion: (Boolean) -> Unit) {
         val platform = platformFactory()
-        runCatching {
-            platform.recoverVideoInput { recovered ->
+        val completed = AtomicBoolean(false)
+        val finish = { recovered: Boolean ->
+            if (completed.compareAndSet(false, true)) {
                 runCatching { platform.close() }
                 completion(recovered)
             }
+        }
+        runCatching {
+            platform.readPlaybackActive { playingBack ->
+                if (playingBack != true) {
+                    finish(true)
+                    return@readPlaybackActive
+                }
+                runCatching {
+                    platform.recoverVideoInput(finish)
+                }.onFailure {
+                    finish(false)
+                }
+            }
         }.onFailure {
-            runCatching { platform.close() }
-            completion(false)
+            finish(false)
         }
     }
 
