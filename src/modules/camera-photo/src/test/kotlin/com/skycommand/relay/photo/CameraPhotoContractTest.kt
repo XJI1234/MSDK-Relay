@@ -18,6 +18,8 @@ import com.skycommand.relay.photo.media.PhotoMediaPublisher
 import com.skycommand.relay.photo.media.PhotoMediaWriter
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonObject
+import com.skycommand.relay.protocol.JsonArray
+import com.skycommand.relay.protocol.JsonNumber
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.protocol.MediaResultFrame
 import com.skycommand.relay.protocol.RelayFrame
@@ -42,7 +44,7 @@ class CameraPhotoContractTest {
         port.captured(PhotoCaptureIdentity("shot.jpg", 3))
         val fetched = Completion()
         photo.commandHandler().handle(fetch(), fetched)
-        assertEquals(PhotoHardwareRequest.Download(PhotoCaptureIdentity("shot.jpg", 3)), port.requests.last())
+        assertEquals(PhotoHardwareRequest.DownloadUnsent(emptySet()), port.requests.last())
     }
 
     @Test
@@ -51,8 +53,9 @@ class CameraPhotoContractTest {
         val photo = photo(port)
         val missing = Completion()
         photo.commandHandler().handle(fetch(), missing)
-        assertEquals(emptyList<PhotoHardwareRequest>(), port.requests)
-        assertEquals(listOf("reject:Photo operation was rejected"), missing.events)
+        assertEquals(listOf<PhotoHardwareRequest>(PhotoHardwareRequest.DownloadUnsent(emptySet())), port.requests)
+        port.empty()
+        assertTrue(missing.events.first().startsWith("ok:No unsent"))
 
         val captured = Completion()
         photo.commandHandler().handle(capture(), captured)
@@ -61,12 +64,12 @@ class CameraPhotoContractTest {
 
         photo.commandHandler().handle(fetch(), Completion())
         val bytes = byteArrayOf(1, 2, 3)
-        port.delivered(PhotoLocalFile("shot.jpg", bytes.size.toLong(), PhotoMediaPublisher.sha256Hex(bytes), PhotoReadable { bytes }))
+        port.delivered(PhotoLocalFile("shot.jpg", bytes.size.toLong(), PhotoMediaPublisher.sha256Hex(bytes), PhotoReadable { bytes.inputStream() }))
         photo.abortTransfer()
 
         val retry = Completion()
         photo.commandHandler().handle(fetch(), retry)
-        assertEquals(PhotoHardwareRequest.Download(PhotoCaptureIdentity("shot.jpg", 1)), port.requests.last())
+        assertEquals(PhotoHardwareRequest.DownloadUnsent(emptySet()), port.requests.last())
     }
 
     @Test
@@ -94,7 +97,7 @@ class CameraPhotoContractTest {
     }
 
     @Test
-    fun fetchSucceedsOnlyAfterMediaResultAndThenClearsIdentity() {
+    fun fetchCompletesAfterMediaResultAndThenUsesComputerManifest() {
         val port = Port()
         val writer = RecordingWriter()
         val photo = photo(port, writer)
@@ -104,14 +107,37 @@ class CameraPhotoContractTest {
         val delivered = Completion()
         photo.commandHandler().handle(fetch(), delivered)
         val bytes = byteArrayOf(4, 5, 6)
-        port.delivered(PhotoLocalFile("shot.jpg", bytes.size.toLong(), PhotoMediaPublisher.sha256Hex(bytes), PhotoReadable { bytes }))
+        port.delivered(PhotoLocalFile("shot.jpg", bytes.size.toLong(), PhotoMediaPublisher.sha256Hex(bytes), PhotoReadable { bytes.inputStream() }))
         photo.acceptMediaResult(MediaResultFrame("photo-1", true, "stored"))
+        port.empty()
 
         assertTrue(delivered.events.first().startsWith("ok:Photo delivered"))
-        val missing = Completion()
-        photo.commandHandler().handle(fetch(), missing)
-        assertEquals(listOf("reject:Photo operation was rejected"), missing.events)
+        val again = Completion()
+        photo.commandHandler().handle(fetch("shot.jpg"), again)
+        assertEquals(PhotoHardwareRequest.DownloadUnsent(setOf("shot.jpg")), port.requests.last())
         assertTrue(writer.frames.isNotEmpty())
+    }
+
+    @Test
+    fun fetchSendsEveryUnlistedPhotoOnlyAfterThePreviousMediaResult() {
+        val port = Port()
+        val photo = photo(port)
+        val completion = Completion()
+        photo.commandHandler().handle(fetch("known.jpg"), completion)
+
+        val first = byteArrayOf(1)
+        port.delivered(PhotoLocalFile("first.jpg", 1, PhotoMediaPublisher.sha256Hex(first), PhotoReadable { first.inputStream() }))
+        photo.acceptMediaResult(MediaResultFrame("photo-1", true, "stored"))
+        assertEquals(PhotoHardwareRequest.DownloadUnsent(setOf("known.jpg", "first.jpg")), port.requests[1])
+
+        val second = byteArrayOf(2)
+        port.delivered(PhotoLocalFile("second.jpg", 1, PhotoMediaPublisher.sha256Hex(second), PhotoReadable { second.inputStream() }))
+        photo.acceptMediaResult(MediaResultFrame("photo-2", true, "stored"))
+        assertEquals(PhotoHardwareRequest.DownloadUnsent(setOf("known.jpg", "first.jpg", "second.jpg")), port.requests[2])
+        port.empty()
+
+        assertTrue(completion.events.single().startsWith("ok:Photo delivered"))
+        assertEquals(JsonNumber("2"), completion.result?.get("count"))
     }
 
     @Test
@@ -157,7 +183,17 @@ class CameraPhotoContractTest {
         )
 
     private fun capture() = CommandFrame("photo-1", "camera.photo.capture", JsonObject(emptyMap()))
-    private fun fetch() = CommandFrame("photo-2", "camera.photo.fetch", JsonObject(emptyMap()))
+    private fun fetch(vararg knownNames: String) = CommandFrame(
+        "photo-2",
+        "camera.photo.fetch",
+        if (knownNames.isEmpty()) JsonObject(emptyMap()) else JsonObject(
+            mapOf(
+                "knownPhotos" to JsonArray(knownNames.map { name ->
+                    JsonObject(mapOf("fileName" to JsonString(name), "sha256" to JsonString("0".repeat(64))))
+                }),
+            ),
+        ),
+    )
 
     private class Completion : CommandCompletion {
         val events = mutableListOf<String>()
@@ -183,6 +219,7 @@ class CameraPhotoContractTest {
         }
         fun captured(identity: PhotoCaptureIdentity) = checkNotNull(completion).captured(identity)
         fun delivered(file: PhotoLocalFile) = checkNotNull(completion).delivered(file)
+        fun empty() = checkNotNull(completion).empty()
         fun fail(failure: PhotoDjiFailure? = null) = checkNotNull(completion).fail(failure)
         private var hardwareReleased: (() -> Unit)? = null
         override fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {

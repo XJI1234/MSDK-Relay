@@ -35,7 +35,7 @@ acceptResult(mediaResultFrame) -> void
 abort() -> void
 ```
 
-`localFile` 只含安全 `fileName`、`size`、小写 `sha256` 和抽象 `readable`。发送端为每次已接受发布生成新的传输 ID，发送前必须再读全部字节并核对大小与摘要；不符则拒绝且不发帧。`Delivered` 只表示同一传输 ID 的电脑 `media-result.ok=true`，不表示操作员已打开照片。
+`localFile` 只含安全 `fileName`、`size`、小写 `sha256` 和可重复打开的抽象 `readable`。发送端为每次已接受发布生成新的传输 ID，发送前必须用固定大小缓冲区流式核对大小与摘要；不符则拒绝且不发帧。随后仍以固定大小缓冲区逐块发送，不能把整张原图载入 `ByteArray`。`Delivered` 只表示同一传输 ID 的电脑 `media-result.ok=true`，不表示操作员已打开照片。
 
 ## 4. 状态和生命周期
 
@@ -45,11 +45,11 @@ SENDING | AWAITING_RESULT -> FAILED
 任意非终态 -> ABORTED
 ```
 
-`abort` 在会话离开 `ACTIVE` 时由组合根调用。迟到的 `media-result` 不得完成已中止的发送。进程内不重发；操作者需再次 `fetch`。
+`abort` 在会话离开 `ACTIVE` 时由组合根调用。迟到的 `media-result` 不得完成已中止的发送。进程内不重发；操作者需再次 `fetch`。批量回传只有在当前文件的 `media-result.ok=true` 后才可发布下一文件，不能并发占用多个媒体发送槽位。
 
 ## 5. 数据所有权
 
-发送开始时读取并校验完整字节，读取后立即关闭可读句柄。终态后由适配器删除临时文件。模块不保存跨请求的照片字节。
+发送开始时先流式校验一遍，再重新打开句柄流式发送；每次读取使用固定大小缓冲区，校验流和发送流都必须关闭。发送终态后由适配器删除临时文件。模块不保存跨请求的照片字节。
 
 ## 6. 依赖和替身
 

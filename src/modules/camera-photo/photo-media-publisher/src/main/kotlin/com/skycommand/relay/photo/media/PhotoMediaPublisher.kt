@@ -8,6 +8,7 @@ import com.skycommand.relay.protocol.MediaResultFrame
 import com.skycommand.relay.protocol.ProtocolLimits
 import com.skycommand.relay.protocol.RelayFrame
 import com.skycommand.relay.protocol.validate
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 
@@ -24,7 +25,7 @@ fun interface PhotoMediaCancellation {
 }
 
 interface PhotoReadableHandle {
-    fun readAll(): ByteArray
+    fun openStream(): InputStream
     fun close()
 }
 
@@ -60,19 +61,16 @@ class PhotoMediaPublisher private constructor(
     private var active: Active? = null
 
     fun publish(file: PhotoMediaFile, completion: PhotoMediaCompletion): PhotoMediaSubmitResult {
-        val bytes = runCatching { file.readable.readAll() }.getOrNull()
-        runCatching { file.readable.close() }
         val transferId = "photo-${nextId.get()}"
-        if (
-            bytes == null ||
-            file.size != bytes.size.toLong() ||
-            sha256Hex(bytes) != file.sha256 ||
-            validate(MediaBeginFrame(transferId, file.fileName, file.size, file.sha256)) !is Accepted
-        ) {
+        if (!validateFile(file, transferId)) {
+            runCatching { file.readable.close() }
             return PhotoMediaSubmitResult.Rejected(PhotoMediaSubmitResult.Reason.INVALID_FILE)
         }
         synchronized(lock) {
-            if (active != null) return PhotoMediaSubmitResult.Rejected(PhotoMediaSubmitResult.Reason.BUSY)
+            if (active != null) {
+                runCatching { file.readable.close() }
+                return PhotoMediaSubmitResult.Rejected(PhotoMediaSubmitResult.Reason.BUSY)
+            }
             nextId.incrementAndGet()
             active = Active(transferId, file.fileName, file.size, file.sha256, completion)
         }
@@ -85,7 +83,11 @@ class PhotoMediaPublisher private constructor(
             }
             current.timeout = timeout
         }
-        val sent = send(transferId, file.fileName, file.size, file.sha256, bytes)
+        val sent = try {
+            send(transferId, file.fileName, file.size, file.sha256, file.readable)
+        } finally {
+            runCatching { file.readable.close() }
+        }
         if (!sent) finish(transferId, PhotoMediaOutcome.Failed)
         return PhotoMediaSubmitResult.Accepted
     }
@@ -103,13 +105,35 @@ class PhotoMediaPublisher private constructor(
 
     private fun timeout(id: String) = finish(id, PhotoMediaOutcome.Failed)
 
-    private fun send(id: String, fileName: String, size: Long, sha256: String, bytes: ByteArray): Boolean {
+    private fun validateFile(file: PhotoMediaFile, transferId: String): Boolean {
+        if (validate(MediaBeginFrame(transferId, file.fileName, file.size, file.sha256)) !is Accepted) return false
+        return runCatching {
+            val digest = MessageDigest.getInstance("SHA-256")
+            var size = 0L
+            file.readable.openStream().use { input ->
+                val buffer = ByteArray(ProtocolLimits.maxMissionChunkBytes)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    digest.update(buffer, 0, count)
+                    size += count
+                }
+            }
+            size == file.size && digest.digest().toHex() == file.sha256
+        }.getOrDefault(false)
+    }
+
+    private fun send(id: String, fileName: String, size: Long, sha256: String, readable: PhotoReadableHandle): Boolean {
         if (!write(id, MediaBeginFrame(id, fileName, size, sha256))) return false
-        var offset = 0
-        while (offset < bytes.size) {
-            val end = minOf(offset + ProtocolLimits.maxMissionChunkBytes, bytes.size)
-            if (!write(id, MediaChunkFrame(id, bytes.copyOfRange(offset, end)))) return false
-            offset = end
+        readable.openStream().use { input ->
+            val buffer = ByteArray(ProtocolLimits.maxMissionChunkBytes)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count == 0) continue
+                if (!write(id, MediaChunkFrame(id, buffer.copyOf(count)))) return false
+            }
         }
         return write(id, MediaCompleteFrame(id))
     }
@@ -151,4 +175,6 @@ class PhotoMediaPublisher private constructor(
         fun sha256Hex(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }

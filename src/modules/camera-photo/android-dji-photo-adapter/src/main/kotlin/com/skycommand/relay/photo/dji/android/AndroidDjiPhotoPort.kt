@@ -3,12 +3,14 @@ package com.skycommand.relay.photo.dji.android
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
 import com.skycommand.relay.photo.executor.CameraMediaRecoveryPort
+import com.skycommand.relay.photo.executor.CameraMediaStateSnapshot
 import com.skycommand.relay.photo.executor.DjiPhotoPort
 import com.skycommand.relay.photo.executor.PhotoDjiCompletion
 import com.skycommand.relay.photo.executor.PhotoHardwareRequest
 import com.skycommand.relay.photo.executor.PhotoLocalFile
 import com.skycommand.relay.photo.executor.PhotoReadable
 import java.io.File
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
@@ -21,7 +23,8 @@ internal interface DjiPhotoCaptureCompletion {
 }
 
 internal interface DjiPhotoDownloadCompletion {
-    fun succeed(file: File)
+    fun succeed(file: File, fileName: String)
+    fun empty()
     fun fail()
     fun fail(failure: PhotoDjiFailure?) = fail()
 }
@@ -29,12 +32,14 @@ internal interface DjiPhotoDownloadCompletion {
 internal interface DjiPhotoApi {
     fun capture(completion: DjiPhotoCaptureCompletion)
     fun download(identity: PhotoCaptureIdentity, destFile: File, completion: DjiPhotoDownloadCompletion)
+    fun downloadNext(alreadySent: Set<String>, destFile: File, completion: DjiPhotoDownloadCompletion)
     fun abort()
     fun abort(onHardwareReleased: () -> Unit) {
         abort()
         onHardwareReleased()
     }
     fun readPlaybackActive(completion: (Boolean?) -> Unit) = completion(null)
+    fun readCameraMode(completion: (String?) -> Unit) = completion(null)
     fun recoverVideoInput(completion: (Boolean) -> Unit) {
         abort { completion(true) }
     }
@@ -67,6 +72,42 @@ class AndroidCameraMediaRecoveryPort internal constructor(
             }
         }.onFailure {
             finish(false)
+        }
+    }
+
+    override fun recoverAfterZeroFrameStart(completion: (Boolean) -> Unit) {
+        val platform = platformFactory()
+        val completed = AtomicBoolean(false)
+        val finish = { recovered: Boolean ->
+            if (completed.compareAndSet(false, true)) {
+                runCatching { platform.close() }
+                completion(recovered)
+            }
+        }
+        runCatching {
+            platform.recoverVideoInput(finish)
+        }.onFailure {
+            finish(false)
+        }
+    }
+
+    override fun inspectBeforeZeroFrameRecovery(completion: (CameraMediaStateSnapshot) -> Unit) {
+        val platform = platformFactory()
+        val completed = AtomicBoolean(false)
+        val finish = { state: CameraMediaStateSnapshot ->
+            if (completed.compareAndSet(false, true)) {
+                runCatching { platform.close() }
+                completion(state)
+            }
+        }
+        runCatching {
+            platform.readCameraMode { mode ->
+                platform.readPlaybackActive { playingBack ->
+                    finish(CameraMediaStateSnapshot(cameraMode = mode, playingBack = playingBack))
+                }
+            }
+        }.onFailure {
+            finish(CameraMediaStateSnapshot(cameraMode = null, playingBack = null))
         }
     }
 
@@ -111,21 +152,32 @@ class AndroidDjiPhotoPort internal constructor(
                 })
                 is PhotoHardwareRequest.Download -> {
                     val dest = File(cacheDir, "sky-command-${System.nanoTime()}.bin")
-                    operation.platform.download(request.identity, dest, object : DjiPhotoDownloadCompletion {
-                        override fun succeed(file: File) {
-                            runCatching { delivery.execute { delivered(operation, request.identity, file) } }
-                        }
-                        override fun fail() {
-                            runCatching { delivery.execute { fail(operation) } }
-                        }
-                        override fun fail(failure: PhotoDjiFailure?) {
-                            runCatching { delivery.execute { fail(operation, failure) } }
-                        }
-                    })
+                    operation.platform.download(request.identity, dest, downloadCompletion(operation, request.identity.fileName))
+                }
+                is PhotoHardwareRequest.DownloadUnsent -> {
+                    val dest = File(cacheDir, "sky-command-${System.nanoTime()}.bin")
+                    operation.platform.downloadNext(request.alreadySent, dest, downloadCompletion(operation, null))
                 }
             }
         }
     }
+
+    private fun downloadCompletion(operation: Active, fallbackName: String?): DjiPhotoDownloadCompletion =
+        object : DjiPhotoDownloadCompletion {
+            override fun succeed(file: File, fileName: String) {
+                val name = fileName.ifBlank { fallbackName ?: "" }
+                runCatching { delivery.execute { delivered(operation, name, file) } }
+            }
+            override fun empty() {
+                runCatching { delivery.execute { emptied(operation) } }
+            }
+            override fun fail() {
+                runCatching { delivery.execute { fail(operation) } }
+            }
+            override fun fail(failure: PhotoDjiFailure?) {
+                runCatching { delivery.execute { fail(operation, failure) } }
+            }
+        }
 
     override fun abort(completion: PhotoDjiCompletion) {
         synchronized(lock) { operations[completion]?.let(::stop) }
@@ -148,25 +200,32 @@ class AndroidDjiPhotoPort internal constructor(
         if (deliver) runCatching { operation.completion.captured(identity) }
     }
 
-    private fun delivered(operation: Active, identity: PhotoCaptureIdentity, file: File) {
+    private fun delivered(operation: Active, fileName: String, file: File) {
         val deliver = finish(operation)
-        val bytes = if (deliver) runCatching { file.readBytes() }.getOrNull() else null
-        runCatching { file.delete() }
         if (!deliver) return
-        if (bytes == null || bytes.isEmpty()) {
+        val size = runCatching { file.length() }.getOrDefault(0L)
+        val sha256 = runCatching {
+            file.inputStream().use { input -> sha256Hex(input) }
+        }.getOrNull()
+        if (size <= 0L || sha256.isNullOrBlank()) {
+            runCatching { file.delete() }
             runCatching { operation.completion.fail() }
             return
         }
-        runCatching {
-            operation.completion.delivered(
-                PhotoLocalFile(
-                    identity.fileName,
-                    bytes.size.toLong(),
-                    sha256Hex(bytes),
-                    PhotoReadable { bytes },
-                ),
-            )
+        val readable = object : PhotoReadable {
+            override fun openStream(): InputStream = file.inputStream()
+            override fun close() { runCatching { file.delete() } }
         }
+        runCatching {
+            operation.completion.delivered(PhotoLocalFile(fileName, size, sha256, readable))
+        }.onFailure {
+            readable.close()
+        }
+    }
+
+    private fun emptied(operation: Active) {
+        val deliver = finish(operation)
+        if (deliver) runCatching { operation.completion.empty() }
     }
 
     private fun fail(operation: Active, failure: PhotoDjiFailure? = null) {
@@ -208,7 +267,15 @@ class AndroidDjiPhotoPort internal constructor(
     companion object {
         fun create(cacheDir: File): DjiPhotoPort = AndroidDjiPhotoPort(cacheDir) { MsdkV5PhotoApi() }
 
-        private fun sha256Hex(bytes: ByteArray): String =
-            MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        private fun sha256Hex(input: InputStream): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(256 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
     }
 }

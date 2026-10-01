@@ -33,6 +33,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 internal class MsdkV5PhotoApi(
@@ -54,6 +55,9 @@ internal class MsdkV5PhotoApi(
     private val playingBack = AtomicBoolean(false)
     private val enableSucceeded = AtomicBoolean(false)
     private val listPulled = AtomicBoolean(false)
+    private val unsentMode = AtomicBoolean(false)
+    private val skipNames = AtomicReference<Set<String>>(emptySet())
+    private val skippedThisPull = AtomicInteger(0)
     private val downloadIdentity = AtomicReference<PhotoCaptureIdentity?>(null)
     private val downloadDest = AtomicReference<File?>(null)
     private val downloadCompletion = AtomicReference<DjiPhotoDownloadCompletion?>(null)
@@ -125,6 +129,21 @@ internal class MsdkV5PhotoApi(
         enableSucceeded.set(false)
         listPulled.set(false)
         downloadIdentity.set(identity)
+        unsentMode.set(false)
+        beginDownload(destFile, completion)
+    }
+
+    override fun downloadNext(alreadySent: Set<String>, destFile: File, completion: DjiPhotoDownloadCompletion) {
+        aborted.set(false)
+        playingBack.set(false)
+        enableSucceeded.set(false)
+        listPulled.set(false)
+        unsentMode.set(true)
+        skipNames.set(alreadySent)
+        beginDownload(destFile, completion)
+    }
+
+    private fun beginDownload(destFile: File, completion: DjiPhotoDownloadCompletion) {
         downloadDest.set(destFile)
         downloadCompletion.set(completion)
         destFile.parentFile?.mkdirs()
@@ -156,9 +175,24 @@ internal class MsdkV5PhotoApi(
         )
     }
 
+    override fun close() {
+        cancelModeWatch()
+        runCatching { manager.cancelListen(this) }
+        captureCompletion.set(null)
+        downloadCompletion.set(null)
+        downloadFile = null
+    }
+
     override fun readPlaybackActive(completion: (Boolean?) -> Unit) {
         manager.getValue(playbackKey, object : CommonCallbacks.CompletionCallbackWithParam<Boolean> {
             override fun onSuccess(value: Boolean) = completion(value)
+            override fun onFailure(error: IDJIError) = completion(null)
+        })
+    }
+
+    override fun readCameraMode(completion: (String?) -> Unit) {
+        manager.getValue(modeKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraMode> {
+            override fun onSuccess(value: CameraMode) = completion(value.name)
             override fun onFailure(error: IDJIError) = completion(null)
         })
     }
@@ -241,10 +275,16 @@ internal class MsdkV5PhotoApi(
     private fun pullWhenPlaybackReady() {
         if (aborted.get() || !playingBack.get() || !enableSucceeded.get()) return
         if (!listPulled.compareAndSet(false, true)) return
-        val identity = downloadIdentity.get() ?: return
         val dest = downloadDest.get() ?: return
         val pending = downloadCompletion.get() ?: return
-        pullThenDownload(identity, dest, pending)
+        if (!unsentMode.get() && downloadIdentity.get() == null) return
+        pullThenDownload(dest, pending)
+    }
+
+    private fun finishEmpty() {
+        val pending = downloadCompletion.getAndSet(null) ?: return
+        stopGeneratedListen()
+        leavePlaybackThen { pending.empty() }
     }
 
     private fun failDownload(failure: PhotoDjiFailure? = null) {
@@ -481,7 +521,6 @@ internal class MsdkV5PhotoApi(
     }
 
     private fun pullThenDownload(
-        identity: PhotoCaptureIdentity,
         destFile: File,
         completion: DjiPhotoDownloadCompletion,
     ) {
@@ -495,11 +534,14 @@ internal class MsdkV5PhotoApi(
             object : CommonCallbacks.CompletionCallback {
                 override fun onSuccess() {
                     if (aborted.get()) return
-                    val match = media.mediaFileListData.data.firstOrNull { file ->
-                        file.fileName == identity.fileName || file.fileIndex.toLong() == identity.index
+                    val match = if (unsentMode.get()) nextUnsent() else {
+                        val identity = downloadIdentity.get()
+                        media.mediaFileListData.data.firstOrNull { file ->
+                            file.fileName == identity?.fileName || file.fileIndex.toLong() == identity?.index
+                        }
                     }
                     if (match == null) {
-                        failDownload()
+                        if (unsentMode.get()) finishEmpty() else failDownload()
                         return
                     }
                     writeOriginal(match, destFile, completion)
@@ -529,26 +571,40 @@ internal class MsdkV5PhotoApi(
                         destFile.delete()
                         return
                     }
+                    val hasBytes = runCatching { destFile.isFile && destFile.length() > 0L }.getOrDefault(false)
+                    if (!hasBytes) {
+                        abandonAndContinue(file, destFile, completion)
+                        return
+                    }
                     leavePlaybackThen {
-                        if (aborted.get() || !destFile.isFile || destFile.length() <= 0) {
+                        if (aborted.get()) {
                             destFile.delete()
-                            if (!aborted.get()) completion.fail()
+                            return@leavePlaybackThen
+                        }
+                        if (!destFile.isFile || destFile.length() <= 0L) {
+                            abandonAndContinue(file, destFile, completion)
                         } else {
-                            completion.succeed(destFile)
+                            completion.succeed(destFile, file.fileName)
                         }
                     }
                 }
                 override fun onFailure(error: IDJIError) {
                     runCatching { output.close() }
-                    destFile.delete()
                     downloadFile = null
-                    if (aborted.get()) return
-                    leavePlaybackThen {
-                        if (!aborted.get()) completion.fail(failureOf(error))
+                    if (aborted.get()) {
+                        destFile.delete()
+                        return
                     }
+                    abandonAndContinue(file, destFile, completion, failureOf(error))
                 }
             },
         )
+    }
+
+    private fun isOriginalPhoto(file: MediaFile): Boolean {
+        val name = file.fileName ?: return false
+        val lower = name.lowercase()
+        return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".dng")
     }
 
     private fun identityOf(info: GeneratedMediaFileInfo?): PhotoCaptureIdentity? {
@@ -575,6 +631,41 @@ internal class MsdkV5PhotoApi(
         runCatching { manager.cancelListen(this) }
     }
 
+    private fun nextUnsent(): MediaFile? {
+        val listed = MediaDataCenter.getInstance().mediaManager.mediaFileListData.data
+        return listed
+            .filter { file ->
+                isOriginalPhoto(file) &&
+                    file.fileName !in skipNames.get() &&
+                    file.fileName !in undownloadable.get()
+            }
+            .minByOrNull { file -> file.fileIndex }
+    }
+
+    private fun abandonAndContinue(
+        file: MediaFile,
+        destFile: File,
+        completion: DjiPhotoDownloadCompletion,
+        failure: PhotoDjiFailure? = null,
+    ) {
+        destFile.delete()
+        if (!unsentMode.get()) {
+            if (failure == null) failDownload() else failDownload(failure)
+            return
+        }
+        blockName(file.fileName)
+        if (skippedThisPull.incrementAndGet() >= 4) {
+            if (failure == null) failDownload() else failDownload(failure)
+            return
+        }
+        val next = nextUnsent()
+        if (next == null) {
+            finishEmpty()
+            return
+        }
+        writeOriginal(next, destFile, completion)
+    }
+
     private fun ignoredCallback(): CommonCallbacks.CompletionCallback =
         object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() = Unit
@@ -598,8 +689,17 @@ internal class MsdkV5PhotoApi(
         runCatching { read()?.toString()?.trim() }.getOrNull()?.takeIf { it.isNotEmpty() && it != "null" }
 
     companion object {
+        private val undownloadable = AtomicReference<Set<String>>(emptySet())
         private val modeWatch = Executors.newSingleThreadScheduledExecutor { runnable ->
             Thread(runnable, "photo-mode-watch").apply { isDaemon = true }
+        }
+
+        private fun blockName(name: String?) {
+            if (name.isNullOrBlank()) return
+            while (true) {
+                val current = undownloadable.get()
+                if (name in current || undownloadable.compareAndSet(current, current + name)) return
+            }
         }
     }
 }

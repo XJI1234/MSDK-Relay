@@ -40,6 +40,8 @@ class MsdkV5PhotoApiContractTest {
         assertTrue(abort.contains("continueWhenAborted = true"))
         assertTrue(abort.contains("done = onHardwareReleased"))
         assertFalse(source.contains("modeWatch.shutdownNow()"))
+        assertTrue(source.contains("override fun close()"))
+        assertTrue(source.contains("manager.cancelListen(this)"))
     }
 
     @Test
@@ -155,6 +157,6 @@ class MsdkV5PhotoApiContractTest {
         assertTrue(finish.contains("leavePlaybackThen"))
         assertFalse(finish.contains("ignoredCallback"))
         assertFalse(finish.substringBefore("leavePlaybackThen").contains("completion.succeed"))
-        assertTrue(finish.substringAfter("leavePlaybackThen").contains("completion.succeed(destFile)"))
+        assertTrue(finish.substringAfter("leavePlaybackThen").contains("completion.succeed(destFile, file.fileName)"))
     }
 }

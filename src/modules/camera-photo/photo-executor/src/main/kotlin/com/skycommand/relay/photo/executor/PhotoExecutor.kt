@@ -10,10 +10,11 @@ import com.skycommand.relay.device.operation.SubmissionResult
 import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
+import java.io.InputStream
 import java.util.concurrent.atomic.AtomicReference
 
 fun interface PhotoReadable {
-    fun readAll(): ByteArray
+    fun openStream(): InputStream
     fun close() = Unit
 }
 
@@ -27,6 +28,7 @@ data class PhotoLocalFile(
 interface PhotoDjiCompletion {
     fun captured(identity: PhotoCaptureIdentity)
     fun delivered(file: PhotoLocalFile)
+    fun empty()
     fun fail()
 
     fun fail(failure: PhotoDjiFailure?) = fail()
@@ -45,6 +47,7 @@ interface DjiPhotoPort {
 sealed interface PhotoHardwareRequest {
     data object Capture : PhotoHardwareRequest
     data class Download(val identity: PhotoCaptureIdentity) : PhotoHardwareRequest
+    data class DownloadUnsent(val alreadySent: Set<String>) : PhotoHardwareRequest
 }
 
 fun interface PhotoExecutionListener {
@@ -58,6 +61,7 @@ fun interface PhotoExecutionListener {
 sealed interface PhotoExecutionOutcome {
     data class Captured(val identity: PhotoCaptureIdentity) : PhotoExecutionOutcome
     data class Delivered(val file: PhotoLocalFile) : PhotoExecutionOutcome
+    data object None : PhotoExecutionOutcome
     data object Failed : PhotoExecutionOutcome
     data object TimedOut : PhotoExecutionOutcome
     data object Cancelled : PhotoExecutionOutcome
@@ -75,6 +79,7 @@ class PhotoExecutor private constructor(
     fun execute(request: PhotoHardwareRequest, listener: PhotoExecutionListener = PhotoExecutionListener { }): PhotoSubmissionResult {
         var captured: PhotoCaptureIdentity? = null
         var delivered: PhotoLocalFile? = null
+        var emptied = false
         var failure: PhotoDjiFailure? = null
         val submission = coordinator.submit(
             object : DjiOperation {
@@ -92,6 +97,11 @@ class PhotoExecutor private constructor(
 
                         override fun delivered(file: PhotoLocalFile) {
                             delivered = file
+                            completion.succeed()
+                        }
+
+                        override fun empty() {
+                            emptied = true
                             completion.succeed()
                         }
 
@@ -120,6 +130,11 @@ class PhotoExecutor private constructor(
                             ?: PhotoExecutionOutcome.Failed
                         is PhotoHardwareRequest.Download -> delivered?.let(PhotoExecutionOutcome::Delivered)
                             ?: PhotoExecutionOutcome.Failed
+                        is PhotoHardwareRequest.DownloadUnsent -> when {
+                            emptied -> PhotoExecutionOutcome.None
+                            delivered != null -> PhotoExecutionOutcome.Delivered(delivered!!)
+                            else -> PhotoExecutionOutcome.Failed
+                        }
                     }
                     OperationOutcome.FAILED -> PhotoExecutionOutcome.Failed
                     OperationOutcome.TIMED_OUT -> PhotoExecutionOutcome.TimedOut
@@ -144,6 +159,7 @@ class PhotoExecutor private constructor(
         private fun timeoutMillis(request: PhotoHardwareRequest): Long = when (request) {
             PhotoHardwareRequest.Capture -> CAPTURE_TIMEOUT_MILLIS
             is PhotoHardwareRequest.Download -> DOWNLOAD_TIMEOUT_MILLIS
+            is PhotoHardwareRequest.DownloadUnsent -> DOWNLOAD_TIMEOUT_MILLIS
         }
     }
 }

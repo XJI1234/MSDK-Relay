@@ -4,6 +4,7 @@ import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.executor.PhotoDjiCompletion
 import com.skycommand.relay.photo.executor.PhotoHardwareRequest
 import com.skycommand.relay.photo.executor.PhotoLocalFile
+import com.skycommand.relay.photo.executor.CameraMediaStateSnapshot
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -46,6 +47,39 @@ class AndroidDjiPhotoPortContractTest {
     }
 
     @Test
+    fun zeroFrameRecoveryDirectlyRequestsVideoInputRecovery() {
+        val platform = FakeApi()
+        val port = AndroidCameraMediaRecoveryPort { platform }
+        var recovered: Boolean? = null
+
+        port.recoverAfterZeroFrameStart { recovered = it }
+
+        assertNull(platform.playbackRead)
+        assertTrue(platform.recovery != null)
+        platform.recovery!!.invoke(true)
+        assertEquals(true, recovered)
+    }
+
+    @Test
+    fun zeroFrameMediaStateInspectionReadsModeAndPlaybackWithoutRecoveringVideoInput() {
+        val platform = FakeApi()
+        val port = AndroidCameraMediaRecoveryPort { platform }
+        var state: CameraMediaStateSnapshot? = null
+
+        port.inspectBeforeZeroFrameRecovery { state = it }
+
+        assertTrue(platform.cameraModeRead != null)
+        assertNull(platform.playbackRead)
+        assertNull(platform.recovery)
+        platform.cameraModeRead!!.invoke("PHOTO_NORMAL")
+        assertTrue(platform.playbackRead != null)
+        assertNull(platform.recovery)
+        platform.playbackRead!!.invoke(false)
+        assertEquals(CameraMediaStateSnapshot("PHOTO_NORMAL", false), state)
+        assertNull(platform.recovery)
+    }
+
+    @Test
     fun abortingAnOlderAttemptCannotAbortOrDeliverIntoTheNextAttempt() {
         val platforms = mutableListOf<FakeApi>()
         val cache = Files.createTempDirectory("photo-port-test").toFile()
@@ -72,12 +106,13 @@ class AndroidDjiPhotoPortContractTest {
             var bytes: ByteArray? = null
             port.execute(PhotoHardwareRequest.Download(PhotoCaptureIdentity("new.jpg", 2)), object : PhotoDjiCompletion {
                 override fun captured(identity: PhotoCaptureIdentity) = Unit
-                override fun delivered(file: PhotoLocalFile) { bytes = file.readable.readAll(); delivered.countDown() }
+                override fun delivered(file: PhotoLocalFile) { file.readable.openStream().use { bytes = it.readBytes() }; file.readable.close(); delivered.countDown() }
+                override fun empty() = Unit
                 override fun fail() = Unit
             })
             assertTrue(!platforms[2].aborted)
             val original = File(cache, "original.jpg").apply { writeBytes(byteArrayOf(1, 2, 3)) }
-            platforms[2].download!!.succeed(original)
+            platforms[2].download!!.succeed(original, "new.jpg")
             assertTrue(delivered.await(5, TimeUnit.SECONDS))
             assertTrue(bytes!!.contentEquals(byteArrayOf(1, 2, 3)))
         } finally {
@@ -89,6 +124,7 @@ class AndroidDjiPhotoPortContractTest {
     private fun captureCompletion(onCaptured: (PhotoCaptureIdentity) -> Unit) = object : PhotoDjiCompletion {
         override fun captured(identity: PhotoCaptureIdentity) = onCaptured(identity)
         override fun delivered(file: PhotoLocalFile) = Unit
+        override fun empty() = Unit
         override fun fail() = Unit
     }
 
@@ -96,14 +132,19 @@ class AndroidDjiPhotoPortContractTest {
         var capture: DjiPhotoCaptureCompletion? = null
         var download: DjiPhotoDownloadCompletion? = null
         var playbackRead: ((Boolean?) -> Unit)? = null
+        var cameraModeRead: ((String?) -> Unit)? = null
         var recovery: ((Boolean) -> Unit)? = null
         var aborted = false
         override fun capture(completion: DjiPhotoCaptureCompletion) { capture = completion }
         override fun download(identity: PhotoCaptureIdentity, destFile: File, completion: DjiPhotoDownloadCompletion) {
             download = completion
         }
+        override fun downloadNext(alreadySent: Set<String>, destFile: File, completion: DjiPhotoDownloadCompletion) {
+            download = completion
+        }
         override fun abort() { aborted = true }
         override fun readPlaybackActive(completion: (Boolean?) -> Unit) { playbackRead = completion }
+        override fun readCameraMode(completion: (String?) -> Unit) { cameraModeRead = completion }
         override fun recoverVideoInput(completion: (Boolean) -> Unit) { recovery = completion }
     }
 
@@ -123,6 +164,7 @@ class AndroidDjiPhotoPortContractTest {
         assertTrue(downloadCallback.contains("delivery.execute { fail("))
         assertTrue(source.contains("delivery.shutdownNow"))
         val delivered = source.substringAfter("private fun delivered").substringBefore("private fun fail")
-        assertTrue(delivered.contains("file.readBytes()"))
+        assertTrue(delivered.contains("file.inputStream()"))
+        assertTrue(delivered.contains("override fun openStream()"))
     }
 }

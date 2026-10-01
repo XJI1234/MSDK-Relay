@@ -120,7 +120,7 @@ class PhotoExecutorContractTest {
         )
     }
 
-    private fun file(name: String) = PhotoLocalFile(name, 1, "a".repeat(64), PhotoReadable { byteArrayOf(1) })
+    private fun file(name: String) = PhotoLocalFile(name, 1, "a".repeat(64), PhotoReadable { byteArrayOf(1).inputStream() })
 
     private class Port : DjiPhotoPort {
         val requests = mutableListOf<PhotoHardwareRequest>()

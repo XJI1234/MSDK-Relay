@@ -6,6 +6,7 @@ import com.skycommand.relay.protocol.MediaCompleteFrame
 import com.skycommand.relay.protocol.MediaResultFrame
 import com.skycommand.relay.protocol.ProtocolLimits
 import com.skycommand.relay.protocol.RelayFrame
+import java.io.ByteArrayInputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -77,7 +78,7 @@ class PhotoMediaPublisherContractTest {
         bytes.size.toLong(),
         hash,
         object : PhotoReadableHandle {
-            override fun readAll() = bytes
+            override fun openStream() = ByteArrayInputStream(bytes)
             override fun close() = Unit
         },
     )

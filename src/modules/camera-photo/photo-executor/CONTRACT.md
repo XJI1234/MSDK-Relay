@@ -7,7 +7,7 @@
 - 当前版本：0.1.0
 - 状态：已实现
 - Gradle 路径：`:camera-photo:photo-executor`
-- 唯一职责：把单个拍照或下载请求提交到拍照域 DJI 操作协调器，统一超时、取消、异常和一次性终态。
+- 唯一职责：把单个拍照或下载请求提交到拍照域 DJI 操作协调器，统一超时、取消、异常和一次性终态。批量回传由上层逐次调用下载；本模块一次只允许一个 DJI 下载。
 
 ## 2. 负责与不负责
 
@@ -39,7 +39,7 @@ CaptureSucceeded(fileName, index)
 DownloadSucceeded(fileName, size, sha256, readable)
 ```
 
-`readable` 是抽象句柄，不是 `File`、`Path`、`Uri` 或绝对路径字符串。失败可携带受限 `PhotoDjiFailure(errorCode, errorDescription)`，且只能来自 Android 适配器对真实 `onFailure` 的归一化。
+`readable` 是可重复打开的抽象流句柄，不是 `File`、`Path`、`Uri` 或绝对路径字符串。调用方必须按固定小缓冲区读取，不得要求适配器返回整张原图 `ByteArray`。失败可携带受限 `PhotoDjiFailure(errorCode, errorDescription)`，且只能来自 Android 适配器对真实 `onFailure` 的归一化。
 
 ## 4. 状态和生命周期
 
@@ -47,7 +47,7 @@ DownloadSucceeded(fileName, size, sha256, readable)
 
 ## 5. 数据所有权
 
-不拥有文件字节。下载成功后字节所有权交给调用方（门面再交给 `photo-media-publisher`）。不得缓存上一张照片的句柄。
+不拥有文件字节。下载成功后流句柄所有权交给调用方（门面再交给 `photo-media-publisher`）；调用方关闭句柄后，适配器必须释放临时文件。不得缓存上一张照片的句柄或整张照片字节。
 
 ## 6. 依赖和替身
 

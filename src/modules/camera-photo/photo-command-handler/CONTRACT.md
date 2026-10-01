@@ -14,8 +14,8 @@
 ### 负责
 
 - 识别且仅识别这两个命令名；
-- 要求 `fields` 为空对象：不得有键、不得有 `confirm`、不得有文件名；
-- 把合法命令映射为 `PhotoRequest.Capture` 或 `PhotoRequest.Fetch`；
+- 要求 `capture.fields` 为空对象；`fetch.fields` 只能包含有界的 `knownPhotos` 数组，每项为安全文件名和小写 SHA-256；
+- 把合法 `capture` / `fetch` 映射为 `PhotoRequest.Capture` 或携带不可变清单的 `PhotoRequest.Fetch`；
 - 把下层终态最多转发一次为命令完成。
 
 ### 明确不负责
@@ -31,7 +31,7 @@
 handle(command, completion) -> 至多一次 succeed | reject
 ```
 
-- 未知命令名、非空字段、错误类型：立即 `reject`，不调用端口；
+- 未知命令名、字段结构错误、越界或非法清单：立即 `reject`，不调用端口；
 - 合法 `capture` / `fetch`：恰好调用一次注入的执行入口；
 - 下层第一次终态获胜；重复完成丢弃。
 

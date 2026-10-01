@@ -13,6 +13,7 @@ import com.skycommand.relay.photo.command.PhotoCommandHandler
 import com.skycommand.relay.photo.command.PhotoCommandRejection
 import com.skycommand.relay.photo.command.PhotoCommandResult
 import com.skycommand.relay.photo.command.PhotoDjiFailure
+import com.skycommand.relay.photo.command.PhotoManifestEntry
 import com.skycommand.relay.photo.command.PhotoRequest
 import com.skycommand.relay.photo.executor.DjiPhotoPort
 import com.skycommand.relay.photo.executor.PhotoExecutionListener
@@ -40,6 +41,7 @@ data class CameraPhotoDependencies(
     val mediaPublisher: PhotoMediaPublisher,
     val onCameraMediaBusy: () -> Unit = {},
     val onCameraMediaReleased: () -> Unit = {},
+    val sentLedger: PhotoSentLedger = PhotoSentLedger.memory(),
 )
 
 class CameraPhoto private constructor(
@@ -101,6 +103,7 @@ class CameraPhoto private constructor(
                                 "fileName" to JsonString(outcome.download.fileName),
                                 "size" to JsonNumber(outcome.download.size.toString()),
                                 "sha256" to JsonString(outcome.download.sha256),
+                                "count" to JsonNumber(outcome.download.count.toString()),
                             ),
                         ),
                     )
@@ -118,6 +121,10 @@ class CameraPhoto private constructor(
                         "Photo operation result was not confirmed",
                         terminalResult("RESULT_UNCONFIRMED"),
                     )
+                    PhotoActionTerminalOutcome.None -> completion.succeed(
+                        "No unsent photos",
+                        terminalResult("NONE", count = 0),
+                    )
                 }
             }
         })) {
@@ -134,35 +141,60 @@ class CameraPhoto private constructor(
 
     private inner class Actions : PhotoCommandActions {
         override fun execute(request: PhotoRequest, completion: PhotoActionCompletion): PhotoActionResult {
-            val hardware = synchronized(lock) {
+            synchronized(lock) {
                 if (requestInFlight) return PhotoActionResult.Rejected
-                when (request) {
-                    PhotoRequest.Capture -> PhotoHardwareRequest.Capture
-                    PhotoRequest.Fetch -> {
-                        val identity = lastIdentity ?: return PhotoActionResult.Rejected
-                        PhotoHardwareRequest.Download(identity)
-                    }
-                }.also { requestInFlight = true }
+                requestInFlight = true
             }
             dependencies.onCameraMediaBusy()
-            var cancellation: OperationCancellationHandle? = null
-            val completed = AtomicBoolean(false)
-            val result = executor.execute(hardware, object : PhotoExecutionListener {
-                override fun onCompleted(outcome: PhotoExecutionOutcome) = onCompleted(outcome, null)
+            val fetch = request as? PhotoRequest.Fetch
+            val excluded = (fetch?.knownPhotos?.mapTo(mutableSetOf()) { it.fileName } ?: mutableSetOf())
+            var deliveredCount = 0
+            var lastDownload: PhotoLocalFile? = null
+            val mediaReleased = AtomicBoolean(false)
+            val releaseMedia = { if (mediaReleased.compareAndSet(false, true)) dependencies.onCameraMediaReleased() }
+            lateinit var submitNext: () -> PhotoActionResult
+            submitNext = {
+                val hardware = if (fetch === null) PhotoHardwareRequest.Capture else PhotoHardwareRequest.DownloadUnsent(excluded.toSet())
+                var cancellation: OperationCancellationHandle? = null
+                val operationCompleted = AtomicBoolean(false)
+                val result = executor.execute(hardware, object : PhotoExecutionListener {
+                    override fun onCompleted(outcome: PhotoExecutionOutcome) = onCompleted(outcome, null)
 
-                override fun onCompleted(outcome: PhotoExecutionOutcome, failure: PhotoDjiFailure?) {
-                    when (outcome) {
-                        is PhotoExecutionOutcome.Delivered -> {
-                            dependencies.onCameraMediaReleased()
-                            publish(outcome.file, completion, cancellation, completed)
-                        }
-                        else -> {
-                            if (outcome is PhotoExecutionOutcome.Captured || outcome == PhotoExecutionOutcome.Failed) {
-                                dependencies.onCameraMediaReleased()
+                    override fun onCompleted(outcome: PhotoExecutionOutcome, failure: PhotoDjiFailure?) {
+                        retireOperation(cancellation, operationCompleted)
+                        when (outcome) {
+                            is PhotoExecutionOutcome.Delivered -> publish(
+                                outcome.file,
+                                PhotoMediaCompletion { mediaOutcome ->
+                                    when (mediaOutcome) {
+                                        is PhotoMediaOutcome.Delivered -> {
+                                            excluded += mediaOutcome.fileName
+                                            deliveredCount += 1
+                                            lastDownload = outcome.file
+                                            if (submitNext() is PhotoActionResult.Rejected) {
+                                                completion.complete(PhotoActionTerminalOutcome.Failed)
+                                            }
+                                        }
+                                        PhotoMediaOutcome.Failed -> {
+                                            releaseMedia()
+                                            finishRequest(null, operationCompleted)
+                                            completion.complete(PhotoActionTerminalOutcome.TransferFailed)
+                                        }
+                                    }
+                                },
+                            )
+                            PhotoExecutionOutcome.None -> {
+                                releaseMedia()
+                                finishRequest(null, operationCompleted)
+                                if (deliveredCount == 0) {
+                                    completion.complete(PhotoActionTerminalOutcome.None)
+                                } else {
+                                    val last = checkNotNull(lastDownload)
+                                    completion.complete(PhotoActionTerminalOutcome.Delivered(last.toDownload(deliveredCount)))
+                                }
                             }
-                            finishRequest(cancellation, completed)
-                            completion.complete(
-                                when (outcome) {
+                            else -> {
+                                val terminal = when (outcome) {
                                     is PhotoExecutionOutcome.Captured -> {
                                         synchronized(lock) { lastIdentity = outcome.identity }
                                         PhotoActionTerminalOutcome.Captured(outcome.identity)
@@ -170,38 +202,40 @@ class CameraPhoto private constructor(
                                     PhotoExecutionOutcome.Failed -> PhotoActionTerminalOutcome.Failed
                                     PhotoExecutionOutcome.TimedOut -> PhotoActionTerminalOutcome.TimedOut
                                     PhotoExecutionOutcome.Cancelled -> PhotoActionTerminalOutcome.Cancelled
-                                    is PhotoExecutionOutcome.Delivered -> error("delivered is published separately")
-                                },
-                                failure,
-                            )
+                                    is PhotoExecutionOutcome.Delivered -> error("delivered is handled above")
+                                    PhotoExecutionOutcome.None -> error("none is handled above")
+                                }
+                                if (outcome !is PhotoExecutionOutcome.TimedOut && outcome !is PhotoExecutionOutcome.Cancelled) {
+                                    releaseMedia()
+                                }
+                                finishRequest(null, operationCompleted)
+                                completion.complete(terminal, failure)
+                            }
                         }
                     }
-                }
 
-                override fun onHardwareReleased() {
-                    dependencies.onCameraMediaReleased()
-                }
-            })
-            return when (result) {
-                is PhotoSubmissionResult.Accepted -> {
-                    cancellation = result.cancellation
-                    synchronized(lock) { if (!completed.get()) active += result.cancellation }
-                    PhotoActionResult.Accepted
-                }
-                PhotoSubmissionResult.Rejected -> {
-                    synchronized(lock) { requestInFlight = false }
-                    dependencies.onCameraMediaReleased()
-                    PhotoActionResult.Rejected
+                    override fun onHardwareReleased() = releaseMedia()
+                })
+                when (result) {
+                    is PhotoSubmissionResult.Accepted -> {
+                        cancellation = result.cancellation
+                        synchronized(lock) { if (!operationCompleted.get()) active += result.cancellation }
+                        PhotoActionResult.Accepted
+                    }
+                    PhotoSubmissionResult.Rejected -> {
+                        releaseMedia()
+                        finishRequest(null, operationCompleted)
+                        PhotoActionResult.Rejected
+                    }
                 }
             }
+            return submitNext()
         }
     }
 
     private fun publish(
         file: PhotoLocalFile,
-        completion: PhotoActionCompletion,
-        cancellation: OperationCancellationHandle?,
-        completed: AtomicBoolean,
+        completion: PhotoMediaCompletion,
     ) {
         val submitted = dependencies.mediaPublisher.publish(
             PhotoMediaFile(
@@ -209,48 +243,34 @@ class CameraPhoto private constructor(
                 file.size,
                 file.sha256,
                 object : PhotoReadableHandle {
-                    override fun readAll() = file.readable.readAll()
+                    override fun openStream() = file.readable.openStream()
                     override fun close() = file.readable.close()
                 },
             ),
-            PhotoMediaCompletion { outcome ->
-                finishRequest(cancellation, completed)
-                when (outcome) {
-                    is PhotoMediaOutcome.Delivered -> {
-                        synchronized(lock) { lastIdentity = null }
-                        completion.complete(
-                            PhotoActionTerminalOutcome.Delivered(
-                                com.skycommand.relay.photo.command.PhotoDownload(
-                                    outcome.fileName,
-                                    outcome.size,
-                                    outcome.sha256,
-                                    ByteArray(0),
-                                ),
-                            ),
-                        )
-                    }
-                    PhotoMediaOutcome.Failed -> completion.complete(PhotoActionTerminalOutcome.TransferFailed)
-                }
-            },
+            completion,
         )
-        if (submitted is PhotoMediaSubmitResult.Rejected) {
-            finishRequest(cancellation, completed)
-            completion.complete(PhotoActionTerminalOutcome.TransferFailed)
-        }
+        if (submitted is PhotoMediaSubmitResult.Rejected) completion.complete(PhotoMediaOutcome.Failed)
     }
 
-    private fun finishRequest(cancellation: OperationCancellationHandle?, completed: AtomicBoolean) {
+    private fun retireOperation(cancellation: OperationCancellationHandle?, completed: AtomicBoolean) {
         completed.set(true)
         synchronized(lock) {
-            requestInFlight = false
             cancellation?.let(active::remove)
         }
     }
 
-    private fun terminalResult(outcome: String, failure: PhotoDjiFailure? = null): JsonObject = JsonObject(
+    private fun finishRequest(cancellation: OperationCancellationHandle?, completed: AtomicBoolean) {
+        retireOperation(cancellation, completed)
+        synchronized(lock) { requestInFlight = false }
+    }
+
+    private fun PhotoLocalFile.toDownload(count: Int) = com.skycommand.relay.photo.command.PhotoDownload(fileName, size, sha256, ByteArray(0), count)
+
+    private fun terminalResult(outcome: String, failure: PhotoDjiFailure? = null, count: Int? = null): JsonObject = JsonObject(
         buildMap {
             put("domain", JsonString("photo"))
             put("outcome", JsonString(outcome))
+            count?.let { put("count", JsonNumber(it.toString())) }
             failure?.let {
                 put("errorCode", JsonString(it.errorCode))
                 put("errorDescription", JsonString(it.errorDescription))

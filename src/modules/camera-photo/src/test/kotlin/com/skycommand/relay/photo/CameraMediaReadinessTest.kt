@@ -52,6 +52,30 @@ class CameraMediaReadinessTest {
         assertTrue(readiness.isReady())
     }
 
+    @Test
+    fun retriesTheMediaExitOnceWhenAReadySourceHasNoVideoFrames() {
+        val recovery = RecordingRecovery()
+        val readiness = CameraMediaReadiness(recovery)
+        readiness.onVideoSourceChanged(available = true)
+        recovery.complete(true)
+
+        assertTrue(readiness.recoverAfterZeroFrameStart { })
+        assertFalse(readiness.recoverAfterZeroFrameStart { })
+        assertEquals(1, recovery.zeroFrameCalls)
+    }
+
+    @Test
+    fun doesNotRecoverVideoInputWhilePhotoMediaWorkIsActive() {
+        val recovery = RecordingRecovery()
+        val readiness = CameraMediaReadiness(recovery)
+        readiness.onVideoSourceChanged(available = true)
+        recovery.complete(true)
+        readiness.onCameraMediaBusy()
+
+        assertFalse(readiness.recoverAfterZeroFrameStart { })
+        assertEquals(0, recovery.zeroFrameCalls)
+    }
+
     private class RecordingRecovery : CameraMediaRecoveryPort {
         var calls = 0
         private var completion: ((Boolean) -> Unit)? = null
@@ -60,6 +84,13 @@ class CameraMediaReadinessTest {
             calls += 1
             this.completion = completion
         }
+
+        override fun recoverAfterZeroFrameStart(completion: (Boolean) -> Unit) {
+            zeroFrameCalls += 1
+            completion(true)
+        }
+
+        var zeroFrameCalls = 0
 
         fun complete(recovered: Boolean) {
             completion!!.invoke(recovered)
