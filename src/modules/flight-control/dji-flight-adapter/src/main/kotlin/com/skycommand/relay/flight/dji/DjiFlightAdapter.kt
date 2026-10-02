@@ -122,7 +122,8 @@ class DjiFlightAdapter private constructor(
                     FlightAction.CONFIRM_LANDING,
                     FlightAction.RETURN_HOME,
                     FlightAction.STOP_TAKEOFF,
-                    FlightAction.STOP_AUTO_LANDING -> UnconfirmedOutcomeAdmission.CONTAINMENT
+                    FlightAction.STOP_AUTO_LANDING,
+                    FlightAction.STOP_GO_HOME -> UnconfirmedOutcomeAdmission.CONTAINMENT
                 }
 
                 override fun run(completion: OperationCompletion) {
@@ -300,6 +301,9 @@ class DjiFlightAdapter private constructor(
                 FlightAction.STOP_AUTO_LANDING ->
                     initial.flightMode in setOf("AUTO_LANDING", "CONFIRM_LANDING") &&
                         state.flightMode != null && state.flightMode !in setOf("AUTO_LANDING", "CONFIRM_LANDING")
+                FlightAction.STOP_GO_HOME ->
+                    initial.flightMode in setOf("GO_HOME", "AUTO_RETURN") &&
+                        state.flightMode != null && state.flightMode !in setOf("GO_HOME", "AUTO_RETURN")
             }
         }
     }

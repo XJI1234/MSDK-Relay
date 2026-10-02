@@ -62,11 +62,19 @@ internal class LiveCaptureDiagnosticRecorder(
         val metrics = if (event.fps != null && event.bitrateKbps != null) {
             ";fps=${event.fps};bitrateKbps=${event.bitrateKbps}"
         } else ""
+        val detail = event.detail?.takeIf { it.isNotBlank() }?.let { ";$it" }.orEmpty()
         submit {
             journal.record(
                 if (event.kind.isFailure) DiagnosticLevel.WARN else DiagnosticLevel.INFO,
-                "live-stream-msdk", event.kind.name, null, "attempt=${event.attempt}$metrics",
+                "live-stream-msdk", event.kind.name, null, "attempt=${event.attempt}$metrics$detail",
             )
+        }
+    }
+
+    fun recordCameraZeroFrameRecovery(kind: String, attempt: Long, detail: String) {
+        submit {
+            val suffix = detail.takeIf { it.isNotBlank() }?.let { ";$it" } ?: ""
+            journal.record(DiagnosticLevel.WARN, "camera-media", kind, null, "attempt=$attempt$suffix")
         }
     }
 

@@ -10,6 +10,7 @@ import com.skycommand.relay.wayline.executor.ControlCompletion
 import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.staging.MissionMetadata
 import com.skycommand.relay.wayline.uploader.UploadCompletion
+import com.skycommand.relay.wayline.uploader.MissionUploadPreparation
 import com.skycommand.relay.settings.command.SettingsDomain
 import com.skycommand.relay.settings.command.SettingsRequest
 import com.skycommand.relay.settings.command.SettingsSnapshot
@@ -134,9 +135,11 @@ class SimulationDjiAdapterContractTest {
         val receivedSignals = mutableListOf<MissionExecutionSignal>()
         adapter.ports().executionSignals.onSignal { receivedSignals += it }
 
-        adapter.ports().missionUpload.upload(
-            MissionMetadata("route.kmz", 3, "abc"),
-            byteArrayOf(1, 2, 3),
+        val preparation = byteArrayOf(1, 2, 3).inputStream().use { content ->
+            adapter.ports().missionUpload.prepare(MissionMetadata("route.kmz", 3, "abc"), content)
+        }
+        assertTrue(preparation is MissionUploadPreparation.Prepared)
+        preparation.upload.start(
             progress = {},
             completion = object : UploadCompletion {
                 override fun succeed() { uploaded += 1 }

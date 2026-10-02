@@ -159,6 +159,7 @@ class FlightControl private constructor(
             "flight.return-home" -> "Return-home command completed"
             "flight.stop-takeoff" -> "Stop automatic takeoff command completed"
             "flight.stop-auto-landing" -> "Stop automatic landing command completed"
+            "flight.stop-go-home" -> "Stop return-home command completed"
             else -> "Flight command completed"
         }
 

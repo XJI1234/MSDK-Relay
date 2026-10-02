@@ -11,6 +11,7 @@ import com.skycommand.relay.telemetry.publish.TelemetryPublisher
 import com.skycommand.relay.telemetry.publish.TelemetrySink
 import com.skycommand.relay.telemetry.snapshot.SnapshotAssembler
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
+import com.skycommand.relay.telemetry.snapshot.FlightControllerOnceLatch
 import com.skycommand.relay.telemetry.snapshot.TelemetryInputs
 import com.skycommand.relay.telemetry.snapshot.TelemetrySnapshot
 import com.skycommand.relay.wayline.state.ExecutionState
@@ -154,12 +155,18 @@ class Telemetry private constructor(
     }
 
     private class DeviceStoreTelemetrySource(private val store: DeviceStateStore) : TelemetryStateSource {
-        override fun snapshot(): TelemetryInputs = TelemetryInputs(
-            device = store.snapshot(),
-            flight = FlightTelemetrySnapshot(),
-            stream = StreamSnapshot(0, StreamLifecycleState.STOPPED, false, "Stopped", null),
-            mission = MissionSnapshot(0, null, 0, null, UploadState.NOT_UPLOADED, ExecutionState.NOT_STARTED),
-        )
+        private val flightControllerOnce = FlightControllerOnceLatch()
+
+        override fun snapshot(): TelemetryInputs {
+            val device = store.snapshot()
+            return TelemetryInputs(
+                device = device,
+                flight = FlightTelemetrySnapshot(),
+                stream = StreamSnapshot(0, StreamLifecycleState.STOPPED, false, "Stopped", null),
+                mission = MissionSnapshot(0, null, 0, null, UploadState.NOT_UPLOADED, ExecutionState.NOT_STARTED),
+                flightControllerHasConnectedOnce = flightControllerOnce.observe(device.flightController),
+            )
+        }
 
         override fun onChanged(listener: () -> Unit): TelemetryRegistration {
             val registration = store.onChanged { listener() }

@@ -21,4 +21,4 @@ adapter.observeState(fact) -> Unit
 
 每次飞行动作实际调用 DJI 前，适配器记录状态观察代次与修订号。只有同一观察代次、修订号严格更晚且满足该动作官方运行态结果的事实，才能在该操作超时/取消后释放协调器槽位：起飞为 `AUTO_TAKE_OFF` 或 `isFlying=true`；开始降落为 `AUTO_LANDING`、`CONFIRM_LANDING` 或从已飞行变为已落地；确认降落为从请求前已要求确认进入 `AUTO_LANDING` 或落地；返航为 `GO_HOME`；停止起飞或停止降落为对应自动飞行模式退出。任何观察代次变化、缺失值、错误动作状态或调用前状态都不得解锁。该恢复不把原命令的超时/取消改写为成功。
 
-`STOP_TAKEOFF` 与 `STOP_AUTO_LANDING` 也经同一协调器串行提交，绝不绕过队列并发访问 `KeyManager`；调用方必须让操作者显式确认，且不得把已排队或已接受解释为飞控已经悬停。
+`STOP_TAKEOFF`、`STOP_AUTO_LANDING` 与 `STOP_GO_HOME` 也经同一协调器提交，绝不绕过协调器并发访问 `KeyManager`；调用方必须让操作者显式确认，且不得把已排队或已接受解释为飞控已经悬停。`STOP_GO_HOME` 同样声明为 `CONTAINMENT`，可以按协调器契约优先替换普通在途动作；权威状态确认恢复必须是请求前处于 `GO_HOME` 或 `AUTO_RETURN`，且同代次的更晚观察已退出这些模式。两个 `CONTAINMENT` 动作之间保持串行，不互相抢占。

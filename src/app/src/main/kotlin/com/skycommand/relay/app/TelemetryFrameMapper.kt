@@ -89,6 +89,7 @@ object TelemetryFrameMapper {
         "liveRttMillis" to snapshot.liveRttMillis.json(),
         "livePacketLoss" to snapshot.livePacketLoss.json(),
         "livePacketCacheLength" to snapshot.livePacketCacheLength.json(),
+        "flightControllerHasConnectedOnce" to JsonBoolean(snapshot.flightControllerHasConnectedOnce),
         "cameraFrameGeneration" to JsonNumber(snapshot.cameraFrameGeneration.toString()),
         "cameraFrameState" to JsonString(snapshot.cameraFrameState.name),
         "cameraFrameCount" to JsonNumber(snapshot.cameraFrameCount.toString()),

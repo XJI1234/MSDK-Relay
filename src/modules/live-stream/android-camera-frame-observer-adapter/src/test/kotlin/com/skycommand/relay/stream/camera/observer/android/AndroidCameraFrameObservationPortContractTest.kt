@@ -14,7 +14,7 @@ import kotlin.io.path.readText
 
 class AndroidCameraFrameObservationPortContractTest {
     @Test
-    fun defersResolvingTheCameraStreamManagerUntilObservationStarts() {
+    fun acquiresTheCameraStreamManagerWhenTheObservationPortIsCreated() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/stream/camera/observer/android/AndroidCameraFrameObservationPort.kt"),
             Path("src/modules/live-stream/android-camera-frame-observer-adapter/src/main/kotlin/com/skycommand/relay/stream/camera/observer/android/AndroidCameraFrameObservationPort.kt"),
@@ -24,8 +24,10 @@ class AndroidCameraFrameObservationPortContractTest {
             1,
             Regex("MediaDataCenter.getInstance().cameraStreamManager", RegexOption.LITERAL).findAll(source).count(),
         )
-        assertTrue(source.contains("private val managerProvider: () -> ICameraStreamManager"))
-        assertTrue(source.contains("private val manager by lazy(managerProvider)"))
+        assertTrue(source.contains("MsdkCameraFrameObservationPlatform(MediaDataCenter.getInstance().cameraStreamManager)"))
+        assertTrue(source.contains("private val manager: ICameraStreamManager"))
+        assertTrue(!source.contains("managerProvider"))
+        assertTrue(!source.contains("by lazy"))
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.skycommand.relay.stream.state.StreamSnapshot
 import com.skycommand.relay.telemetry.TelemetryRegistration
 import com.skycommand.relay.telemetry.TelemetryStateSource
 import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
+import com.skycommand.relay.telemetry.snapshot.FlightControllerOnceLatch
 import com.skycommand.relay.telemetry.snapshot.TelemetryInputs
 import com.skycommand.relay.wayline.state.MissionSnapshot
 import java.util.concurrent.atomic.AtomicBoolean
@@ -22,13 +23,19 @@ class CompositeTelemetrySource(
     private val mission: SnapshotFeed<MissionSnapshot>,
     private val cameraFrames: SnapshotFeed<CameraFrameSnapshot>,
 ) : TelemetryStateSource {
-    override fun snapshot(): TelemetryInputs = TelemetryInputs(
-        device.snapshot(),
-        flight.snapshot(),
-        stream.snapshot(),
-        mission.snapshot(),
-        cameraFrames.snapshot(),
-    )
+    private val flightControllerOnce = FlightControllerOnceLatch()
+
+    override fun snapshot(): TelemetryInputs {
+        val deviceSnapshot = device.snapshot()
+        return TelemetryInputs(
+            deviceSnapshot,
+            flight.snapshot(),
+            stream.snapshot(),
+            mission.snapshot(),
+            cameraFrames.snapshot(),
+            flightControllerHasConnectedOnce = flightControllerOnce.observe(deviceSnapshot.flightController),
+        )
+    }
 
     override fun onChanged(listener: () -> Unit): TelemetryRegistration {
         val registrations = mutableListOf<CloseableRegistration>()

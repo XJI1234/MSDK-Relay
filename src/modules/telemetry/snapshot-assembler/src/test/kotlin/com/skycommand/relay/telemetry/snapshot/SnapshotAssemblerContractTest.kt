@@ -265,11 +265,30 @@ class SnapshotAssemblerContractTest {
         assertEquals(null, result.longitude)
     }
 
+    @Test
+    fun copiesFlightControllerHasConnectedOnceWithoutUsingItAsAStreamGate() {
+        val unseen = SnapshotAssembler.assemble(inputs())
+        val seen = SnapshotAssembler.assemble(inputs(flightControllerHasConnectedOnce = true))
+        assertEquals(false, unseen.flightControllerHasConnectedOnce)
+        assertEquals(true, seen.flightControllerHasConnectedOnce)
+    }
+
+    @Test
+    fun processLatchRemembersAFlightControllerConnectionAfterItDrops() {
+        val latch = FlightControllerOnceLatch()
+        assertEquals(false, latch.observe(LinkState.UNKNOWN))
+        assertEquals(false, latch.observe(LinkState.DISCONNECTED))
+        assertEquals(true, latch.observe(LinkState.CONNECTED))
+        assertEquals(true, latch.observe(LinkState.DISCONNECTED))
+        assertEquals(true, latch.observe(LinkState.UNKNOWN))
+    }
+
     private fun inputs(
         device: DeviceSnapshot = DeviceSnapshot(0, SdkAvailability.STOPPED, LinkState.DISCONNECTED, LinkState.DISCONNECTED, LinkState.DISCONNECTED, PairingState.UNKNOWN, null, null),
         flight: FlightTelemetrySnapshot = FlightTelemetrySnapshot(),
         stream: StreamSnapshot = StreamSnapshot(0, StreamLifecycleState.STOPPED, false, "Stopped", null),
         mission: MissionSnapshot = MissionSnapshot(0, null, 0, null, UploadState.NOT_UPLOADED, ExecutionState.NOT_STARTED),
         cameraFrames: CameraFrameSnapshot = CameraFrameSnapshot(0, CameraFrameObservationState.UNAVAILABLE, 0, null, null, null, null, null),
-    ) = TelemetryInputs(device, flight, stream, mission, cameraFrames)
+        flightControllerHasConnectedOnce: Boolean = false,
+    ) = TelemetryInputs(device, flight, stream, mission, cameraFrames, flightControllerHasConnectedOnce)
 }

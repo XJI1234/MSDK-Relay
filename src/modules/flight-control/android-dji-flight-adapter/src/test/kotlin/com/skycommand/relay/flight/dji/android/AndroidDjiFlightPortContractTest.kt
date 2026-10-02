@@ -25,9 +25,10 @@ class AndroidDjiFlightPortContractTest {
         port.execute(FlightAction.RETURN_HOME, completion(events)); api.fail()
         port.execute(FlightAction.STOP_TAKEOFF, completion(events)); api.succeed()
         port.execute(FlightAction.STOP_AUTO_LANDING, completion(events)); api.fail()
+        port.execute(FlightAction.STOP_GO_HOME, completion(events)); api.succeed()
 
-        assertEquals(listOf("takeoff", "land", "confirm-landing", "return-home", "stop-takeoff", "stop-auto-landing"), api.calls)
-        assertEquals(listOf("ok", "ok", "ok", "fail", "ok", "fail"), events)
+        assertEquals(listOf("takeoff", "land", "confirm-landing", "return-home", "stop-takeoff", "stop-auto-landing", "stop-go-home"), api.calls)
+        assertEquals(listOf("ok", "ok", "ok", "fail", "ok", "fail", "ok"), events)
     }
 
     @Test
@@ -67,6 +68,7 @@ class AndroidDjiFlightPortContractTest {
 
         assertTrue(source.contains("perform(FlightControllerKey.KeyStopTakeoff, completion)"))
         assertTrue(source.contains("perform(FlightControllerKey.KeyStopAutoLanding, completion)"))
+        assertTrue(source.contains("perform(FlightControllerKey.KeyStopGoHome, completion)"))
         assertTrue(source.contains("perform(FlightControllerKey.KeyConfirmLanding, completion)"))
     }
 
@@ -111,6 +113,7 @@ class AndroidDjiFlightPortContractTest {
         override fun returnHome(completion: DjiFlightCompletion) = call("return-home", completion)
         override fun stopTakeoff(completion: DjiFlightCompletion) = call("stop-takeoff", completion)
         override fun stopAutoLanding(completion: DjiFlightCompletion) = call("stop-auto-landing", completion)
+        override fun stopGoHome(completion: DjiFlightCompletion) = call("stop-go-home", completion)
         private fun call(name: String, completion: DjiFlightCompletion) {
             if (throwOnCall) error("platform failure")
             calls += name; this.completion = completion

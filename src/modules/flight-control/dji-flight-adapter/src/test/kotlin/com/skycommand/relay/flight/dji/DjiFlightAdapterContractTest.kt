@@ -12,21 +12,21 @@ import kotlin.test.assertTrue
 
 class DjiFlightAdapterContractTest {
     @Test
-    fun submitsActionsSeriallyAndMapsSdkCompletionOnce() {
+    fun submitsContainmentActionsSeriallyAndMapsSdkCompletionOnce() {
         val executor = ManualExecutor()
         val port = Port()
         val adapter = DjiFlightAdapter.create(port, DjiOperationCoordinator.create(executor, Scheduler()), 1_000)
         val outcomes = mutableListOf<FlightDjiTerminalResult>()
 
-        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.TAKEOFF) { outcomes += it })
         assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.LAND) { outcomes += it })
+        assertIs<FlightSubmissionResult.Accepted>(adapter.execute(FlightAction.RETURN_HOME) { outcomes += it })
         executor.runNext()
-        assertEquals(listOf(FlightAction.TAKEOFF), port.actions)
+        assertEquals(listOf(FlightAction.LAND), port.actions)
         port.succeed()
         port.succeed()
         executor.runNext()
 
-        assertEquals(listOf(FlightAction.TAKEOFF, FlightAction.LAND), port.actions)
+        assertEquals(listOf(FlightAction.LAND, FlightAction.RETURN_HOME), port.actions)
         assertEquals(listOf(FlightDjiTerminalResult(FlightDjiTerminalOutcome.SUCCEEDED)), outcomes)
     }
 

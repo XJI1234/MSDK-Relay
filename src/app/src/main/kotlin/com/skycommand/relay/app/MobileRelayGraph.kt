@@ -75,6 +75,7 @@ import com.skycommand.relay.settings.dji.android.AndroidDjiSettingsPort
 import com.skycommand.relay.photo.CameraPhoto
 import com.skycommand.relay.photo.CameraPhotoDependencies
 import com.skycommand.relay.photo.CameraMediaReadiness
+import com.skycommand.relay.photo.PhotoSentLedger
 import com.skycommand.relay.photo.dji.android.AndroidCameraMediaRecoveryPort
 import com.skycommand.relay.photo.dji.android.AndroidDjiPhotoPort
 import com.skycommand.relay.photo.media.PhotoMediaCancellation
@@ -561,9 +562,17 @@ class MobileRelayGraph private constructor(
                     liveCaptureDiagnostics.recordCameraFailure(kind)
                 },
             )
+            val cameraZeroFrameRecovery = CameraZeroFrameRecovery(
+                cameraMediaReadiness,
+                cameraFrameObserver,
+                liveCaptureDiagnostics::recordCameraZeroFrameRecovery,
+            )
             val stream = LiveStream.create(
                 LiveStreamDependencies(
-                    AndroidDjiStreamPort.create { event -> liveCaptureDiagnostics.recordRtmp(event) },
+                    AndroidDjiStreamPort.create { event ->
+                        cameraZeroFrameRecovery.onRtmpEvent(event)
+                        liveCaptureDiagnostics.recordRtmp(event)
+                    },
                     device.streamOperations(),
                     StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() },
                     diagnosticSink = { kind ->
@@ -725,6 +734,7 @@ class MobileRelayGraph private constructor(
                     ),
                     onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
                     onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
+                    sentLedger = PhotoSentLedger.file(java.io.File(activity.filesDir, "sent-photos.txt")),
                 ),
             )
             gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
@@ -746,8 +756,12 @@ class MobileRelayGraph private constructor(
                     override fun resetTelemetryPublicationBaseline() { telemetry.resetPublicationBaseline() }
                     override fun publishTelemetry() { telemetry.publishCurrent() }
                     override fun publishLinkSnapshot() {
+                        val snapshot = when (val result = telemetry.read()) {
+                            is TelemetryReadResult.ReadSucceeded -> result.snapshot
+                            TelemetryReadResult.ReadUnavailable -> SnapshotAssembler.assemble(device.snapshot())
+                        }
                         gateway.publishTelemetry(
-                            TelemetryFrameMapper.map(SnapshotAssembler.assemble(device.snapshot()), telemetrySequence.next()),
+                            TelemetryFrameMapper.map(snapshot, telemetrySequence.next()),
                         )
                     }
                     override fun startGateway() {
@@ -842,7 +856,7 @@ class MobileRelayGraph private constructor(
             listOf("live-stream-webrtc.start", "live-stream-webrtc.stop").forEach {
                 register(gateway, journal, it, videoTransports.handlerFor(it))
             }
-            listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing").forEach {
+            listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing", "flight.stop-go-home").forEach {
                 register(gateway, journal, it, flightControl.commandHandler())
             }
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {

@@ -12,6 +12,8 @@ enum class LiveStreamDiagnosticKind(val isFailure: Boolean = false) {
     FIRST_STATUS,
     FIRST_VIDEO_OUTPUT,
     RUNTIME_ERROR(true),
+    CAMERA_INPUT_SNAPSHOT,
+    CAMERA_STREAM_STATE_UPDATED,
 }
 
 data class LiveStreamDiagnosticEvent(
@@ -19,6 +21,7 @@ data class LiveStreamDiagnosticEvent(
     val attempt: Long,
     val fps: Int? = null,
     val bitrateKbps: Int? = null,
+    val detail: String? = null,
 )
 
 fun interface LiveStreamDiagnosticSink {
@@ -26,7 +29,7 @@ fun interface LiveStreamDiagnosticSink {
 }
 
 internal class LiveStreamStatusMilestones(
-    private val attempt: Long,
+    val attempt: Long,
     private val sink: LiveStreamDiagnosticSink,
 ) {
     private val firstStatus = AtomicBoolean()
@@ -38,12 +41,14 @@ internal class LiveStreamStatusMilestones(
         active.set(false)
     }
 
-    fun onStatus(streaming: Boolean, fps: Int, bitrateKbps: Int) {
-        if (!active.get()) return
-        if (firstStatus.compareAndSet(false, true)) record(LiveStreamDiagnosticKind.FIRST_STATUS, fps, bitrateKbps)
+    fun onStatus(streaming: Boolean, fps: Int, bitrateKbps: Int): Boolean {
+        if (!active.get()) return false
+        val isFirstStatus = firstStatus.compareAndSet(false, true)
+        if (isFirstStatus) record(LiveStreamDiagnosticKind.FIRST_STATUS, fps, bitrateKbps)
         if (streaming && fps > 0 && firstVideoOutput.compareAndSet(false, true)) {
             record(LiveStreamDiagnosticKind.FIRST_VIDEO_OUTPUT, fps, bitrateKbps)
         }
+        return isFirstStatus
     }
 
     fun onError() {

@@ -18,6 +18,7 @@ internal interface DjiFlightApi {
     fun returnHome(completion: DjiFlightCompletion)
     fun stopTakeoff(completion: DjiFlightCompletion)
     fun stopAutoLanding(completion: DjiFlightCompletion)
+    fun stopGoHome(completion: DjiFlightCompletion)
 }
 
 class AndroidDjiFlightPort internal constructor(
@@ -42,6 +43,7 @@ class AndroidDjiFlightPort internal constructor(
             FlightAction.RETURN_HOME -> platform.returnHome(callbackFor(operation))
             FlightAction.STOP_TAKEOFF -> platform.stopTakeoff(callbackFor(operation))
             FlightAction.STOP_AUTO_LANDING -> platform.stopAutoLanding(callbackFor(operation))
+            FlightAction.STOP_GO_HOME -> platform.stopGoHome(callbackFor(operation))
         }
     }
 

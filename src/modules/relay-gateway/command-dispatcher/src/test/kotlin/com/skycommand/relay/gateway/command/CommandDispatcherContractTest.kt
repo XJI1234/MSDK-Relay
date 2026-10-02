@@ -156,6 +156,7 @@ class CommandDispatcherContractTest {
             "flight.return-home",
             "flight.stop-takeoff",
             "flight.stop-auto-landing",
+            "flight.stop-go-home",
             "device.settings.camera.read",
             "device.settings.camera.write",
             "device.settings.transmission.read",

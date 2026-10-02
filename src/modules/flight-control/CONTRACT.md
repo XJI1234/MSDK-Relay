@@ -5,7 +5,7 @@ Gradle 路径：`:flight-control`
 
 ## 唯一职责
 
-`flight-control` 负责把桌面端的高风险飞行命令安全地提交给 DJI 飞控，并仅在 DJI 明确完成对应 Action 调用后返回终态结果。它支持 `flight.takeoff`、`flight.land`、`flight.confirm-landing`、`flight.return-home`、`flight.stop-takeoff`、`flight.stop-auto-landing` 六个命令。
+`flight-control` 负责把桌面端的高风险飞行命令安全地提交给 DJI 飞控，并仅在 DJI 明确完成对应 Action 调用后返回终态结果。它支持 `flight.takeoff`、`flight.land`、`flight.confirm-landing`、`flight.return-home`、`flight.stop-takeoff`、`flight.stop-auto-landing`、`flight.stop-go-home` 七个命令。
 
 它不负责连接 DJI、读取遥测、生成或执行航线、控制虚拟摇杆、维护相机设置，也不根据遥测猜测命令是否完成。
 

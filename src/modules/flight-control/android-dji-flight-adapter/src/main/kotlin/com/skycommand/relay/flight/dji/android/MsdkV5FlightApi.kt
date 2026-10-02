@@ -17,6 +17,7 @@ internal class MsdkV5FlightApi(
     override fun returnHome(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStartGoHome, completion)
     override fun stopTakeoff(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStopTakeoff, completion)
     override fun stopAutoLanding(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStopAutoLanding, completion)
+    override fun stopGoHome(completion: DjiFlightCompletion) = perform(FlightControllerKey.KeyStopGoHome, completion)
 
     private fun perform(
         key: dji.sdk.keyvalue.key.DJIActionKeyInfo<*, EmptyMsg>,

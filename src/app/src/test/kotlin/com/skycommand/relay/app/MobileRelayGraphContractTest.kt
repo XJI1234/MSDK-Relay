@@ -70,7 +70,7 @@ class MobileRelayGraphContractTest {
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MobileRelayGraph.kt"),
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("\"flight.stop-takeoff\", \"flight.stop-auto-landing\""))
+        assertTrue(source.contains("\"flight.stop-takeoff\", \"flight.stop-auto-landing\", \"flight.stop-go-home\""))
         assertTrue(source.contains("register(gateway, journal, it, flightControl.commandHandler())"))
     }
 

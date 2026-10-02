@@ -12,16 +12,18 @@ import dji.v5.manager.datacenter.livestream.LiveStreamType
 import dji.v5.manager.datacenter.livestream.LiveVideoBitrateMode
 import dji.v5.manager.datacenter.livestream.StreamQuality
 import dji.v5.manager.datacenter.livestream.settings.RtmpSettings
+import dji.v5.manager.interfaces.ICameraStreamManager
 import dji.v5.manager.interfaces.ILiveStreamManager
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 internal class MsdkV5LiveStreamApi(
-    private val managerProvider: () -> ILiveStreamManager = { MediaDataCenter.getInstance().liveStreamManager },
     private val diagnosticSink: LiveStreamDiagnosticSink = LiveStreamDiagnosticSink { },
 ) : DjiLiveStreamApi {
-    private val manager by lazy(managerProvider)
+    private val manager: ILiveStreamManager = MediaDataCenter.getInstance().liveStreamManager
+    private val cameraStreamManager: ICameraStreamManager = MediaDataCenter.getInstance().cameraStreamManager
     private val nextAttempt = AtomicLong()
+    private val cameraInput = CameraInputDiagnostics(cameraStreamManager, diagnosticSink)
 
     override fun start(url: String, listener: DjiLiveStreamListener, completion: DjiLiveStreamCompletion) {
         val attempt = nextAttempt.incrementAndGet()
@@ -41,9 +43,11 @@ internal class MsdkV5LiveStreamApi(
             throw failure
         }
         record(LiveStreamDiagnosticKind.SETTINGS_APPLIED, attempt)
+        cameraInput.recordSnapshot(attempt, CameraInputCheckpoint.BEFORE_START)
         ListenerRegistry.put(listener, sdkListener, milestones)
         manager.addLiveStreamStatusListener(sdkListener)
         record(LiveStreamDiagnosticKind.START_INVOKED, attempt)
+        cameraInput.recordSnapshot(attempt, CameraInputCheckpoint.AFTER_START_INVOKED)
         try {
             manager.startStream(completion.toSdkCompletion(attempt))
         } catch (failure: Throwable) {
@@ -63,7 +67,9 @@ internal class MsdkV5LiveStreamApi(
 
     private fun DjiLiveStreamListener.toSdkListener(milestones: LiveStreamStatusMilestones) = object : LiveStreamStatusListener {
         override fun onLiveStreamStatusUpdate(status: LiveStreamStatus) {
-            milestones.onStatus(status.isStreaming, status.fps, status.vbps)
+            if (milestones.onStatus(status.isStreaming, status.fps, status.vbps)) {
+                cameraInput.recordSnapshot(milestones.attempt, CameraInputCheckpoint.FIRST_STATUS)
+            }
             val resolution = status.resolution
             onStatus(
                 DjiLiveStreamFact(
@@ -111,8 +117,14 @@ internal class MsdkV5LiveStreamApi(
         }
     }
 
-    private fun record(kind: LiveStreamDiagnosticKind, attempt: Long, fps: Int? = null, bitrateKbps: Int? = null) {
-        runCatching { diagnosticSink.record(LiveStreamDiagnosticEvent(kind, attempt, fps, bitrateKbps)) }
+    private fun record(
+        kind: LiveStreamDiagnosticKind,
+        attempt: Long,
+        fps: Int? = null,
+        bitrateKbps: Int? = null,
+        detail: String? = null,
+    ) {
+        runCatching { diagnosticSink.record(LiveStreamDiagnosticEvent(kind, attempt, fps, bitrateKbps, detail)) }
     }
 
     private object ListenerRegistry {
@@ -125,5 +137,62 @@ internal class MsdkV5LiveStreamApi(
 
     private companion object {
         const val MINI_4_PRO_FULL_HD_BITRATE_BPS: Int = 500 * 1024 * 8
+    }
+}
+
+private enum class CameraInputCheckpoint {
+    BEFORE_START,
+    AFTER_START_INVOKED,
+    FIRST_STATUS,
+}
+
+private class CameraInputDiagnostics(
+    private val manager: ICameraStreamManager,
+    private val sink: LiveStreamDiagnosticSink,
+) {
+    private val available = java.util.concurrent.atomic.AtomicReference<Set<ComponentIndexType>?>(null)
+    private val enabled = java.util.concurrent.atomic.AtomicReference<Map<ComponentIndexType, Boolean>?>(null)
+    private val currentAttempt = AtomicLong()
+
+    init {
+        manager.addAvailableCameraUpdatedListener(object : ICameraStreamManager.AvailableCameraUpdatedListener {
+            override fun onAvailableCameraUpdated(cameras: MutableList<ComponentIndexType>) {
+                available.set(cameras.toSet())
+                recordStateUpdate()
+            }
+
+            override fun onCameraStreamEnableUpdate(streams: MutableMap<ComponentIndexType, Boolean>) {
+                enabled.set(streams.toMap())
+                recordStateUpdate()
+            }
+        })
+    }
+
+    fun recordSnapshot(attempt: Long, checkpoint: CameraInputCheckpoint) {
+        currentAttempt.set(attempt)
+        record(LiveStreamDiagnosticKind.CAMERA_INPUT_SNAPSHOT, attempt, snapshot(checkpoint))
+    }
+
+    private fun recordStateUpdate() {
+        record(LiveStreamDiagnosticKind.CAMERA_STREAM_STATE_UPDATED, currentAttempt.get(), snapshot(null))
+    }
+
+    private fun snapshot(checkpoint: CameraInputCheckpoint?): String {
+        val main = ComponentIndexType.LEFT_OR_MAIN
+        val availableCameras = available.get()
+        val enabledStreams = enabled.get()
+        val checkpointValue = checkpoint?.name?.let { "checkpoint=$it;" }.orEmpty()
+        val encoderBitrate = runCatching { manager.getStreamEncoderBitrate(main) }.getOrNull()
+        val priority = runCatching { manager.getStreamPriority(main) }.getOrNull()
+        return "$checkpointValue" +
+            "mainAvailable=${availableCameras?.contains(main) ?: "unknown"};" +
+            "mainEnabled=${enabledStreams?.get(main) ?: "unknown"};" +
+            "availableCount=${availableCameras?.size ?: -1};" +
+            "encoderBitrate=${encoderBitrate ?: "unknown"};" +
+            "streamPriority=${priority ?: "unknown"}"
+    }
+
+    private fun record(kind: LiveStreamDiagnosticKind, attempt: Long, detail: String) {
+        runCatching { sink.record(LiveStreamDiagnosticEvent(kind, attempt, detail = detail)) }
     }
 }

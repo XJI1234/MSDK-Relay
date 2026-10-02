@@ -12,6 +12,7 @@ enum class FlightAction {
     RETURN_HOME,
     STOP_TAKEOFF,
     STOP_AUTO_LANDING,
+    STOP_GO_HOME,
 }
 
 fun interface FlightActionCompletion {
@@ -79,6 +80,7 @@ class FlightCommandHandler private constructor(
         "flight.return-home" -> FlightAction.RETURN_HOME
         "flight.stop-takeoff" -> FlightAction.STOP_TAKEOFF
         "flight.stop-auto-landing" -> FlightAction.STOP_AUTO_LANDING
+        "flight.stop-go-home" -> FlightAction.STOP_GO_HOME
         else -> null
     }
 

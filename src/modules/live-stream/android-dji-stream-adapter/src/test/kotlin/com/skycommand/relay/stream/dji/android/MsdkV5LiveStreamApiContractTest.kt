@@ -9,18 +9,14 @@ import kotlin.test.assertTrue
 
 class MsdkV5LiveStreamApiContractTest {
     @Test
-    fun defersAndThenReusesTheLiveStreamManagerForTheStreamLifetime() {
+    fun acquiresTheLiveStreamManagerWhenTheAdapterIsCreated() {
         val source = listOf(
             Path("src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
             Path("src/modules/live-stream/android-dji-stream-adapter/src/main/kotlin/com/skycommand/relay/stream/dji/android/MsdkV5LiveStreamApi.kt"),
         ).first { it.exists() }.readText()
-        val start = source.substringAfter("override fun start").substringBefore("override fun stop")
-        val stop = source.substringAfter("override fun stop")
-
-        assertTrue(source.contains("private val managerProvider: () -> ILiveStreamManager"))
-        assertTrue(source.contains("private val manager by lazy(managerProvider)"))
-        assertFalse(start.contains("managerProvider()"))
-        assertFalse(stop.contains("managerProvider()"))
+        assertTrue(source.contains("private val manager: ILiveStreamManager = MediaDataCenter.getInstance().liveStreamManager"))
+        assertFalse(source.contains("managerProvider"))
+        assertFalse(source.contains("by lazy"))
     }
 
     @Test
@@ -88,9 +84,11 @@ class MsdkV5LiveStreamApiContractTest {
         assertFalse(start.contains("StreamQuality.SD"))
         assertFalse(start.contains("StreamQuality.ORIGINAL"))
         assertFalse(start.contains("LiveVideoBitrateMode.AUTO"))
-        assertFalse(start.contains("cameraStreamManager"))
+        assertTrue(start.contains("cameraInput.recordSnapshot"))
         assertFalse(start.contains("setKeepAliveDecoding"))
         assertFalse(start.contains("enableStream("))
+        assertFalse(source.contains("setStreamEncoderBitrate("))
+        assertFalse(source.contains("setStreamPriority("))
         assertFalse(start.contains("putCameraStreamSurface"))
         assertFalse(start.contains("mediaManager"))
         assertFalse(start.contains("KeyManager"))

@@ -65,9 +65,7 @@ class AndroidCameraFrameObservationPort internal constructor(
 
     companion object {
         fun create(): CameraFrameObservationPort = AndroidCameraFrameObservationPort(
-            MsdkCameraFrameObservationPlatform(
-                managerProvider = { MediaDataCenter.getInstance().cameraStreamManager },
-            ),
+            MsdkCameraFrameObservationPlatform(MediaDataCenter.getInstance().cameraStreamManager),
         )
 
         private fun validRange(data: ByteArray, offset: Int, length: Int): Boolean =
@@ -76,10 +74,9 @@ class AndroidCameraFrameObservationPort internal constructor(
 }
 
 private class MsdkCameraFrameObservationPlatform(
-    private val managerProvider: () -> ICameraStreamManager,
+    private val manager: ICameraStreamManager,
     private val cameraIndex: ComponentIndexType = ComponentIndexType.LEFT_OR_MAIN,
 ) : AndroidCameraFrameObservationPlatform {
-    private val manager by lazy(managerProvider)
     private val lock = Any()
     private val listeners = IdentityHashMap<AndroidCameraFrameListener, ICameraStreamManager.ReceiveStreamListener>()
 

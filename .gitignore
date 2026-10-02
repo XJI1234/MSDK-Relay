@@ -8,3 +8,6 @@ local.properties
 captures/
 externalNativeBuild/
 cmake-build-*/
+
+# Local device diagnostics, screenshots and extracted SDK/build files.
+/tmp-*

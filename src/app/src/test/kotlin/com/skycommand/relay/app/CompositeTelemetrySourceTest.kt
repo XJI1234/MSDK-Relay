@@ -65,6 +65,23 @@ class CompositeTelemetrySourceTest {
         assertEquals(1, changes)
     }
 
+    @Test fun latchesFlightControllerConnectedOnceAfterItDisconnects() {
+        val device = ChangingDeviceFeed(deviceSnapshot())
+        val source = CompositeTelemetrySource(
+            device,
+            FakeFeed(FlightTelemetrySnapshot()).feed(),
+            FakeFeed(streamSnapshot()).feed(),
+            FakeFeed(missionSnapshot()).feed(),
+            FakeFeed(cameraFramesUnavailable()).feed(),
+        )
+
+        assertEquals(false, source.snapshot().flightControllerHasConnectedOnce)
+        device.set(deviceSnapshot().copy(flightController = LinkState.CONNECTED))
+        assertEquals(true, source.snapshot().flightControllerHasConnectedOnce)
+        device.set(deviceSnapshot().copy(flightController = LinkState.DISCONNECTED))
+        assertEquals(true, source.snapshot().flightControllerHasConnectedOnce)
+    }
+
     @Test fun subscriptionFailureReleasesPreviouslyRegisteredFeedsInReverseOrder() {
         val events = mutableListOf<String>()
         val device = NamedFeed("device", deviceSnapshot(), events)
@@ -156,6 +173,16 @@ class CompositeTelemetrySourceTest {
             override fun onChanged(listener: () -> Unit) = CloseableRegistration { this@FakeFeed.listener = null }
                 .also { this@FakeFeed.listener = listener }
         }
+    }
+
+    private class ChangingDeviceFeed(private var current: DeviceSnapshot) : SnapshotFeed<DeviceSnapshot> {
+        fun set(value: DeviceSnapshot) {
+            current = value
+        }
+
+        override fun snapshot() = current
+
+        override fun onChanged(listener: () -> Unit) = CloseableRegistration {}
     }
 
     private class NamedFeed<T>(

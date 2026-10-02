@@ -64,6 +64,7 @@ class TelemetryFrameMapperTest {
                 latitude = 31.2,
                 longitude = 121.5,
                 liveStreaming = true,
+                flightControllerHasConnectedOnce = true,
                 liveStreamNotice = "Streaming",
                 liveStreamRuntimeErrorCode = "COMMON_SYSTEM_BUSY",
                 liveStreamRuntimeErrorDescription = "The live stream manager is busy",
@@ -110,6 +111,7 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("31.2"), frame.payload["latitude"])
         assertEquals(JsonNumber("121.5"), frame.payload["longitude"])
         assertEquals(JsonBoolean(true), frame.payload["liveStreaming"])
+        assertEquals(JsonBoolean(true), frame.payload["flightControllerHasConnectedOnce"])
         assertEquals(JsonString("Streaming"), frame.payload["liveStreamNotice"])
         assertEquals(JsonString("COMMON_SYSTEM_BUSY"), frame.payload["liveStreamRuntimeErrorCode"])
         assertEquals(JsonString("The live stream manager is busy"), frame.payload["liveStreamRuntimeErrorDescription"])

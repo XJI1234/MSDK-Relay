@@ -84,6 +84,7 @@ data class TelemetryInputs(
         height = null,
         frameRate = null,
     ),
+    val flightControllerHasConnectedOnce: Boolean = false,
 )
 
 data class TelemetrySnapshot(
@@ -154,6 +155,7 @@ data class TelemetrySnapshot(
     val landingConfirmationNeeded: Boolean? = null,
     val takeoffFailureError: String? = null,
     val motorStartFailureError: String? = null,
+    val flightControllerHasConnectedOnce: Boolean = false,
 ) {
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
@@ -210,6 +212,7 @@ object SnapshotAssembler {
         landingConfirmationNeeded = flightControllerFacts.landingConfirmationNeeded,
         takeoffFailureError = flightControllerFacts.takeoffFailureError,
         motorStartFailureError = flightControllerFacts.motorStartFailureError,
+        flightControllerHasConnectedOnce = inputs.flightControllerHasConnectedOnce,
         liveStreaming = inputs.stream.djiStreaming,
         liveStreamNotice = inputs.stream.notice,
         liveStreamRuntimeErrorCode = inputs.stream.runtimeFailure?.errorCode,
@@ -266,4 +269,13 @@ object SnapshotAssembler {
         camera = device.camera,
         capabilities = CapabilityCalculator.calculate(DeviceCapabilityReader.read(device)),
     )
+}
+
+class FlightControllerOnceLatch {
+    private val seen = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun observe(state: LinkState): Boolean {
+        if (state == LinkState.CONNECTED) seen.set(true)
+        return seen.get()
+    }
 }
