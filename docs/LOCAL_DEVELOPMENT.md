@@ -1,0 +1,22 @@
+# 本次本地启动准备记录
+
+日期：2026-10-12。开发分支：`dev/local-startup-20261012`，基于原始 main 提交 `5daf918`。
+
+本次未修改 Android 业务源码。已在被 Git 忽略的 `local.properties` 中配置本机 Android SDK 路径，使用 JDK 17、Android SDK 35 与已有用户级 `DJI_API_KEY` 配置编译。该 Key 是否与 `com.skycommand.relay` 匹配仍需真机注册验证。
+
+本机 JDK 遇到 Unix 域连接临时路径错误，构建时使用以下会话配置解决：
+
+```powershell
+# 先将 JAVA_HOME 指向本机 JDK 17，并将其 bin 加入 Path。
+New-Item -ItemType Directory -Force .gradle | Out-Null
+$env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=$((Get-Location).Path)\.gradle"
+.\gradlew.bat :app:assembleDebug --no-daemon --console=plain
+```
+
+结果：Debug APK 构建成功；已通过无线 ADB 安装到小米 10 / Android 13 / arm64-v8a，并打开主界面。尚未完成 SDK 注册、电脑会话、遥控器及飞机连接验证。
+
+手机通过无线 ADB 调试，USB 留给遥控器。Relay 界面填写 Sky Command 显示的 `ws://<电脑局域网IP>:8080/relay`，手动点击“保存并启动”并确认权限。本机小米系统禁止 ADB 模拟输入，故界面操作需在手机完成。
+
+后续源码修改在开发分支提交；分享时推送该分支并发起 Pull Request，main 保留原始提交。`local.properties`、用户级 Gradle 密钥配置、APK 和构建缓存均不提交。本记录用于说明这些本地配置及验证结果。
+
+提交标题采用 `fix: 中文摘要`、`feat: 中文摘要`、`docs: 中文摘要` 等格式；正文以中文写清问题或目的、具体改动、验证结果与未验证范围。每个提交围绕一个明确目的；已推送的提交不擅自改写。
