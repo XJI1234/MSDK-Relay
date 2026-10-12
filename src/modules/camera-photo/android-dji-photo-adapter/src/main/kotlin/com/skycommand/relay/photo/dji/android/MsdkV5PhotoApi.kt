@@ -1,5 +1,6 @@
 package com.skycommand.relay.photo.dji.android
 
+import android.util.Log
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
 import dji.sdk.keyvalue.key.CameraKey
@@ -355,17 +356,23 @@ internal class MsdkV5PhotoApi(
 
     private fun <T> setPhotoQualityKey(key: DJIKey<T>, value: T, done: () -> Unit) {
         if (aborted.get()) return
+        Log.i("SkyPhoto", "photo-setting request key=$key value=$value")
         val continued = AtomicBoolean(false)
         val proceed = {
             if (!aborted.get() && continued.compareAndSet(false, true)) done()
         }
-        val task = modeWatch.schedule({ proceed() }, 2, TimeUnit.SECONDS)
+        val task = modeWatch.schedule({
+            Log.w("SkyPhoto", "photo-setting timeout key=$key")
+            proceed()
+        }, 2, TimeUnit.SECONDS)
         manager.setValue(key, value, object : CommonCallbacks.CompletionCallback {
             override fun onSuccess() {
+                Log.i("SkyPhoto", "photo-setting accepted key=$key")
                 task.cancel(false)
                 proceed()
             }
             override fun onFailure(error: IDJIError) {
+                Log.w("SkyPhoto", "photo-setting rejected key=$key ${failureOf(error)}")
                 task.cancel(false)
                 proceed()
             }
@@ -382,26 +389,40 @@ internal class MsdkV5PhotoApi(
             stopGeneratedListen()
             return
         }
-        manager.getValue(storageKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraStorageInfos> {
-            override fun onSuccess(value: CameraStorageInfos) {
-                val storage = storageSummary(value)
-                if (unusableStorage(value)) {
-                    failCapture(
-                        completion,
-                        PhotoDjiFailure.fromDjiError(
-                            "STORAGE_NOT_READY",
-                            "cameraMode=${observedMode.get()}; lens=DEFAULT_CAMERA; $storage",
-                        ),
-                    )
-                    return
-                }
-                performShoot(storage, completion)
-            }
-            override fun onFailure(error: IDJIError) = performShoot(
-                "storage=${errorText { error.errorCode() }}",
-                completion,
-            )
-        })
+        CaptureStorageCheck(
+            read = { done ->
+                manager.getValue(storageKey, object : CommonCallbacks.CompletionCallbackWithParam<CameraStorageInfos> {
+                    override fun onSuccess(value: CameraStorageInfos) {
+                        val snapshot = CaptureStorageSnapshot(
+                            value.currentStorageType?.toString(),
+                            value.cameraStorageInfoList.orEmpty().map { info ->
+                                CaptureStorageEntry(info.storageType?.toString(), info.storageState?.toString(), info.availablePhotoCount)
+                            },
+                            storageSummary(value),
+                        )
+                        Log.i("SkyPhoto", "storage-check ${snapshot.summary}")
+                        done(snapshot)
+                    }
+                    override fun onFailure(error: IDJIError) {
+                        Log.w("SkyPhoto", "storage-read-failed ${failureOf(error)}")
+                        done(null)
+                    }
+                })
+            },
+            schedule = { delay, task ->
+                val scheduled = modeWatch.schedule({ task() }, delay, TimeUnit.MILLISECONDS)
+                val cancel: () -> Unit = { scheduled.cancel(false); Unit }
+                cancel
+            },
+            active = { !aborted.get() && captureCompletion.get() === completion },
+            ready = { snapshot -> performShoot(snapshot.summary, completion) },
+            failed = { snapshot ->
+                failCapture(completion, PhotoDjiFailure.fromDjiError(
+                    if (snapshot == null) "STORAGE_STATUS_UNAVAILABLE" else "STORAGE_NOT_READY",
+                    "source=relay-preflight; cameraMode=${observedMode.get()}; lens=DEFAULT_CAMERA; ${snapshot?.summary ?: "storage=unavailable"}",
+                ))
+            },
+        ).start()
     }
 
     private fun performShoot(
@@ -412,6 +433,11 @@ internal class MsdkV5PhotoApi(
             stopGeneratedListen()
             return
         }
+        val camera = runCatching {
+            "size=${manager.getValue(mini4ProPhotoSizeKey())};format=${manager.getValue(KeyTools.createKey(CameraKey.KeyPhotoFileFormat, cameraIndex))};" +
+                "shooting=${manager.getValue(KeyTools.createKey(CameraKey.KeyIsShootingPhoto, cameraIndex))};storing=${manager.getValue(KeyTools.createKey(CameraKey.KeyCameraStoringFile, cameraIndex))};playingBack=${manager.getValue(playbackKey)}"
+        }.getOrDefault("camera=unavailable")
+        Log.i("SkyPhoto", "shutter-request $camera; $storage")
         manager.performAction(
             KeyTools.createKey(CameraKey.KeyStartShootPhoto, cameraIndex),
             object : CommonCallbacks.CompletionCallbackWithParam<EmptyMsg> {
@@ -428,25 +454,11 @@ internal class MsdkV5PhotoApi(
                 override fun onFailure(error: IDJIError) {
                     failCapture(
                         completion,
-                        failureOf(error, "cameraMode=${observedMode.get()}; lens=DEFAULT_CAMERA; $storage"),
+                        failureOf(error, "cameraMode=${observedMode.get()}; lens=DEFAULT_CAMERA; $camera; $storage"),
                     )
                 }
             },
         )
-    }
-
-    private fun unusableStorage(infos: CameraStorageInfos): Boolean {
-        val items = infos.cameraStorageInfoList.orEmpty()
-        return items.none { info ->
-            val state = info.storageState?.toString().orEmpty()
-            val photos = info.availablePhotoCount ?: 0
-            photos > 0 &&
-                !state.contains("NOT_INSERTED") &&
-                !state.contains("FULL") &&
-                !state.contains("INVALID") &&
-                !state.contains("FORMAT") &&
-                !state.contains("READ_ONLY")
-        }
     }
 
     private fun storageSummary(infos: CameraStorageInfos): String {
