@@ -20,3 +20,9 @@ $env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=$((Get-Location).Path)\.gr
 后续源码修改在开发分支提交；分享时推送该分支并发起 Pull Request，main 保留原始提交。`local.properties`、用户级 Gradle 密钥配置、APK 和构建缓存均不提交。本记录用于说明这些本地配置及验证结果。
 
 提交标题采用 `fix: 中文摘要`、`feat: 中文摘要`、`docs: 中文摘要` 等格式；正文以中文写清问题或目的、具体改动、验证结果与未验证范围。每个提交围绕一个明确目的；已推送的提交不擅自改写。
+
+## GitHub 交付范围
+
+源码、必要资源、Gradle 脚本/wrapper、公共 `gradle.properties`、测试源码和脱敏文档随开发分支提交。用户级 DJI Key、`local.properties`、签名文件、真实 `.env`、缓存、日志及 APK/AAB 不提交；复制到 build 目录外的 APK/AAB 也已加入忽略规则。安装包如需分享，另行检查后作为产物交付，APK 可能包含构建时注入的 DJI Key。
+
+本机工作区父目录的 START-HERE.md/AGENTS.md 不会随本仓库 push。完整交付流程见配套 Sky-Command 分支的 `docs/auto-discovery/GITHUB-DELIVERY.md`，本机并排克隆时可使用[交付说明链接](../../Sky-Command/docs/auto-discovery/GITHUB-DELIVERY.md)。本仓库当前仅交付文档与排除规则，自动发现未实现。

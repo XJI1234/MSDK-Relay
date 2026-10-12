@@ -10,6 +10,7 @@
 - [最小方案草案与待确定边界](../../../Sky-Command/docs/auto-discovery/DESIGN.md)
 - [进度、证据与待办](../../../Sky-Command/docs/auto-discovery/PROGRESS.md)
 - [校园 Wi-Fi 广播测试](../../../Sky-Command/docs/auto-discovery/BROADCAST-TEST.md)
+- [GitHub 交付与排除范围](../../../Sky-Command/docs/auto-discovery/GITHUB-DELIVERY.md)
 
 以上跨仓库链接适用于两个仓库并排克隆的本机工作区；在 GitHub 单仓库页面需要到 Sky-Command 对应开发分支查看同名文件。分享两端分支时，应在 PR 描述中填写实际的配套分支/PR 链接。
 
