@@ -22,11 +22,12 @@ internal class SessionFixture private constructor(
 ) {
     companion object {
         fun create(
-            endpoint: String = "ws://192.168.1.10:8765/relay",
+            endpoint: String? = "ws://192.168.1.10:8765/relay",
             deviceId: String = "android-device",
             handshakeTimeoutMillis: Long = 10_000,
             reconnectInitialDelayMillis: Long = 1_000,
             reconnectMaxDelayMillis: Long = 30_000,
+            pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
         ): SessionFixture {
             val order = mutableListOf<String>()
             val connector = RecordingConnector(order)
@@ -43,6 +44,7 @@ internal class SessionFixture private constructor(
                 handshakeTimeoutMillis = handshakeTimeoutMillis,
                 reconnectInitialDelayMillis = reconnectInitialDelayMillis,
                 reconnectMaxDelayMillis = reconnectMaxDelayMillis,
+                pairingAdmission = pairingAdmission,
                 connector = connector,
                 outbound = outbound,
                 consumer = consumer,
@@ -67,7 +69,7 @@ internal class SessionFixture private constructor(
         }
 
         fun createResult(
-            endpoint: String = "ws://192.168.1.10:8765/relay",
+            endpoint: String? = "ws://192.168.1.10:8765/relay",
             deviceId: String = "android-device",
             handshakeTimeoutMillis: Long = 10_000,
             reconnectInitialDelayMillis: Long = 1_000,
@@ -80,6 +82,7 @@ internal class SessionFixture private constructor(
             scheduler: ManualScheduler = ManualScheduler(),
             notifier: RecordingStateNotifier = RecordingStateNotifier(mutableListOf()),
             diagnostics: RecordingDiagnosticSink = RecordingDiagnosticSink(),
+            pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
         ): SessionCreationResult = ConnectionSession.create(
             SessionConfig(
                 endpoint = endpoint,
@@ -97,6 +100,7 @@ internal class SessionFixture private constructor(
                 scheduler = scheduler,
                 stateNotifier = notifier,
                 diagnosticSink = diagnostics,
+                pairingAdmission = pairingAdmission,
             )
         )
     }

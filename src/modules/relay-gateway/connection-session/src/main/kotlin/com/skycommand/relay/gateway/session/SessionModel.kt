@@ -42,6 +42,8 @@ data class SessionSnapshot(
 
 enum class SessionEndKind {
     EXPLICIT_STOP,
+    ENDPOINT_CHANGED,
+    CONNECTION_PAUSED,
     NOT_CONNECTED,
     HANDSHAKE_TIMEOUT,
     INVALID_FRAME,
@@ -74,6 +76,8 @@ data class SessionStateEvent(
     val previousState: SessionState,
     val snapshot: SessionSnapshot,
     val endReason: SessionEndReason?,
+    val connectionSelection: ConnectionSelection? = null,
+    val endedGeneration: SessionGeneration? = null,
 )
 
 sealed interface StartResult {
@@ -89,7 +93,7 @@ sealed interface StopResult {
 }
 
 data class SessionConfig(
-    val endpoint: String,
+    val endpoint: String?,
     val deviceId: String,
     val handshakeTimeoutMillis: Long = 10_000,
     val reconnectInitialDelayMillis: Long = 1_000,

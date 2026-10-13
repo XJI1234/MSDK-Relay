@@ -37,3 +37,15 @@ $env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=$((Get-Location).Path)\.gr
 ```
 
 本机 34 项测试通过，运行依赖只有 Kotlin/JVM 与 Jackson；正式电脑编码器与手机样例比对一致。首次沙箱内 Gradle 因用户缓存锁拒绝访问失败，按权限机制在沙箱外使用已有缓存离线验证成功，未重新安装依赖。报告位于模块 build/reports/tests/test，JAR 与报告均被忽略，不提交。实际 Android 运行未接入核心，本轮未构建/安装新 APK，日常启动仍按手动地址步骤；后台/两设备/15 秒目标未验收。
+
+## 可选连接选择 API 验证（2026-10-13）
+
+gateway/session 允许无初始地址启动等待，以稳定选择对象暂停或替换电脑连接；合法 paired 在进入 ACTIVE 前经过本地同步门禁，结束事件标明旧代次。只切换会话，保留命令注册与业务对象；发现运行容器尚未接线，日常手机操作仍使用上述手动流程。
+
+配置同一 JDK 17 与 Java 临时目录后执行：
+
+```powershell
+./gradlew.bat :relay-gateway:connection-session:test :relay-gateway:test :relay-gateway:transport-adapter:test :relay-gateway:command-dispatcher:test :relay-gateway:mission-transfer:test :relay-gateway:outbound-publisher:test :relay-discovery:test :relay-settings:endpoint-settings:test :app:compileDebugKotlin --offline --no-daemon --console=plain
+```
+
+最终构建成功：session 69、gateway 10、transport 14、command 13、mission 14、outbound 10、discovery 34、endpoint-settings 3，共 167 项报告，零失败/错误/跳过；本轮重跑前 6 模块的 130 项，后 2 模块 37 项 UP-TO-DATE。新增 21 项连接选择和 4 项 gateway 测试，App Kotlin 编译通过；没有重新安装依赖或构建/安装 APK。既有 SDK XML 版本及 Gradle 弃用警告仍存在，未作为测试失败。报告、缓存和 JAR 保持忽略；正式 UDP、后台/锁屏、多手机及 15 秒目标仍待验收。

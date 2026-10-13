@@ -264,6 +264,8 @@ class MobileRelayGraph private constructor(
                 SessionEndKind.HANDSHAKE_TIMEOUT -> "Phone did not receive paired within handshake timeout"
                 SessionEndKind.NOT_CONNECTED -> "Phone to desktop transport closed"
                 SessionEndKind.EXPLICIT_STOP -> "Phone stopped the desktop session"
+                SessionEndKind.ENDPOINT_CHANGED -> "Phone changed the desktop connection selection"
+                SessionEndKind.CONNECTION_PAUSED -> "Phone paused the desktop connection selection"
                 SessionEndKind.INVALID_FRAME -> "Phone discarded an invalid protocol frame"
                 SessionEndKind.UNSUPPORTED_FRAME -> "Phone received an unsupported protocol frame"
                 SessionEndKind.PROTOCOL_VERSION_UNSUPPORTED -> "Phone and desktop protocol versions do not match"

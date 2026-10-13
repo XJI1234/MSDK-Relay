@@ -1,6 +1,6 @@
 # 手机自动发现与连接任务索引
 
-更新日期：2026-10-13。当前状态：电脑公告器与手机纯 JVM 解析/候选核心已实现并通过自动化测试；正式 Android 监听与自动连接接线尚未完成。
+更新日期：2026-10-13。当前状态：电脑公告器、手机纯 JVM 解析/候选核心和 gateway/session 连接选择 API 已实现并通过自动化测试；正式 Android 监听与自动连接接线尚未完成。
 
 任务采用第一阶段最小方案：一台电脑、多台手机，双方无线连接当前校园 Wi-Fi；授权后打开 App 自动发现并连接，电脑离线时低频等待、上线后自动重连；计划移除手机“停止中继”按钮。不扩展航线规划，不改变既有飞行、航线和退出处理。
 
@@ -18,7 +18,9 @@
 
 以上跨仓库链接适用于两个仓库并排克隆的本机工作区；在 GitHub 单仓库页面需要到 Sky-Command 对应开发分支查看同名文件。分享两端分支时，应在 PR 描述中填写实际的配套分支/PR 链接。
 
-手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。纯 JVM 核心已完成，下一步扩展 session 与生命周期契约和接线，详见 IMPLEMENTATION.md。当前前台通知服务的 START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。候选核心和 session API 已完成，下一步定义运行容器契约、发现桥接与 Android 生命周期接线，详见 IMPLEMENTATION.md。当前前台通知服务的 START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+
+2026-10-13 会话扩展验证：新增 21 项连接选择测试和 4 项 gateway 测试，支持 null endpoint 等待、同选择保留退避、暂停/替换时旧代次清理、入站队列优先级、ACTIVE 前握手门禁及同选择重连后的迟到结束通知。8 模块 JUnit 报告共 167 项，零失败/错误/跳过；其中本轮重跑 gateway/session 与相关回归 130 项，发现/地址校验的 37 项为已有通过报告（Gradle UP-TO-DATE）。`:app:compileDebugKotlin` 通过。契约见 [CONNECTION-SELECTION.md](../../src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)；未构建/安装新 APK，尚无正式手机自动连接证据。
 
 2026-10-13 核心验证：`:relay-discovery:test` 的 34 项 JVM 测试全部通过（12 项解析、22 项协调），包括严格报文校验、3/8 秒边界、冲突/容量恢复、ACTIVE 保持、旧网络/选择令牌以及并发握手/冲突顺序；另有 2000 个随机报文、3000 步随机事件和 100 轮并发对照。电脑真实编码器输出与手机 JSON 解析样例逐字一致。运行依赖仅 Kotlin/JVM 与 Jackson，无 Android/DJI，测试报告和 JAR 留在忽略的 build/。没有增加正式监听，也未安装新版 App。
 

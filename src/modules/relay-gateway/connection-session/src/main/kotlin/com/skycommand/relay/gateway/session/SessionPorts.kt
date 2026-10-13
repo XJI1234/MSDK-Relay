@@ -80,6 +80,11 @@ fun interface ActiveFrameConsumer {
     fun accept(activeSession: ActiveSession, frame: RelayFrame)
 }
 
+/** Local selection gate only. It must not block or reenter session controls. */
+fun interface SessionPairingAdmission {
+    fun admit(selection: ConnectionSelection, generation: SessionGeneration): Boolean
+}
+
 fun interface CommandSessionCleanup {
     fun cancel(generation: SessionGeneration, reason: SessionEndReason)
 }
@@ -143,4 +148,5 @@ data class SessionDependencies(
     val scheduler: MonotonicScheduler,
     val stateNotifier: OrderedStateNotifier,
     val diagnosticSink: SessionDiagnosticSink = SessionDiagnosticSink { },
+    val pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
 )

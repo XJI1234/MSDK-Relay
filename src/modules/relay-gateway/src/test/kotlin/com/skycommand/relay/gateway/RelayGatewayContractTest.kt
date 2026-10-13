@@ -13,6 +13,10 @@ import com.skycommand.relay.gateway.mission.StagedMission
 import com.skycommand.relay.gateway.outbound.PublishRejectionKind
 import com.skycommand.relay.gateway.outbound.PublishResult
 import com.skycommand.relay.gateway.session.MonotonicScheduler
+import com.skycommand.relay.gateway.session.ConnectionSelection
+import com.skycommand.relay.gateway.session.ConnectionSelectionResult
+import com.skycommand.relay.gateway.session.SelectionResult
+import com.skycommand.relay.gateway.session.SessionPairingAdmission
 import com.skycommand.relay.gateway.session.ScheduledCancellation
 import com.skycommand.relay.gateway.session.SessionGeneration
 import com.skycommand.relay.gateway.session.SessionState
@@ -198,14 +202,89 @@ class RelayGatewayContractTest {
         assertEquals(frame, fixture.sentFrames().last())
     }
 
-    private class GatewayFixture {
+    @Test
+    fun waitsWithoutEndpointAndResumesOnlyAfterSelection() {
+        val fixture = GatewayFixture(endpoint = null)
+        fixture.gateway.start()
+        assertEquals(SessionState.STOPPED, fixture.gateway.connectionState())
+        assertEquals(0, fixture.connector.attempts.size)
+        val selected = assertIs<ConnectionSelectionResult.Valid>(ConnectionSelection.create("ws://new/relay")).selection
+        assertEquals(SelectionResult.Changed, fixture.gateway.selectConnection(selected))
+        assertEquals(SessionState.CONNECTING, fixture.gateway.connectionState())
+        assertEquals(fixture.connector.current.generation, fixture.gateway.connectionSnapshot().generation)
+        assertEquals(SelectionResult.Unchanged, fixture.gateway.selectConnection(selected))
+        assertEquals(1, fixture.connector.attempts.size)
+        fixture.connector.current.open(); fixture.connector.current.receive(PairedFrame("new", null))
+        fixture.gateway.selectConnection(null)
+        assertEquals(SessionState.STOPPED, fixture.gateway.connectionState())
+        assertEquals(PublishResult.Rejected(PublishRejectionKind.STALE_SESSION), fixture.gateway.publishCommandResult(CommandResultFrame("late", true, "safe")))
+        fixture.gateway.stop()
+    }
+
+    @Test
+    fun switchingConnectionKeepsRegisteredCommandsAndDiscardsOldCompletionAndFrames() {
+        val fixture = GatewayFixture()
+        val completions = mutableListOf<CommandCompletion>()
+        fixture.gateway.registerCommandHandler("telemetry.read", CommandHandler { _, completion -> completions += completion })
+        fixture.activate(); val old = fixture.connector.current
+        old.receive(CommandFrame("same-id", "telemetry.read", JsonObject(emptyMap())))
+        val selected = assertIs<ConnectionSelectionResult.Valid>(ConnectionSelection.create("ws://new/relay")).selection
+        fixture.gateway.selectConnection(selected)
+        fixture.connector.current.open(); fixture.connector.current.receive(PairedFrame("new", null))
+        val before = fixture.sentFrames()
+        completions.first().succeed("old completion")
+        old.receive(CommandFrame("old-frame", "telemetry.read", JsonObject(emptyMap())))
+        assertEquals(before, fixture.sentFrames()); assertEquals(1, completions.size)
+        fixture.connector.current.receive(CommandFrame("same-id", "telemetry.read", JsonObject(emptyMap())))
+        completions.last().succeed("new completion")
+        assertEquals(2, completions.size)
+        assertEquals(CommandResultFrame("same-id", true, "new completion"), fixture.sentFrames().last())
+        assertEquals(2, fixture.connector.attempts.size)
+        fixture.gateway.stop()
+    }
+
+    @Test
+    fun revokingConnectionAbortsPartialMissionWithoutReplayingItsOldChunks() {
+        val fixture = GatewayFixture()
+        fixture.activate(); val old = fixture.connector.current
+        val content = "mission".encodeToByteArray()
+        val checksum = MessageDigest.getInstance("SHA-256").digest(content).toHex()
+        old.receive(MissionBeginFrame("old-mission", "route.kmz", content.size.toLong(), checksum))
+        fixture.gateway.selectConnection(null)
+        assertEquals(1, fixture.missionSink.abortCount)
+        val selected = assertIs<ConnectionSelectionResult.Valid>(ConnectionSelection.create("ws://new/relay")).selection
+        fixture.gateway.selectConnection(selected)
+        fixture.connector.current.open(); fixture.connector.current.receive(PairedFrame("new", null))
+        old.receive(MissionChunkFrame("old-mission", content)); old.receive(MissionCompleteFrame("old-mission"))
+        assertTrue(fixture.missionSink.bytes.isEmpty())
+        assertTrue(fixture.sentFrames().none { it is MissionResultFrame })
+        fixture.gateway.stop()
+    }
+
+    @Test
+    fun forwardsPairingAdmissionAndNeverDispatchesAnUnadmittedCommand() {
+        val fixture = GatewayFixture(pairingAdmission = SessionPairingAdmission { _, _ -> false })
+        var dispatched = false
+        fixture.gateway.registerCommandHandler("telemetry.read", CommandHandler { _, _ -> dispatched = true })
+        fixture.activate()
+        fixture.connector.current.receive(CommandFrame("rejected", "telemetry.read", JsonObject(emptyMap())))
+        assertEquals(false, dispatched)
+        assertEquals(SessionState.STOPPED, fixture.gateway.connectionState())
+        assertEquals(PublishResult.Rejected(PublishRejectionKind.STALE_SESSION), fixture.gateway.publishCommandResult(CommandResultFrame("rejected", true, "safe")))
+    }
+
+    private class GatewayFixture(
+        endpoint: String? = "ws://127.0.0.1:8765/relay",
+        pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
+    ) {
         val connector = RecordingConnector()
         val missionSink = RecordingMissionSink()
         val gateway = RelayGateway.create(
             RelayGatewayConfig(
-                endpoint = "ws://127.0.0.1:8765/relay",
+                endpoint = endpoint,
                 deviceId = "android-device",
                 missionSink = missionSink,
+                pairingAdmission = pairingAdmission,
             ),
             connector,
             MonotonicScheduler { _, _ -> ScheduledCancellation { } },
@@ -225,6 +304,7 @@ class RelayGatewayContractTest {
 
     private class RecordingConnector : TransportConnector {
         lateinit var current: RecordingConnection
+        val attempts = mutableListOf<RecordingConnection>()
 
         override fun open(
             endpoint: String,
@@ -232,6 +312,7 @@ class RelayGatewayContractTest {
             listener: TransportListener,
         ): TransportOpenResult {
             current = RecordingConnection(generation, listener)
+            attempts += current
             return TransportOpenResult.OpenAccepted(current)
         }
     }
@@ -268,6 +349,7 @@ class RelayGatewayContractTest {
 
     private class RecordingMissionSink : MissionSink {
         var metadata: MissionMetadata? = null
+        var abortCount = 0
         val bytes = mutableListOf<Byte>()
 
         override fun begin(metadata: MissionMetadata): MissionSinkResult {
@@ -293,7 +375,7 @@ class RelayGatewayContractTest {
             )
         }
 
-        override fun abort(reason: MissionAbortReason) = Unit
+        override fun abort(reason: MissionAbortReason) { abortCount++ }
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

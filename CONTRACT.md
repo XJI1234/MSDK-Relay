@@ -13,6 +13,7 @@
 - [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md)
 - [`src/modules/relay-gateway/protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)
 - [`src/modules/relay-discovery/CONTRACT.md`](src/modules/relay-discovery/CONTRACT.md)：局域网公告解析与候选选择核心；只输出连接意向，尚未接入 Android/gateway，不改变现有 WebSocket v1。
+- [`src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md`](src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)：可选初始地址、暂停重试与串行替换的 API 扩展；本地选择身份和结束原因不进入 WebSocket v1 帧，Android 运行容器尚未接线。
 - [`docs/2026-08-09-mobile-relay-design.md`](docs/2026-08-09-mobile-relay-design.md)
 
 ---

@@ -13,6 +13,10 @@ import com.skycommand.relay.gateway.outbound.PublishResult
 import com.skycommand.relay.gateway.session.ActiveFrameConsumer
 import com.skycommand.relay.gateway.session.ConfigurationRejected
 import com.skycommand.relay.gateway.session.ConnectionSession
+import com.skycommand.relay.gateway.session.ConnectionSelection
+import com.skycommand.relay.gateway.session.SelectionResult
+import com.skycommand.relay.gateway.session.SessionSnapshot
+import com.skycommand.relay.gateway.session.SessionPairingAdmission
 import com.skycommand.relay.gateway.session.ExecutorOrderedStateNotifier
 import com.skycommand.relay.gateway.session.MonotonicScheduler
 import com.skycommand.relay.gateway.session.Registration
@@ -44,13 +48,14 @@ import java.util.concurrent.ForkJoinPool
 
 /** Immutable dependencies and connection policy for one relay gateway instance. */
 data class RelayGatewayConfig(
-    val endpoint: String,
+    val endpoint: String?,
     val deviceId: String,
     val missionSink: MissionSink,
     val handshakeTimeoutMillis: Long = 10_000,
     val reconnectInitialDelayMillis: Long = 1_000,
     val reconnectMaxDelayMillis: Long = 30_000,
     val diagnosticSink: SessionDiagnosticSink = SessionDiagnosticSink { },
+    val pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
 )
 
 /**
@@ -67,6 +72,10 @@ class RelayGateway private constructor(
     fun start(): StartResult = session.start()
 
     fun stop(): StopResult = session.stop()
+
+    fun selectConnection(selection: ConnectionSelection?): SelectionResult = session.selectConnection(selection)
+
+    fun connectionSnapshot(): SessionSnapshot = session.snapshot()
 
     fun connectionState(): SessionState = session.snapshot().state
 
@@ -150,6 +159,7 @@ class RelayGateway private constructor(
                     scheduler = clock,
                     stateNotifier = ExecutorOrderedStateNotifier(ForkJoinPool.commonPool(), config.diagnosticSink),
                     diagnosticSink = config.diagnosticSink,
+                    pairingAdmission = config.pairingAdmission,
                 ),
             )
             return when (creation) {
