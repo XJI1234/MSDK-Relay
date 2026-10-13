@@ -1,15 +1,17 @@
 # 正式 Relay 自动发现接线检查表
 
-更新日期：2026-10-13。状态：接线设计已核对现有源码，以下正式手机能力尚未实现。共同协议以 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md 为准；两个仓库并排克隆时可访问[协议](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)和[设计](../../../Sky-Command/docs/auto-discovery/DESIGN.md)。GitHub 单仓库阅读需查看配套电脑开发分支。
+更新日期：2026-10-13。状态：纯 JVM 公告解析/候选核心已完成（34 项测试通过）；正式 Android 监听、session 与生命周期接线待实施。共同协议以 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md 为准；两个仓库并排克隆时可访问[协议](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)和[设计](../../../Sky-Command/docs/auto-discovery/DESIGN.md)。GitHub 单仓库阅读需查看配套电脑开发分支。
 
 ## 下一步实施顺序
 
-1. 增加纯 Kotlin/JVM 公告解析与候选协调模块，按共享 JSON 示例验证 UDP 39082、512 字节上限、字段类型、3 秒观察/8 秒过期、多电脑冲突和缓存容量保护；全部使用单调时钟。探针 39081 不替换正式监听。
+1. **已完成**纯 Kotlin/JVM relay-discovery，按共享 JSON 示例验证 UDP 39082、512 字节上限、字段类型、3 秒观察/8 秒过期、多电脑冲突与容量保护；使用单调时钟，网络/选择令牌隔离迟到回调。接口见模块 CONTRACT，实际报告见本目录 README；探针 39081 未替换正式监听。
 2. 更新 relay-gateway 与 connection-session CONTRACT，为未选 endpoint、暂停旧地址重试、串行替换 endpoint 定义入口/结果和清理行为；补充旧代次回调、同时断线/换地址、重复公告不重置退避的测试。现有 config.endpoint 为不可变必填字符串，不能宣称已支持热更新。
 3. 更新 app-runtime、foreground-service 与 settings 契约，令首次授权和前台服务启动不依赖电脑地址；无候选时容器运行、gateway STOPPED。UDP 监听/网络回调归唯一前台运行容器，Activity 只显示状态并重新绑定权限适配器。
 4. 实现 Android Wi-Fi socket/网络代次、容器与 MobileRelayGraph 接线。切换电脑只清理并替换 gateway 的连接配置，不关闭整个 graph、不重建 DJI/图传/任务对象，不恢复旧命令或任务传输。
 5. 调整主界面自动授权后启动、搜索/冲突/连接状态与隐藏手动入口，移除主界面停止按钮；核对同事的对频迁移分支后再改相关布局，避免重复实现。
 6. 构建并安装正式 Relay，完成手机先开/电脑先开、后台/锁屏/划掉卡片、电脑退出再上线/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标验收。
+
+下一步从第 2 项开始。运行容器须将发现快照与 gateway 事件串行协调：相同选择令牌不重启连接；CONFLICT/WAITING/OBSERVING 使未 ACTIVE 会话暂停；paired 使用尝试开始时捕获的令牌调用 activate，拒绝时立即清理旧连接。正式接收适配器提供接收子网和网络令牌，使用 513 字节缓冲检测超长报文；复用 socket 缓冲时仅传入本次实际长度的拷贝。每秒 snapshot 驱动过期，不能把本核心误当作自带监听线程的模块。
 
 ## 已核对的生命周期风险
 

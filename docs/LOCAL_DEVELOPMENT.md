@@ -25,4 +25,15 @@ $env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=$((Get-Location).Path)\.gr
 
 源码、必要资源、Gradle 脚本/wrapper、公共 `gradle.properties`、测试源码和脱敏文档随开发分支提交。用户级 DJI Key、`local.properties`、签名文件、真实 `.env`、缓存、日志及 APK/AAB 不提交；复制到 build 目录外的 APK/AAB 也已加入忽略规则。安装包如需分享，另行检查后作为产物交付，APK 可能包含构建时注入的 DJI Key。
 
-本机工作区父目录的 START-HERE.md/AGENTS.md 不会随本仓库 push。完整交付流程见配套 Sky-Command 分支的 `docs/auto-discovery/GITHUB-DELIVERY.md`，本机并排克隆时可使用[交付说明链接](../../Sky-Command/docs/auto-discovery/GITHUB-DELIVERY.md)。本仓库当前仅交付文档与排除规则，自动发现未实现。
+本机工作区父目录的 START-HERE.md/AGENTS.md 不会随本仓库 push。完整交付流程见配套 Sky-Command 分支的 `docs/auto-discovery/GITHUB-DELIVERY.md`，本机并排克隆时可使用[交付说明链接](../../Sky-Command/docs/auto-discovery/GITHUB-DELIVERY.md)。本仓库现已包含独立网络探针与手机发现核心；正式自动连接尚未接线。
+
+## 手机发现核心离线验证（2026-10-13）
+
+新增纯 JVM `:relay-discovery`，不依赖 Android/DJI，不自行监听 UDP 或创建 WebSocket。配置 JDK 17 与上文 Java 临时目录后执行：
+
+```powershell
+./gradlew.bat :relay-discovery:test --offline --no-daemon --console=plain
+./gradlew.bat :relay-discovery:dependencies --configuration runtimeClasspath --offline --no-daemon --console=plain
+```
+
+本机 34 项测试通过，运行依赖只有 Kotlin/JVM 与 Jackson；正式电脑编码器与手机样例比对一致。首次沙箱内 Gradle 因用户缓存锁拒绝访问失败，按权限机制在沙箱外使用已有缓存离线验证成功，未重新安装依赖。报告位于模块 build/reports/tests/test，JAR 与报告均被忽略，不提交。实际 Android 运行未接入核心，本轮未构建/安装新 APK，日常启动仍按手动地址步骤；后台/两设备/15 秒目标未验收。

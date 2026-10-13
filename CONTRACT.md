@@ -12,6 +12,7 @@
 
 - [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md)
 - [`src/modules/relay-gateway/protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)
+- [`src/modules/relay-discovery/CONTRACT.md`](src/modules/relay-discovery/CONTRACT.md)：局域网公告解析与候选选择核心；只输出连接意向，尚未接入 Android/gateway，不改变现有 WebSocket v1。
 - [`docs/2026-08-09-mobile-relay-design.md`](docs/2026-08-09-mobile-relay-design.md)
 
 ---
@@ -50,6 +51,7 @@
 | `app-runtime` | Android 应用生命周期、前台运行、权限和模块组装 |
 | `relay-settings` | 电脑端地址、手机设备身份和本地设置 |
 | `relay-gateway` | 与电脑端建立 WebSocket 会话，收发协议帧，分发命令和结果 |
+| `relay-discovery` | 校验 UDP 公告、缓存候选并决定唯一电脑 endpoint；不创建 transport，不拥有会话退避或 DJI 对象 |
 | `device-connection` | DJI MSDK 初始化，以及遥控器、飞行器和配对状态 |
 | `telemetry` | 读取、整理并发布遥测 |
 | `wayline-mission` | KMZ 航线传输、校验、暂存、上传和任务控制 |
