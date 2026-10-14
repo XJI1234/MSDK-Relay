@@ -1,6 +1,8 @@
 # 正式 Relay 自动发现接线检查表
 
-更新日期：2026-10-14。状态：纯 JVM 公告解析/候选核心、gateway/session 可选连接选择 API 及发现到会话桥接已完成；独立 Android WLAN 接收适配器已完成；正式 App 无地址权限/进程容器与自动连接 UI 已接线，源码验证与 Debug 打包通过，尚未安装/实机验收。共同协议以 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md 为准；两个仓库并排克隆时可访问[协议](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)和[设计](../../../Sky-Command/docs/auto-discovery/DESIGN.md)。GitHub 单仓库阅读需查看配套电脑开发分支。
+2026-10-14 晚实机阶段：APK 通过 USB 安装；校园网设备间不可达，用户随后选择热点对照与 USB 调试。热点单手机正式 AUTO/paired、Wi-Fi 重连、短时后台、电脑退出等待和重启恢复已有证据，两次恢复采样在 15 秒内，详见 [实机记录](../../../Sky-Command/docs/auto-discovery/DEVICE-RESULTS-20261014.md)。后续补锁屏/划卡等边界、多设备及校园网复测，电脑端启动交由用户手动操作；热点通过不能替代整体验收。
+
+更新日期：2026-10-14。正式 App 的发现、无地址授权/进程容器及界面源码接线完成，编译/测试/打包通过，APK 已安装；热点单手机场景已有证据，校园网与其他场景待验收。共享协议见 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md。
 
 ## 下一步实施顺序
 
