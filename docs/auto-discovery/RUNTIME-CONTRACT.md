@@ -57,3 +57,5 @@ Android 接收适配器只依赖 relay-discovery 数据类型与调用方回调�
 2026-10-14 graph 的 applicationContext、可空初始 endpoint、握手门禁注入已实现，31 项 graph/Bootstrap 回归与 Kotlin 编译通过。正式 App 尚未调用发现控制器；初始化回滚、停止终态释放及进程容器仍待实施。
 
 2026-10-14 正式 graph 已依赖来源/桥接并注入内部唯一控制器门禁；bootstrap start/stopGateway 改接控制器，默认空地址 AUTO，非空入口 MANUAL，仅切换 session。Android 来源 FAILED 转控制失败，WAITING_WIFI/RETRYING 保留内部恢复；38 项 App 测试与编译/清单检查通过。进程容器、无地址 UI、停止终态释放与初始化回滚仍待实现；尚未实机验收。
+
+2026-10-14 graph 生命周期收敛已完成：close 先永久撤销连接来源/门禁，再等待在途 start/stop/模式操作返回并请求 AppRuntime.stop；runtime 和 ForegroundServiceController 均为 STOPPED/FAILED 后才释放注册、Android 端口及执行器。两路状态通知驱动检查，不阻塞 UI 或服务回调；重复 close 幂等。组装过程中逐项登记已创建资源，失败逆序清理、保留原始错误与清理异常，成功才转移所有权；部分安装的状态注册也会解绑。新增停止 7 项（含真实 AppRuntime 延迟服务回调）、回滚 4 项，完整 App 98 项通过。全仓离线 test 与 assembleDebug、清单检查成功：JVM 718 项，Android Debug/Release 各 344 项报告零失败/错误/跳过（包括 App 98 项；部分既有模块 UP-TO-DATE）。新 Debug APK 已生成且保持忽略，未安装，未做现场权限/后台/15 秒验收。下一步进程容器与无地址 UI；已在本机远端引用 origin/xing-20261012 找到同事对频迁移 a607399，UI 前先核对该已有修改，避免重复实现。

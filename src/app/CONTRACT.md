@@ -68,3 +68,5 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 ## 验证
 
 必须通过组合逻辑单元测试（含图传互斥的双向占用、并发启动、start 失败、stop 成功或失败、设备失效、迟到回调和同步异常）、全仓 JVM 测试、所有 Android 适配器 Debug 编译和 `:app:assembleDebug`。生成 APK 只能证明编译和打包；DJI API Key、遥控器、飞行器、RTMP 服务和电脑端服务仍需真机联调。
+
+2026-10-14 graph close 为异步终态释放：先禁用连接控制，再等待在途调用、AppRuntime 与前台服务终态，最后解绑注册及关闭端口/执行器；重复 close 幂等，停止过程中禁止新启动/模式变更。组装失败按已创建资源逆序清理，状态注册失败也解绑；共 11 项新增行为测试。当前 UI/进程容器尚待接线。
