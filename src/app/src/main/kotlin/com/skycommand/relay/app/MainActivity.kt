@@ -16,7 +16,6 @@ import androidx.activity.ComponentActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import com.skycommand.relay.device.pairing.PairingRequestResult
 import com.skycommand.relay.gateway.session.SessionState
 import com.skycommand.relay.runtime.RuntimeState
 import com.skycommand.relay.settings.RelayConnectionSettingsResult
@@ -34,8 +33,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var messageView: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
-    private lateinit var startPairingButton: Button
-    private lateinit var stopPairingButton: Button
     private var graph: MobileRelayGraph? = null
     private var graphEndpoint: String? = null
     private var statusRegistration: CloseableRegistration? = null
@@ -153,32 +150,6 @@ class MainActivity : ComponentActivity() {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
         )
         page.addView(actions, matchWrap())
-        page.addView(TextView(this).apply {
-            text = getString(R.string.pairing_hint)
-            textSize = 13f
-            setTextColor(0xFF5B6B67.toInt())
-            setPadding(0, 8, 0, 8)
-        }, matchWrap())
-        val pairingActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, 16)
-        }
-        startPairingButton = Button(this).apply {
-            text = getString(R.string.start_pairing)
-            isEnabled = false
-            setOnClickListener { startPairing() }
-        }
-        stopPairingButton = Button(this).apply {
-            text = getString(R.string.stop_pairing)
-            isEnabled = false
-            setOnClickListener { stopPairing() }
-        }
-        pairingActions.addView(startPairingButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        pairingActions.addView(
-            stopPairingButton,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 12 },
-        )
-        page.addView(pairingActions, matchWrap())
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             clipToPadding = false
@@ -252,24 +223,6 @@ class MainActivity : ComponentActivity() {
         paintStatus()
     }
 
-    private fun startPairing() {
-        val current = graph ?: return showMessage(R.string.message_stopped)
-        when (current.startPairing()) {
-            is PairingRequestResult.Accepted -> clearMessage()
-            is PairingRequestResult.Rejected -> showMessage(R.string.message_pairing_rejected)
-        }
-        paintStatus()
-    }
-
-    private fun stopPairing() {
-        val current = graph ?: return showMessage(R.string.message_stopped)
-        when (current.stopPairing()) {
-            is PairingRequestResult.Accepted -> clearMessage()
-            is PairingRequestResult.Rejected -> showMessage(R.string.message_pairing_stop_rejected)
-        }
-        paintStatus()
-    }
-
     private fun paintStatus(status: MobileRelayStatus = currentStatus()) {
         statusDispatcher.offer(status)
     }
@@ -293,8 +246,6 @@ class MainActivity : ComponentActivity() {
             status.runtime == RuntimeState.STARTING_MODULES
         startButton.isEnabled = status.runtime == RuntimeState.STOPPED || status.runtime == RuntimeState.FAILED
         stopButton.isEnabled = running || starting
-        startPairingButton.isEnabled = status.canStartPairing
-        stopPairingButton.isEnabled = status.canStopPairing
     }
 
     private fun currentStatus(): MobileRelayStatus =
