@@ -34,6 +34,7 @@ fun includeRelayModule(path: String) {
 
 includeRelayModule(":relay-gateway")
 includeRelayModule(":relay-discovery")
+includeRelayModule(":relay-discovery:android-discovery-adapter")
 includeRelayModule(":relay-gateway:protocol-core")
 includeRelayModule(":relay-gateway:connection-session")
 includeRelayModule(":relay-gateway:outbound-publisher")

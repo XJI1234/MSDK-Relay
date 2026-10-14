@@ -13,6 +13,8 @@
 - [`src/modules/relay-gateway/CONTRACT.md`](src/modules/relay-gateway/CONTRACT.md)
 - [`src/modules/relay-gateway/protocol-core/CONTRACT.md`](src/modules/relay-gateway/protocol-core/CONTRACT.md)
 - [`src/modules/relay-discovery/CONTRACT.md`](src/modules/relay-discovery/CONTRACT.md)：局域网公告解析与候选选择核心；只输出连接意向，由独立桥接模块连接 gateway，尚未接入 Android，不改变现有 WebSocket v1。
+- [`src/modules/relay-discovery/android-discovery-adapter/CONTRACT.md`](src/modules/relay-discovery/android-discovery-adapter/CONTRACT.md)：独立 Android WLAN/UDP 来源与计时适配器，正式 App 容器待接线；不改变 WebSocket v1。
+- [`docs/auto-discovery/RUNTIME-CONTRACT.md`](docs/auto-discovery/RUNTIME-CONTRACT.md)：无地址权限、进程容器、界面解绑及自动/手动模式切换的接线扩展契约，尚未实施。
 - [`src/modules/app-runtime/discovery-session-bridge/CONTRACT.md`](src/modules/app-runtime/discovery-session-bridge/CONTRACT.md)：发现选择到 session 的纯 JVM 桥接；同步握手门禁、稳定选择与结束代次隔离，正式 Android 运行容器另行接线。
 - [`src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md`](src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)：可选初始地址、暂停重试与串行替换的 API 扩展；本地选择身份和结束原因不进入 WebSocket v1 帧，Android 运行容器尚未接线。
 - [`docs/2026-08-09-mobile-relay-design.md`](docs/2026-08-09-mobile-relay-design.md)

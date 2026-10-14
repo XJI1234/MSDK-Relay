@@ -4,6 +4,8 @@
 
 ## 公告边界
 
+2026-10-14 新增独立 [android-discovery-adapter](android-discovery-adapter/CONTRACT.md) 子模块，持有 WLAN socket、网络观察与计时来源，仅通过 sink 交付网络代次、包和 tick；本核心保持纯 JVM、无平台依赖，正式 App 容器尚未接线。
+
 `AnnouncementParser.parse(bytes, sourceIpv4, receiverSubnet?)` 返回 `Accepted(announcement)` 或封闭 `Rejected(reason)`，不抛出第三方解析异常、不返回原始 JSON。仅接受 1–512 字节严格 UTF-8、单一 JSON 对象；拒绝重复字段、尾随 JSON、超过 16 层嵌套及错误字段类型，不把字符串/小数转换为整数。未知扩展字段允许忽略。
 
 公告字段按 v1 校验；endpoint 仅由来源 IPv4、relayPort 与固定 /relay 生成。来源必须是规范点分十进制单播 IPv4，排除 0/8、127/8、组播、保留高地址和有限广播。若调用方提供当前接收网络的 Ipv4Subnet，还拒绝该子网网络地址及定向广播地址；仅来源 IP 本身不能识别任意掩码的定向广播，不能以末字节 255 代替子网判断。公告不持久化，身份不作为认证，原始内容不记录到日志。
