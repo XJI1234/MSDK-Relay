@@ -7,7 +7,7 @@ import com.skycommand.relay.protocol.*
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertIs
 
-internal class BridgeFixture {
+internal class BridgeFixture(pairingAdmission: SessionPairingAdmission? = null, bindBridge: Boolean = true) {
     @Volatile var now = 0L
     val bridge = DiscoverySessionBridge(DiscoveryClock { now })
     val attempts = CopyOnWriteArrayList<Connection>()
@@ -35,12 +35,12 @@ internal class BridgeFixture {
                 Task(delay, callback).also(tasks::add).let { task -> ScheduledCancellation { beforeCancel(); task.cancelled = true } }
             },
             stateNotifier = OrderedStateNotifier { event, listeners -> notifications += event to listeners },
-            pairingAdmission = bridge.pairingAdmission,
+            pairingAdmission = pairingAdmission ?: bridge.pairingAdmission,
         ),
     )).session
     val port = Port()
 
-    init { bridge.bind(port) }
+    init { if (bindBridge) bridge.bind(port) }
 
     inner class Port : DiscoverySessionPort {
         var starts = 0

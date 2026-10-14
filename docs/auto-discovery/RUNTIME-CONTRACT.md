@@ -28,6 +28,8 @@ App 打开时取得 deviceIdentity，默认 AUTO，不要求保存过 endpoint�
 
 gateway 创建时注入稳定的 SessionPairingAdmission 路由器，路由器持有可撤销的当前模式门禁；门禁只检查本地状态，不调用连接控制、不等待 IO、不获取控制锁。切换先失效旧门禁再清理，失败进入无目标等待/可读故障，不恢复旧会话资源。手动与自动不并行，避免错误 paired 交付业务。
 
+2026-10-14 独立 RelayConnectionControl 已实现上述控制规则，见 discovery-session-bridge/CONNECTION-CONTROL.md；sourceFactory 只创建不激活来源，source.close 不等待回调。15 项新增真实 session 测试通过，Android 接收源到控制器、graph 与进程容器的正式接线仍待实施。
+
 模式只保留在当前进程；进程重开默认 AUTO。settings schema 1 保持不变，保存的 endpoint 仅供隐藏调试入口预填，自动发现不持久化、不覆盖它；清空手动地址不得改变 deviceId。主界面显示等待权限、搜索、冲突、连接中、已连接及脱敏故障，移除停止中继入口；本任务不重复实现其他开发者的对频迁移。
 
 ## 网络来源生命周期

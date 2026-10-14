@@ -1,10 +1,10 @@
 # 发现到会话的运行桥接
 
-版本：1.0.0，2026-10-14。Gradle 路径 `:app-runtime:discovery-session-bridge`。纯 JVM 组合模块，依赖 relay-discovery 与 gateway 的公开接口；不依赖 Android/DJI，不拥有 socket、线程或计时器，正式 App 尚未接线。
+版本：1.1.0，2026-10-14。Gradle 路径 `:app-runtime:discovery-session-bridge`。纯 JVM 组合模块，依赖 relay-discovery 与 gateway 的公开接口；不依赖 Android/DJI，不拥有 socket、线程或计时器，正式 App 尚未接线。新增 [RelayConnectionControl 模式控制扩展](CONNECTION-CONTROL.md)，唯一控制 gateway、稳定路由门禁并组合外部发现来源。
 
 ## 所有权与入口
 
-`DiscoverySessionBridge(clock)` 唯一持有 DiscoveryCoordinator；先将 `pairingAdmission` 注入空 endpoint 的 gateway 配置，再 `bind(GatewayDiscoverySessionPort(gateway))`，最后由获准且前台就绪的运行容器调用 start。bind 只能一次，start 幂等，关闭后不可恢复；重复关闭无副作用。桥接运行期间是该 gateway 的唯一 start/stop/selectConnection 控制者，外部不能混用手动选择。手动模式切换和 Android 服务归属另行定义。
+`DiscoverySessionBridge(clock)` 唯一持有 DiscoveryCoordinator；单独使用时先将 pairingAdmission 注入空 endpoint 的 gateway 配置，再 bind，最后由获准且前台就绪的运行容器调用 start。正式模式组合改由 RelayConnectionControl 的稳定 pairingAdmission 注入 gateway，由控制器在 AUTO 中创建/绑定桥接；手动模式先撤销旧路由门禁再关闭旧来源/桥接，不能并行控制。bind 只能一次，start 幂等，关闭后不可恢复；重复关闭无副作用。桥接运行期间外部不能直接 start/stop/selectConnection 同一 gateway。Android 服务/进程容器归属按 RUNTIME-CONTRACT.md 接线，尚未实现。
 
 - `networkGeneration / advanceNetwork / receive / tick` 供正式网络适配器调用；receive 只接受运行期间的包，旧网络令牌沿用核心规则。网络变化保持健康 ACTIVE，但清空未 ACTIVE 候选并暂停旧尝试。至少每秒 tick 驱动过期、观察及状态校正；不得用频繁 start 代替 tick。
 - `snapshot()` 只返回最后计算的发现快照，不创建线程或主动重连。成功连接仍以真实 paired 为准，SELECTED 只是连接意向。

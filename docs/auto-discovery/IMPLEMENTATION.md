@@ -9,7 +9,7 @@
    **已完成桥接子阶段**：独立 JVM `:app-runtime:discovery-session-bridge` 持有发现核心、稳定映射选择对象并组合 gateway 公开接口；22 项测试结果见 README，正式 App 尚未依赖该模块。接口/锁顺序见 [桥接契约](../../src/modules/app-runtime/discovery-session-bridge/CONTRACT.md)。
 3. **契约已完成，接线待实现**：[运行容器与无地址启动契约](RUNTIME-CONTRACT.md) 固定 applicationContext 对象归属、Activity attach/detach、权限拒绝恢复、停止收敛及 AUTO/MANUAL 独占控制。无候选时容器运行、gateway STOPPED；settings schema 1 不变，保存地址仅供手动调试。
 4. **已完成接收子阶段**：[Android WLAN 接收适配器](../../src/modules/relay-discovery/android-discovery-adapter/CONTRACT.md) 的 20 项测试和 Android Kotlin 编译通过，Lint 缺少离线依赖未执行；接着实现容器与 MobileRelayGraph 接线。切换电脑只清理并替换 gateway 的连接配置，不关闭整个 graph、不重建 DJI/图传/任务对象，不恢复旧命令或任务传输。
-   **已完成生命周期准备**：权限 detach/onDestroy 和服务异常销毁 failed 已实现，新增 12 项测试、相关 56 项报告及 App Kotlin 编译通过（重跑范围见 README）。下一子阶段实现模式门禁/连接控制，再接 applicationContext graph 与进程容器。
+   **已完成生命周期准备**：权限 detach/onDestroy 和服务异常销毁 failed 已实现，新增 12 项测试、相关 56 项报告及 App Kotlin 编译通过（重跑范围见 README）。**已完成独立模式控制**：[RelayConnectionControl](../../src/modules/app-runtime/discovery-session-bridge/CONNECTION-CONTROL.md) 串行切换 AUTO/MANUAL、路由稳定门禁、隔离旧来源，15 项新测试通过，尚未接 App。下一子阶段接 applicationContext graph 与进程容器。
 5. 调整主界面自动授权后启动、搜索/冲突/连接状态与隐藏手动入口，移除主界面停止按钮；核对同事的对频迁移分支后再改相关布局，避免重复实现。
 6. 构建并安装正式 Relay，完成手机先开/电脑先开、后台/锁屏/划掉卡片、电脑退出再上线/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标验收。
 
