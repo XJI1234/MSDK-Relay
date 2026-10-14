@@ -22,3 +22,5 @@
 - RelayBootstrapModule 启动设备后调用 startGateway；应将发现启动与 gateway 有地址后启动解耦，保留现有设备/遥测业务规则。
 - RelayForegroundService 仍只管理通知，现已补齐非预期销毁 failed 和空 intent 无活动操作时退出；START_STICKY 不证明业务恢复。权限适配器已支持宿主 detach/onDestroy，应用级 USB 观察保留；完整容器释放与划卡保持运行仍待接线/实机验证。
 - 当前用户确认的是产品行为；已实现的模块能力以契约及测试为准，待接线项不是完成或实机验收证据。
+
+2026-10-14 graph 准备子阶段已完成：长期 Android 依赖使用 applicationContext，create 接受可空 endpoint 和 SessionPairingAdmission；当前 MainActivity 仍为手动流程。31 项 graph/Bootstrap 回归及 App Kotlin 编译通过。下一步包装 Android 发现来源、接唯一连接控制器，再实现停止终态收敛与进程容器；不能把此准备项当作无地址自动启动已完成。

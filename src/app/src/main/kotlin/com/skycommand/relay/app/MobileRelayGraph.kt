@@ -1,6 +1,6 @@
 package com.skycommand.relay.app
 
-import androidx.activity.ComponentActivity
+import android.content.Context
 import com.skycommand.relay.device.DeviceConnection
 import com.skycommand.relay.device.DeviceConnectionDependencies
 import com.skycommand.relay.device.DeviceConnectionStartResult
@@ -27,6 +27,7 @@ import com.skycommand.relay.gateway.session.MonotonicScheduler
 import com.skycommand.relay.gateway.session.ScheduledCancellation
 import com.skycommand.relay.gateway.session.SessionEndKind
 import com.skycommand.relay.gateway.session.SessionState
+import com.skycommand.relay.gateway.session.SessionPairingAdmission
 import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.diagnostics.DiagnosticClock
@@ -433,11 +434,13 @@ class MobileRelayGraph private constructor(
 
     companion object {
         fun create(
-            activity: ComponentActivity,
-            endpoint: String,
+            context: Context,
+            endpoint: String?,
             deviceId: String,
             permissionAdapter: AndroidPermissionAdapter,
+            pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
         ): MobileRelayGraph {
+            val applicationContext = context.applicationContext
             val executor = ScheduledThreadPoolExecutor(2) { task ->
                 Thread(task, "msdk-relay").apply { isDaemon = true }
             }.apply { removeOnCancelPolicy = true }
@@ -456,7 +459,7 @@ class MobileRelayGraph private constructor(
                 val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
                 ScheduledCancellation { future.cancel(false) }
             }
-            val diagnosticStore = AndroidDiagnosticStore.create(activity)
+            val diagnosticStore = AndroidDiagnosticStore.create(applicationContext)
             val journal = DiagnosticJournal.create(
                 runId = UUID.randomUUID().toString(),
                 capacity = 256,
@@ -470,7 +473,7 @@ class MobileRelayGraph private constructor(
             val cameraMediaReadiness = CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())
             val device = DeviceConnection.create(
                 DeviceConnectionDependencies(
-                    AndroidDjiSdkPort.create(activity),
+                    AndroidDjiSdkPort.create(applicationContext),
                     AndroidRemoteControllerPort.create(),
                     AndroidAircraftPort.create(),
                     AndroidPairingPort.create(),
@@ -525,8 +528,8 @@ class MobileRelayGraph private constructor(
                 ),
             )
             val flight = AndroidFlightTelemetrySource.create()
-            val staging = AndroidMissionStagingStorage.create(activity)
-            val waylineAdapter = AndroidDjiWaylineAdapter.create(activity, diagnosticSink = { kind, detail ->
+            val staging = AndroidMissionStagingStorage.create(applicationContext)
+            val waylineAdapter = AndroidDjiWaylineAdapter.create(applicationContext, diagnosticSink = { kind, detail ->
                 val level = when (kind) {
                     "EXECUTION_STATE_OBSERVED",
                     "WAYLINE_PROGRESS_OBSERVED",
@@ -604,7 +607,7 @@ class MobileRelayGraph private constructor(
                             )
                         },
                     ),
-                    transport = AndroidWhipTransport.create(activity),
+                    transport = AndroidWhipTransport.create(applicationContext),
                     diagnosticSink = { kind ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -635,6 +638,7 @@ class MobileRelayGraph private constructor(
                     deviceId,
                     wayline.missionSink(),
                     handshakeTimeoutMillis = 15_000,
+                    pairingAdmission = pairingAdmission,
                     diagnosticSink = { diagnostic ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -725,7 +729,7 @@ class MobileRelayGraph private constructor(
             val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
             val cameraPhoto = CameraPhoto.create(
                 CameraPhotoDependencies(
-                    AndroidDjiPhotoPort.create(activity.cacheDir),
+                    AndroidDjiPhotoPort.create(applicationContext.cacheDir),
                     device.photoOperations(),
                     PhotoMediaPublisher.create(
                         PhotoMediaWriter { frame -> publishPhotoMedia(gateway, journal, frame) },
@@ -736,7 +740,7 @@ class MobileRelayGraph private constructor(
                     ),
                     onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
                     onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
-                    sentLedger = PhotoSentLedger.file(java.io.File(activity.filesDir, "sent-photos.txt")),
+                    sentLedger = PhotoSentLedger.file(java.io.File(applicationContext.filesDir, "sent-photos.txt")),
                 ),
             )
             gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
@@ -797,7 +801,7 @@ class MobileRelayGraph private constructor(
                 },
             )
             val foregroundPort = AndroidForegroundServicePort.create(
-                activity,
+                applicationContext,
                 ForegroundNotificationSpec(
                     "msdk-relay", R.string.relay_channel, R.string.relay_running, 1001,
                     android.R.drawable.stat_sys_upload,

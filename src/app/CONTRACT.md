@@ -4,6 +4,8 @@
 版本：1.0.2
 Gradle 路径：`:app`
 
+2026-10-14 自动发现接线准备：MobileRelayGraph.create 接收 Context，立即转换为 applicationContext，用于长期平台对象、存储与文件目录；endpoint 可为空，允许 gateway 保持无目标等待，并接受调用方注入稳定 SessionPairingAdmission。权限适配器按宿主解绑，运行容器与模式控制扩展见 docs/auto-discovery/RUNTIME-CONTRACT.md。当前 MainActivity 仍走手动地址入口，尚未接入进程容器/发现来源；以下原界面描述在正式接线前仍适用。本准备项不改变业务规则或证明后台验收。
+
 ## 唯一职责
 
 本模块只负责把 `relay-settings`、`app-runtime`、`device-connection`、`telemetry`、旧 `live-stream`、实验 `whip-live-stream`、`wayline-mission`、`flight-control`、`device-settings`、`camera-photo` 和 `relay-gateway` 一级模块与其 Android 适配器组装成可运行应用，并提供保存电脑端中继 WebSocket 地址（默认 `ws://192.168.1.10:8080/relay`，不是 RTMP 图传口）、启动和停止中继、查看关键状态的最小界面。业务规则仍由各一级模块拥有。
