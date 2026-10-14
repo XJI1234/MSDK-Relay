@@ -10,7 +10,7 @@
 - [最小方案草案与待确定边界](../../../Sky-Command/docs/auto-discovery/DESIGN.md)
 - [双端公告 v1 协议与候选规则](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)
 - [正式手机接线检查表](IMPLEMENTATION.md)
-- [运行容器、无地址启动与模式切换契约（接线待实现）](RUNTIME-CONTRACT.md)
+- [运行容器、无地址启动与模式切换契约（源码已接线）](RUNTIME-CONTRACT.md)
 - [手机发现核心接口契约](../../src/modules/relay-discovery/CONTRACT.md)
 - [独立 Android WLAN 接收适配器契约](../../src/modules/relay-discovery/android-discovery-adapter/CONTRACT.md)
 - [发现到会话桥接契约](../../src/modules/app-runtime/discovery-session-bridge/CONTRACT.md)
@@ -22,7 +22,9 @@
 
 以上跨仓库链接适用于两个仓库并排克隆的本机工作区；在 GitHub 单仓库页面需要到 Sky-Command 对应开发分支查看同名文件。分享两端分支时，应在 PR 描述中填写实际的配套分支/PR 链接。
 
-手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。2026-10-14 运行容器契约已明确 Activity detach、无地址权限恢复、AUTO/MANUAL 独占控制与停止收敛，接线尚未实现；独立 Android 接收适配器已完成，下一步接运行容器与 graph，详见 IMPLEMENTATION.md。已实现权限宿主 detach/onDestroy 和服务非预期销毁 failed；完整进程容器与 App 启动仍待接线。START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+手机端已实现无 endpoint 授权并启动前台运行容器，进程容器唯一拥有发现监听和 graph；Activity 只绑定状态与权限宿主。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。Activity detach、无地址权限恢复、AUTO/MANUAL 独占控制、停止收敛和服务异常销毁均已接线，详见 IMPLEMENTATION.md。START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+
+以下逐阶段验证记录保留当时的接线状态；最新结果见文末“当前正式 App 状态与验收入口”。
 
 2026-10-14 桥接验证：新增纯 JVM `:app-runtime:discovery-session-bridge`，不拥有网络/线程/定时器；稳定映射发现令牌与 ConnectionSelection，同步门禁和 endedGeneration 防止旧握手/断线影响新会话。tick/新代次门禁能发现旧 ACTIVE 已实际结束，不因延迟通知跳过冲突或重新观察；状态锁不跨 session 控制调用，监听注销在控制锁外进行；控制部分成功后抛错也不沿用旧应用缓存。22 项新测试全部通过，含真实 session、公开 gateway 适配器、两类竞态各 30 轮及门禁提交窗口。5 模块共 142 项报告零失败/错误/跳过，本轮重跑 22 项、已有回归报告 120 项 UP-TO-DATE；App Kotlin 编译检查通过（UP-TO-DATE），App 尚未依赖桥接，没有构建/安装新版 APK，不能作为正式自动连接或现场验收证据。
 
@@ -51,6 +53,8 @@
 2026-10-14 已核对并接入同事 origin/xing-20261012 中的对频入口迁移提交 a607399（只取该提交，不合并后续拍照改动）：删除手机对频按钮及其 UI 回调/专用文案，保留设备状态、电脑命令注册与业务规则。无冲突，App Kotlin 编译和完整 App 98 项回归通过；尚未重新打包安装，对频实际电脑链路仍待设备验收。下一步自动连接进程容器与 UI。
 
 ## 2026-10-14 当前正式 App 状态与验收入口
+
+源码提交：`c8b4c16`（feat: 接入进程容器与无地址自动连接界面）。用户已明确先完成源码及中文提交，实机调试留到后续；本轮不连接手机或安装 APK。两端开发分支尚未推送。
 
 2026-10-14 正式无地址接线阶段：RelayProcessRuntime/ProcessRelayOwner 在进程内唯一持有 graph 和权限适配器，Activity 在可见 onResume 自动尝试启动，onDestroy 只取消 UI 订阅并按身份 detach；旧 RelayRuntimeHolder/RelaySurfaceRetention 已删除。默认 AUTO，历史地址仅预填长按标题打开的隐藏调试区；切换 MANUAL/返回 AUTO 只换 session，保留 deviceId 和业务图，主界面无停止按钮。拒绝后不循环弹窗，可明确重试或进入系统设置；授权后返回前台继续，权限等待被宿主解绑中断时允许下一宿主恢复一次。服务丢失会禁止来源；模块启动中服务失败等待该轮返回后清理，不发布 RUNNING，再释放图及权限适配器，后者在主线程关闭。新增进程/启动策略 8 项，替换旧保留策略的 3 项测试；新增 runtime 3 项服务启动竞态测试。完整 App 103 项、runtime 10 项通过，全仓离线 test/Debug 打包/清单检查通过：JVM 721 项，Android Debug/Release 各 349 项报告零失败/错误/跳过，未改动模块部分沿用 UP-TO-DATE。新 APK 已生成且被忽略；ADB 当前无已连接设备，mDNS 可见多台校园调试设备，尚未确认本人的当前连接地址，未安装或自动连接陌生设备。首次权限弹窗、旋转/后台/锁屏/划卡、正式校园 39082/hello/paired、电脑退出/重启/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标均待实机验收；离线 Lint 仍缺依赖，未声称通过。
 
