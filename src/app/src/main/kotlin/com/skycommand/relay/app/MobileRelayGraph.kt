@@ -53,6 +53,7 @@ import com.skycommand.relay.runtime.permission.PermissionRequestResult
 import com.skycommand.relay.runtime.permission.PermissionState
 import com.skycommand.relay.runtime.permission.android.AndroidPermissionAdapter
 import com.skycommand.relay.runtime.service.ForegroundServiceController
+import com.skycommand.relay.runtime.service.ForegroundServiceState
 import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
 import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
@@ -158,6 +159,7 @@ class MobileRelayGraph private constructor(
     private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
     private val connectionControl: RelayConnectionControl,
+    private val onReleased: () -> Unit,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val listeners = CopyOnWriteArraySet<(MobileRelayStatus) -> Unit>()
@@ -210,6 +212,8 @@ class MobileRelayGraph private constructor(
     }
 
     fun startPairing(): PairingRequestResult = device.requestPairingStart(30_000) { notifyStatus() }
+    fun isClosing(): Boolean = closed.get()
+    fun retryConnection(): Boolean = withOperation(false) { runtime.snapshot() == RuntimeState.RUNNING && connectionControl.start() }
     fun automaticConnection(): Boolean = withOperation(false) { !closed.get() && connectionControl.automatic() }
     fun manualConnection(endpoint: String): Boolean = withOperation(false) { !closed.get() && connectionControl.manual(endpoint) }
     fun stopPairing(): PairingRequestResult = device.requestPairingStop(30_000) { notifyStatus() }
@@ -250,6 +254,7 @@ class MobileRelayGraph private constructor(
         registrations += runtime.onChanged {
             notifyStatus()
             if (!closed.get() && runtime.snapshot() == RuntimeState.RUNNING) watchUsbAccessory()
+            if (!closed.get() && runtime.snapshot() == RuntimeState.FAILED && foregroundController.snapshot() == ForegroundServiceState.FAILED) close()
             releaseCoordinator.changed()
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
@@ -269,6 +274,7 @@ class MobileRelayGraph private constructor(
             CloseableRegistration { cancellation.cancel() }
         }
         registrations += foregroundController.onChanged {
+            if (it == ForegroundServiceState.FAILED) runCatching { connectionControl.stop() }
             releaseCoordinator.changed()
         }.let { registration -> CloseableRegistration(registration::unregister) }
         registrations += gateway.onStateChanged { event ->
@@ -465,6 +471,7 @@ class MobileRelayGraph private constructor(
         executor.shutdownNow()
         timeoutExecutor.shutdownNow()
         listeners.clear()
+        runCatching { onReleased() }
     }
 
     private fun removeRegistrations() {
@@ -478,6 +485,7 @@ class MobileRelayGraph private constructor(
             endpoint: String?,
             deviceId: String,
             permissionAdapter: AndroidPermissionAdapter,
+            onReleased: () -> Unit = {},
         ): MobileRelayGraph {
             val applicationContext = context.applicationContext
             var graph: MobileRelayGraph? = null
@@ -814,6 +822,7 @@ class MobileRelayGraph private constructor(
                 assembly.add { cameraPhoto.close() }
                 gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
                 registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, cameraPhoto, videoTransports, wayline)
+                lateinit var foregroundController: ForegroundServiceController
                 val lifecycle = RelayBootstrapModule(
                     object : RelayLifecyclePorts {
                         override fun sdkAvailability() = device.snapshot().sdkAvailability
@@ -840,6 +849,7 @@ class MobileRelayGraph private constructor(
                             )
                         }
                         override fun startGateway() {
+                            check(foregroundController.snapshot() == ForegroundServiceState.RUNNING) { "Foreground service is unavailable" }
                             diagnostics.start()
                             check(connectionControl.start()) { "Connection control failed to start" }
                         }
@@ -878,7 +888,7 @@ class MobileRelayGraph private constructor(
                 )
                 assembly.add { foregroundPort.close() }
                 val permissions = PermissionCoordinator.create(permissionAdapter)
-                val foregroundController = ForegroundServiceController.create(foregroundPort)
+                foregroundController = ForegroundServiceController.create(foregroundPort)
                 val runtime = AppRuntime.create(
                     permissions,
                     foregroundController,
@@ -886,7 +896,7 @@ class MobileRelayGraph private constructor(
                 )
                 return MobileRelayGraph(
                     runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, cameraMediaReadiness, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                    staging, foregroundPort, foregroundController, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter, connectionControl,
+                    staging, foregroundPort, foregroundController, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter, connectionControl, onReleased,
                 ).also {
                     graph = it
                     it.registrations += CloseableRegistration(missionPhaseRegistration::unregister)

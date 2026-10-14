@@ -151,6 +151,46 @@ class AppRuntimeContractTest {
         assertEquals(listOf("start:relay", "stop:relay"), events)
     }
 
+    @Test fun serviceLossDuringModuleStartupWaitsForStartupThenCleansModules() {
+        serviceLossDuringStartup(explicitStop = false, failModule = false)
+    }
+
+    @Test fun serviceLossAfterStopRequestCannotPublishTerminalWhileModuleStillStarts() {
+        serviceLossDuringStartup(explicitStop = true, failModule = false)
+    }
+
+    @Test fun moduleRejectionAfterServiceLossLeavesFailureWithoutStartingAgain() {
+        serviceLossDuringStartup(explicitStop = false, failModule = true)
+    }
+
+    private fun serviceLossDuringStartup(explicitStop: Boolean, failModule: Boolean) {
+        val entered = CountDownLatch(1); val finish = CountDownLatch(1)
+        val service = FailingServicePort()
+        val events = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val states = java.util.concurrent.CopyOnWriteArrayList<RuntimeState>()
+        val runtime = AppRuntime.create(
+            PermissionCoordinator.create(ImmediatePermissionPort()), ForegroundServiceController.create(service),
+            AppBootstrap.create(listOf(object : BootstrapModule {
+                override val name = "relay"
+                override fun start() { entered.countDown(); check(finish.await(5, TimeUnit.SECONDS)); events += "start"; if (failModule) error("module") }
+                override fun stop() { events += "stop" }
+            })),
+        )
+        runtime.onChanged { states += it }
+        val worker = thread { runtime.start(setOf(PermissionKind.RUNTIME)) }
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            if (explicitStop) runtime.stop()
+            service.fail()
+            assertEquals(RuntimeState.STOPPING, runtime.snapshot())
+            assertTrue(RuntimeState.FAILED !in states && RuntimeState.STOPPED !in states && RuntimeState.RUNNING !in states)
+        } finally { finish.countDown(); worker.join(5_000) }
+        assertTrue(!worker.isAlive)
+        assertEquals(RuntimeState.FAILED, runtime.snapshot())
+        assertEquals(if (failModule) listOf("start") else listOf("start", "stop"), events)
+        assertTrue(RuntimeState.RUNNING !in states)
+    }
+
     private class Module(
         override val name: String,
         private val events: MutableList<String>,

@@ -1,6 +1,6 @@
 # 自动发现运行容器与无地址启动契约
 
-2026-10-14。状态：接线契约已确定，正式 App 待实现；不作为后台、自动连接或 15 秒目标的验收证据。共享公告协议见配套 Sky-Command 的 WIRE-PROTOCOL.md。
+2026-10-14。状态：正式 App 已接线并通过源码验证与 Debug 打包，实机待验收；不作为后台、自动连接或 15 秒目标的验收证据。共享公告协议见配套 Sky-Command 的 WIRE-PROTOCOL.md。
 
 ## 对象归属
 
@@ -59,3 +59,7 @@ Android 接收适配器只依赖 relay-discovery 数据类型与调用方回调�
 2026-10-14 正式 graph 已依赖来源/桥接并注入内部唯一控制器门禁；bootstrap start/stopGateway 改接控制器，默认空地址 AUTO，非空入口 MANUAL，仅切换 session。Android 来源 FAILED 转控制失败，WAITING_WIFI/RETRYING 保留内部恢复；38 项 App 测试与编译/清单检查通过。进程容器、无地址 UI、停止终态释放与初始化回滚仍待实现；尚未实机验收。
 
 2026-10-14 graph 生命周期收敛已完成：close 先永久撤销连接来源/门禁，再等待在途 start/stop/模式操作返回并请求 AppRuntime.stop；runtime 和 ForegroundServiceController 均为 STOPPED/FAILED 后才释放注册、Android 端口及执行器。两路状态通知驱动检查，不阻塞 UI 或服务回调；重复 close 幂等。组装过程中逐项登记已创建资源，失败逆序清理、保留原始错误与清理异常，成功才转移所有权；部分安装的状态注册也会解绑。新增停止 7 项（含真实 AppRuntime 延迟服务回调）、回滚 4 项，完整 App 98 项通过。全仓离线 test 与 assembleDebug、清单检查成功：JVM 718 项，Android Debug/Release 各 344 项报告零失败/错误/跳过（包括 App 98 项；部分既有模块 UP-TO-DATE）。新 Debug APK 已生成且保持忽略，未安装，未做现场权限/后台/15 秒验收。下一步进程容器与无地址 UI；已在本机远端引用 origin/xing-20261012 找到同事对频迁移 a607399，UI 前先核对该已有修改，避免重复实现。
+
+## 2026-10-14 正式接线与验证结果
+
+2026-10-14 正式无地址接线阶段：RelayProcessRuntime/ProcessRelayOwner 在进程内唯一持有 graph 和权限适配器，Activity 在可见 onResume 自动尝试启动，onDestroy 只取消 UI 订阅并按身份 detach；旧 RelayRuntimeHolder/RelaySurfaceRetention 已删除。默认 AUTO，历史地址仅预填长按标题打开的隐藏调试区；切换 MANUAL/返回 AUTO 只换 session，保留 deviceId 和业务图，主界面无停止按钮。拒绝后不循环弹窗，可明确重试或进入系统设置；授权后返回前台继续，权限等待被宿主解绑中断时允许下一宿主恢复一次。服务丢失会禁止来源；模块启动中服务失败等待该轮返回后清理，不发布 RUNNING，再释放图及权限适配器，后者在主线程关闭。新增进程/启动策略 8 项，替换旧保留策略的 3 项测试；新增 runtime 3 项服务启动竞态测试。完整 App 103 项、runtime 10 项通过，全仓离线 test/Debug 打包/清单检查通过：JVM 721 项，Android Debug/Release 各 349 项报告零失败/错误/跳过，未改动模块部分沿用 UP-TO-DATE。新 APK 已生成且被忽略；ADB 当前无已连接设备，mDNS 可见多台校园调试设备，尚未确认本人的当前连接地址，未安装或自动连接陌生设备。首次权限弹窗、旋转/后台/锁屏/划卡、正式校园 39082/hello/paired、电脑退出/重启/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标均待实机验收；离线 Lint 仍缺依赖，未声称通过。

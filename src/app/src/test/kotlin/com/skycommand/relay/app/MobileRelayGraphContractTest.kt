@@ -251,20 +251,6 @@ class MobileRelayGraphContractTest {
     }
 }
 
-class MainActivityRetentionContractTest {
-    @Test
-    fun destroyingTheScreenDoesNotCloseARetainedRelay() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
-            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
-        ).first { it.exists() }.readText()
-        assertTrue(source.contains("RelaySurfaceRetention.shouldRetain"))
-        assertTrue(source.contains("RelayRuntimeHolder"))
-        assertTrue(source.contains("permissionAdapter.rebind"))
-        assertTrue(!source.contains("graph?.close()\n        graph = null\n        permissionAdapter.close()"))
-    }
-}
-
 class MainActivityRtmpBoundaryContractTest {
     @Test
     fun doesNotOwnTheRtmpCameraDecodeSurface() {

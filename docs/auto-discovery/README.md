@@ -1,6 +1,6 @@
 # 手机自动发现与连接任务索引
 
-更新日期：2026-10-14。当前状态：电脑公告器、手机纯 JVM 解析/候选核心、gateway/session 连接选择 API 及发现到会话桥接已实现并通过自动化测试；独立 Android WLAN 接收适配器已完成；正式 App 权限与前台运行容器接线尚未完成。
+更新日期：2026-10-14。当前状态：电脑公告器、手机纯 JVM 解析/候选核心、gateway/session 连接选择 API 及发现到会话桥接已实现并通过自动化测试；独立 Android WLAN 接收适配器已完成；正式 App 权限与前台进程容器、默认自动发现及隐藏手动界面已接线并通过源码验证/打包，APK 未安装，实机验收待完成。
 
 任务采用第一阶段最小方案：一台电脑、多台手机，双方无线连接当前校园 Wi-Fi；授权后打开 App 自动发现并连接，电脑离线时低频等待、上线后自动重连；计划移除手机“停止中继”按钮。不扩展航线规划，不改变既有飞行、航线和退出处理。
 
@@ -49,3 +49,9 @@
 2026-10-14 graph 生命周期收敛已完成：close 先永久撤销连接来源/门禁，再等待在途 start/stop/模式操作返回并请求 AppRuntime.stop；runtime 和 ForegroundServiceController 均为 STOPPED/FAILED 后才释放注册、Android 端口及执行器。两路状态通知驱动检查，不阻塞 UI 或服务回调；重复 close 幂等。组装过程中逐项登记已创建资源，失败逆序清理、保留原始错误与清理异常，成功才转移所有权；部分安装的状态注册也会解绑。新增停止 7 项（含真实 AppRuntime 延迟服务回调）、回滚 4 项，完整 App 98 项通过。全仓离线 test 与 assembleDebug、清单检查成功：JVM 718 项，Android Debug/Release 各 344 项报告零失败/错误/跳过（包括 App 98 项；部分既有模块 UP-TO-DATE）。新 Debug APK 已生成且保持忽略，未安装，未做现场权限/后台/15 秒验收。下一步进程容器与无地址 UI；已在本机远端引用 origin/xing-20261012 找到同事对频迁移 a607399，UI 前先核对该已有修改，避免重复实现。
 
 2026-10-14 已核对并接入同事 origin/xing-20261012 中的对频入口迁移提交 a607399（只取该提交，不合并后续拍照改动）：删除手机对频按钮及其 UI 回调/专用文案，保留设备状态、电脑命令注册与业务规则。无冲突，App Kotlin 编译和完整 App 98 项回归通过；尚未重新打包安装，对频实际电脑链路仍待设备验收。下一步自动连接进程容器与 UI。
+
+## 2026-10-14 当前正式 App 状态与验收入口
+
+2026-10-14 正式无地址接线阶段：RelayProcessRuntime/ProcessRelayOwner 在进程内唯一持有 graph 和权限适配器，Activity 在可见 onResume 自动尝试启动，onDestroy 只取消 UI 订阅并按身份 detach；旧 RelayRuntimeHolder/RelaySurfaceRetention 已删除。默认 AUTO，历史地址仅预填长按标题打开的隐藏调试区；切换 MANUAL/返回 AUTO 只换 session，保留 deviceId 和业务图，主界面无停止按钮。拒绝后不循环弹窗，可明确重试或进入系统设置；授权后返回前台继续，权限等待被宿主解绑中断时允许下一宿主恢复一次。服务丢失会禁止来源；模块启动中服务失败等待该轮返回后清理，不发布 RUNNING，再释放图及权限适配器，后者在主线程关闭。新增进程/启动策略 8 项，替换旧保留策略的 3 项测试；新增 runtime 3 项服务启动竞态测试。完整 App 103 项、runtime 10 项通过，全仓离线 test/Debug 打包/清单检查通过：JVM 721 项，Android Debug/Release 各 349 项报告零失败/错误/跳过，未改动模块部分沿用 UP-TO-DATE。新 APK 已生成且被忽略；ADB 当前无已连接设备，mDNS 可见多台校园调试设备，尚未确认本人的当前连接地址，未安装或自动连接陌生设备。首次权限弹窗、旋转/后台/锁屏/划卡、正式校园 39082/hello/paired、电脑退出/重启/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标均待实机验收；离线 Lint 仍缺依赖，未声称通过。
+
+验证命令：`./gradlew.bat test :app:assembleDebug :app:verifyAndroidManifestContract --offline --no-daemon --console=plain --quiet`，沿用本机 JDK 17/既有依赖。安装成功后打开 App，首次确认系统权限；日常自动发现并连接，电脑离线时保持搜索。长按顶部 MSDK Relay 标题显示隐藏调试区，可使用手动地址或返回自动发现。对频控制已沿用同事 5aa0a9a 接入的电脑入口，手机只显示对频状态。
