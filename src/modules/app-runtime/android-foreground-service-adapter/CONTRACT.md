@@ -5,6 +5,8 @@
 所属一级模块：app-runtime
 逻辑 Gradle 路径：:app-runtime:android-foreground-service-adapter
 
+2026-10-14 接线审计：端口测试已通过，但 Android 平台服务 onDestroy 当前未在无 pendingStop 且有 activeStart 时发布 failed，第 4 条的非预期销毁要求尚待修复/验证。正式容器/空 intent 行为见 [运行容器扩展契约](../../../../docs/auto-discovery/RUNTIME-CONTRACT.md)，不把 START_STICKY 当作业务恢复证明。
+
 ## 唯一职责
 
 本模块实现 `ForegroundServicePort` 接缝：启动和停止一个中继前台服务，创建通知渠道和通知，并报告该服务是否实际进入或离开前台执行。

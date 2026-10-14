@@ -10,6 +10,7 @@
 - [最小方案草案与待确定边界](../../../Sky-Command/docs/auto-discovery/DESIGN.md)
 - [双端公告 v1 协议与候选规则](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)
 - [正式手机接线检查表](IMPLEMENTATION.md)
+- [运行容器、无地址启动与模式切换契约（接线待实现）](RUNTIME-CONTRACT.md)
 - [手机发现核心接口契约](../../src/modules/relay-discovery/CONTRACT.md)
 - [发现到会话桥接契约](../../src/modules/app-runtime/discovery-session-bridge/CONTRACT.md)
 - [进度、证据与待办](../../../Sky-Command/docs/auto-discovery/PROGRESS.md)
@@ -19,7 +20,7 @@
 
 以上跨仓库链接适用于两个仓库并排克隆的本机工作区；在 GitHub 单仓库页面需要到 Sky-Command 对应开发分支查看同名文件。分享两端分支时，应在 PR 描述中填写实际的配套分支/PR 链接。
 
-手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。候选核心、session API 和独立桥接已完成，下一步定义无地址权限/前台运行容器契约并接 Android，详见 IMPLEMENTATION.md。当前前台通知服务的 START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。2026-10-14 运行容器契约已明确 Activity detach、无地址权限恢复、AUTO/MANUAL 独占控制与停止收敛，接线尚未实现；下一步独立实现 Android 接收适配器，详见 IMPLEMENTATION.md。源码核对发现权限适配器仍保留 Activity、服务非预期销毁尚未报告 failed，均列为接线待修复。START_STICKY 不能证明完整业务对象能在进程重启后恢复。
 
 2026-10-14 桥接验证：新增纯 JVM `:app-runtime:discovery-session-bridge`，不拥有网络/线程/定时器；稳定映射发现令牌与 ConnectionSelection，同步门禁和 endedGeneration 防止旧握手/断线影响新会话。tick/新代次门禁能发现旧 ACTIVE 已实际结束，不因延迟通知跳过冲突或重新观察；状态锁不跨 session 控制调用，监听注销在控制锁外进行；控制部分成功后抛错也不沿用旧应用缓存。22 项新测试全部通过，含真实 session、公开 gateway 适配器、两类竞态各 30 轮及门禁提交窗口。5 模块共 142 项报告零失败/错误/跳过，本轮重跑 22 项、已有回归报告 120 项 UP-TO-DATE；App Kotlin 编译检查通过（UP-TO-DATE），App 尚未依赖桥接，没有构建/安装新版 APK，不能作为正式自动连接或现场验收证据。
 
