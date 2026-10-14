@@ -43,3 +43,5 @@
 本阶段新增独立 [前台网络测试 App](../../tools/network-probe/README.md)，包名 com.skycommand.networkprobe。它监听测试 UDP 39081、验证现有二进制 hello/paired；不依赖 DJI，也不修改正式 Relay 的运行行为。2026-10-13 离线编译并无线安装完成，当前位置三轮广播存在实际接收且明显丢包，完整计数见配套实测结果。锁屏/后台不是此探针的测试范围。中文提交、开发分支与配置排除要求沿用 docs/LOCAL_DEVELOPMENT.md。
 
 2026-10-14 graph 接线准备：MobileRelayGraph.create 使用 applicationContext 创建长期 Android 对象，允许空初始 endpoint，并向 gateway 注入调用方的同步握手门禁；现有手动调用保持可编译。App Kotlin 编译与 graph 契约/Bootstrap 回归共 31 项通过（17 + 14，零失败/错误/跳过）；首次回归因断言旧 Activity 调用失败，已更新对应诊断断言并重跑通过。完整控制器/来源/进程容器及停止收敛仍待接线；未构建或安装 APK，未做现场验收。
+
+2026-10-14 正式 graph 连接控制接线：App 已依赖 discovery-session-bridge 与 Android 接收模块，AndroidConnectionDiscoverySource 在 start 才创建接收器并转发来源/子网/令牌/tick，仅终态 FAILED 通知控制失败。关闭后禁止包/tick/failure，清理失败保留句柄重试；不等待异步回调。graph 默认空地址 AUTO，原非空地址调用走 MANUAL；bootstrap 唯一通过控制器 start/stop，模式切换保留业务图。7 项新来源测试与 graph/Bootstrap 共 38 项重跑通过；桥接 37 项、接收器 20 项已有报告仍通过，共 95 项零失败/错误/跳过。App Kotlin 编译、合并清单检查通过（MulticastLock 声明也是 Android 14 connectedDevice 先决权限之一）。下一步停止收敛、进程容器和日常 UI；未构建/安装 APK或现场验收。

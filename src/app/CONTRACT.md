@@ -4,7 +4,7 @@
 版本：1.0.2
 Gradle 路径：`:app`
 
-2026-10-14 自动发现接线准备：MobileRelayGraph.create 接收 Context，立即转换为 applicationContext，用于长期平台对象、存储与文件目录；endpoint 可为空，允许 gateway 保持无目标等待，并接受调用方注入稳定 SessionPairingAdmission。权限适配器按宿主解绑，运行容器与模式控制扩展见 docs/auto-discovery/RUNTIME-CONTRACT.md。当前 MainActivity 仍走手动地址入口，尚未接入进程容器/发现来源；以下原界面描述在正式接线前仍适用。本准备项不改变业务规则或证明后台验收。
+2026-10-14 自动发现 graph 接线：create 使用 applicationContext，内部唯一 RelayConnectionControl 的稳定门禁注入初始 endpoint=null 的 gateway，bootstrap 只通过控制器 start/stop。null 地址默认 AUTO；非空地址先校验并选择 MANUAL，兼容当前手动界面。automaticConnection/manualConnection 只切换会话，保持设备/图传/任务对象。Android 来源延迟到控制器 start 才创建接收器；FAILED 撤销连接，WAITING_WIFI/RETRYING 保留接收器内部恢复；close 不等待回调，失败保留句柄供重试。status.connection 提供模式与发现状态。完整进程容器、自动授权/UI 和异步停止终态释放尚未实现，以下原界面描述暂仍适用；本项不改变业务规则或证明后台验收。
 
 ## 唯一职责
 

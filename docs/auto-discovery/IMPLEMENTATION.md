@@ -24,3 +24,5 @@
 - 当前用户确认的是产品行为；已实现的模块能力以契约及测试为准，待接线项不是完成或实机验收证据。
 
 2026-10-14 graph 准备子阶段已完成：长期 Android 依赖使用 applicationContext，create 接受可空 endpoint 和 SessionPairingAdmission；当前 MainActivity 仍为手动流程。31 项 graph/Bootstrap 回归及 App Kotlin 编译通过。下一步包装 Android 发现来源、接唯一连接控制器，再实现停止终态收敛与进程容器；不能把此准备项当作无地址自动启动已完成。
+
+2026-10-14 graph/来源控制接线已完成：Android 来源按 start 延迟创建，bootstrap 独占调用 RelayConnectionControl；默认无地址 AUTO，非空地址兼容 MANUAL，公开模式切换不会重建业务 graph。38 项 App 回归、Kotlin 编译与清单检查通过；57 项桥接/接收报告保持通过。下一步补 graph 异步停止终态收敛与初始化回滚，再替换 Activity 保留策略为进程容器，最后接无地址自动启动与隐藏调试界面。

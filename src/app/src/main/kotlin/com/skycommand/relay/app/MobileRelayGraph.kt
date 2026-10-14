@@ -27,7 +27,6 @@ import com.skycommand.relay.gateway.session.MonotonicScheduler
 import com.skycommand.relay.gateway.session.ScheduledCancellation
 import com.skycommand.relay.gateway.session.SessionEndKind
 import com.skycommand.relay.gateway.session.SessionState
-import com.skycommand.relay.gateway.session.SessionPairingAdmission
 import com.skycommand.relay.gateway.transport.OkHttpTransportConnector
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.diagnostics.DiagnosticClock
@@ -39,6 +38,9 @@ import com.skycommand.relay.diagnostics.gateway.DiagnosticTimeoutScheduler
 import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
 import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.runtime.AppRuntime
+import com.skycommand.relay.runtime.discovery.GatewayDiscoverySessionPort
+import com.skycommand.relay.runtime.discovery.RelayConnectionControl
+import com.skycommand.relay.runtime.discovery.RelayConnectionControlSnapshot
 import com.skycommand.relay.runtime.RuntimeCancellation
 import com.skycommand.relay.runtime.RuntimeStartResult
 import com.skycommand.relay.runtime.RuntimeState
@@ -122,6 +124,7 @@ data class MobileRelayStatus(
     val mission: String,
     val canStartPairing: Boolean,
     val canStopPairing: Boolean,
+    val connection: RelayConnectionControlSnapshot? = null,
 )
 
 class MobileRelayGraph private constructor(
@@ -153,6 +156,7 @@ class MobileRelayGraph private constructor(
     private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
     private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
+    private val connectionControl: RelayConnectionControl,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val listeners = CopyOnWriteArraySet<(MobileRelayStatus) -> Unit>()
@@ -173,6 +177,7 @@ class MobileRelayGraph private constructor(
     }
 
     fun stop(): RuntimeStopResult {
+        connectionControl.stop()
         cancelUsbWatch()
         flightTelemetryDiagnostics.reset()
         waylineTelemetryDiagnostics.reset()
@@ -187,6 +192,8 @@ class MobileRelayGraph private constructor(
     }
 
     fun startPairing(): PairingRequestResult = device.requestPairingStart(30_000) { notifyStatus() }
+    fun automaticConnection(): Boolean = !closed.get() && connectionControl.automatic()
+    fun manualConnection(endpoint: String): Boolean = !closed.get() && connectionControl.manual(endpoint)
     fun stopPairing(): PairingRequestResult = device.requestPairingStop(30_000) { notifyStatus() }
 
     fun status(): MobileRelayStatus {
@@ -208,6 +215,7 @@ class MobileRelayGraph private constructor(
             mission = missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
             canStartPairing = running && capabilities.canStartPairing,
             canStopPairing = running && capabilities.canStopPairing,
+            connection = connectionControl.snapshot(),
         )
     }
 
@@ -406,6 +414,7 @@ class MobileRelayGraph private constructor(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        runCatching { connectionControl.close() }
         runCatching { startCancellation?.cancel() }
         startCancellation = null
         runCatching { cancelUsbWatch() }
@@ -438,9 +447,14 @@ class MobileRelayGraph private constructor(
             endpoint: String?,
             deviceId: String,
             permissionAdapter: AndroidPermissionAdapter,
-            pairingAdmission: SessionPairingAdmission = SessionPairingAdmission { _, _ -> true },
         ): MobileRelayGraph {
             val applicationContext = context.applicationContext
+            var graph: MobileRelayGraph? = null
+            val connectionControl = RelayConnectionControl(
+                androidConnectionDiscoveryFactory(applicationContext),
+                onChanged = { graph?.notifyStatus() },
+            )
+            if (endpoint != null) check(connectionControl.manual(endpoint)) { "Invalid manual endpoint" }
             val executor = ScheduledThreadPoolExecutor(2) { task ->
                 Thread(task, "msdk-relay").apply { isDaemon = true }
             }.apply { removeOnCancelPolicy = true }
@@ -634,11 +648,11 @@ class MobileRelayGraph private constructor(
             )
             val gateway = RelayGateway.create(
                 RelayGatewayConfig(
-                    endpoint,
+                    null,
                     deviceId,
                     wayline.missionSink(),
                     handshakeTimeoutMillis = 15_000,
-                    pairingAdmission = pairingAdmission,
+                    pairingAdmission = connectionControl.pairingAdmission,
                     diagnosticSink = { diagnostic ->
                         journal.record(
                             DiagnosticLevel.WARN,
@@ -727,6 +741,7 @@ class MobileRelayGraph private constructor(
                 },
             )
             val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
+            connectionControl.bind(GatewayDiscoverySessionPort(gateway))
             val cameraPhoto = CameraPhoto.create(
                 CameraPhotoDependencies(
                     AndroidDjiPhotoPort.create(applicationContext.cacheDir),
@@ -772,11 +787,11 @@ class MobileRelayGraph private constructor(
                     }
                     override fun startGateway() {
                         diagnostics.start()
-                        gateway.start()
+                        check(connectionControl.start()) { "Connection control failed to start" }
                     }
                     override fun stopGateway() {
                         diagnostics.stop()
-                        gateway.stop()
+                        check(connectionControl.stop()) { "Connection control failed to stop" }
                     }
                     override fun closeFlightTelemetry() { flight.close() }
                     override fun markStreamUnavailable() {
@@ -815,8 +830,8 @@ class MobileRelayGraph private constructor(
             )
             return MobileRelayGraph(
                 runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, cameraMediaReadiness, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
-            ).also { it.installStatusNotifications() }
+                staging, foregroundPort, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter, connectionControl,
+            ).also { graph = it; it.installStatusNotifications() }
         }
 
         private fun <T> feed(
