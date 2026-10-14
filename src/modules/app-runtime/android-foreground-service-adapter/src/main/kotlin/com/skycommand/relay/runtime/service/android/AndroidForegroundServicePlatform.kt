@@ -158,15 +158,17 @@ internal class AndroidForegroundServicePlatform private constructor(
 
 class RelayForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.getStringExtra(EXTRA_OPERATION_ID) == null) return START_NOT_STICKY
+        if (intent?.getStringExtra(EXTRA_OPERATION_ID) == null) {
+            if (lifetime.activeStart == null) stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
         if (intent.action == ACTION_STOP) {
-            pendingStop = intent
-            activeStart = null
+            lifetime.stopping(intent)
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
         if (intent.action != ACTION_START) return START_NOT_STICKY
-        activeStart = intent
+        lifetime.starting(intent)
         try {
             startForeground(
                 intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0),
@@ -175,18 +177,16 @@ class RelayForegroundService : Service() {
             status(intent, ACTION_STARTED_SUFFIX)
             return START_STICKY
         } catch (_: Exception) {
-            status(intent, ACTION_FAILED_SUFFIX)
-            activeStart = null
+            lifetime.startupFailed()?.let(::terminalStatus)
             stopSelfResult(startId)
             return START_NOT_STICKY
         }
     }
 
     override fun onDestroy() {
-        pendingStop?.let { status(it, ACTION_STOPPED_SUFFIX) }
-        pendingStop = null
-        activeStart = null
-        super.onDestroy()
+        try {
+            lifetime.destroyed()?.let(::terminalStatus)
+        } finally { super.onDestroy() }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -224,8 +224,14 @@ class RelayForegroundService : Service() {
         )
     }
 
-    private var pendingStop: Intent? = null
-    private var activeStart: Intent? = null
+    private fun terminalStatus(terminal: ForegroundServiceLifetime.Terminal<Intent>) {
+        status(terminal.payload, when (terminal.end) {
+            ForegroundServiceLifetime.End.STOPPED -> ACTION_STOPPED_SUFFIX
+            ForegroundServiceLifetime.End.FAILED -> ACTION_FAILED_SUFFIX
+        })
+    }
+
+    private val lifetime = ForegroundServiceLifetime<Intent>()
 
     companion object {
         const val ACTION_START = "com.skycommand.relay.START"

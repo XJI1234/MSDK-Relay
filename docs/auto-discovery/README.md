@@ -21,11 +21,13 @@
 
 以上跨仓库链接适用于两个仓库并排克隆的本机工作区；在 GitHub 单仓库页面需要到 Sky-Command 对应开发分支查看同名文件。分享两端分支时，应在 PR 描述中填写实际的配套分支/PR 链接。
 
-手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。2026-10-14 运行容器契约已明确 Activity detach、无地址权限恢复、AUTO/MANUAL 独占控制与停止收敛，接线尚未实现；独立 Android 接收适配器已完成，下一步接运行容器与 graph，详见 IMPLEMENTATION.md。源码核对发现权限适配器仍保留 Activity、服务非预期销毁尚未报告 failed，均列为接线待修复。START_STICKY 不能证明完整业务对象能在进程重启后恢复。
+手机端设计方向：无 endpoint 先授权并启动前台运行容器，容器唯一拥有发现监听和 graph；Activity 只绑定状态。发现选择候选，session 唯一负责连接/退避，地址变化只切换电脑连接。2026-10-14 运行容器契约已明确 Activity detach、无地址权限恢复、AUTO/MANUAL 独占控制与停止收敛，接线尚未实现；独立 Android 接收适配器已完成，下一步接运行容器与 graph，详见 IMPLEMENTATION.md。已实现权限宿主 detach/onDestroy 和服务非预期销毁 failed；完整进程容器与 App 启动仍待接线。START_STICKY 不能证明完整业务对象能在进程重启后恢复。
 
 2026-10-14 桥接验证：新增纯 JVM `:app-runtime:discovery-session-bridge`，不拥有网络/线程/定时器；稳定映射发现令牌与 ConnectionSelection，同步门禁和 endedGeneration 防止旧握手/断线影响新会话。tick/新代次门禁能发现旧 ACTIVE 已实际结束，不因延迟通知跳过冲突或重新观察；状态锁不跨 session 控制调用，监听注销在控制锁外进行；控制部分成功后抛错也不沿用旧应用缓存。22 项新测试全部通过，含真实 session、公开 gateway 适配器、两类竞态各 30 轮及门禁提交窗口。5 模块共 142 项报告零失败/错误/跳过，本轮重跑 22 项、已有回归报告 120 项 UP-TO-DATE；App Kotlin 编译检查通过（UP-TO-DATE），App 尚未依赖桥接，没有构建/安装新版 APK，不能作为正式自动连接或现场验收证据。
 
 2026-10-14 Android 接收适配器验证：新增 `:relay-discovery:android-discovery-adapter`，通过 WLAN NetworkCallback、LinkProperties、Network.bindSocket 与 Wi-Fi MulticastLock 提供独占 UDP 39082 来源，每秒 tick、网络换代及 1/2/4/8 秒错误退避；接收缓冲 513 字节、包队列上限 64。20 项新测试（15 项生命周期替身、5 项数据/真实 UDP 与资源回滚）零失败/错误/跳过，Android Kotlin 编译通过；发现核心 34 项、桥接 22 项既有报告为 UP-TO-DATE，共 76 项报告通过。本机缺少 lint-gradle:31.7.0 缓存，离线 Lint 未执行。验证命令为 `./gradlew.bat :relay-discovery:android-discovery-adapter:testDebugUnitTest :app-runtime:discovery-session-bridge:test :relay-discovery:test --offline --no-daemon --console=plain`，JDK/Java 临时目录沿用本机启动说明。正式 App 未依赖接收模块、未构建/安装 APK，真实 Android WLAN 广播、锁屏、划卡及 15 秒仍待验收。
+
+2026-10-14 生命周期准备验证：权限平台新增按身份 detach/onDestroy，应用级 USB 接收/授权与检查保留；运行权限用独立请求 key/令牌隔离取消、重绑和重复结果，解绑释放宿主引用并使权限等待 Failed。通知服务通过真实使用的终态持有器在非预期销毁报告 failed，显式停止只报告 stopped，启动失败不重复；空 intent 没有活动操作时退出。新增 12 项测试，替换 1 项与契约相反的源码字符串断言；两适配器共 42 项、运行时/权限/服务核心 14 项报告零失败/错误/跳过，总计 56 项。App Kotlin 编译通过；最后一轮权限测试及核心报告 UP-TO-DATE，服务测试重跑。Lint 沿用离线缓存限制未运行；未构建安装 APK，完整容器、正式无地址启动和手机后台验收尚未完成。
 
 2026-10-13 会话扩展验证：新增 21 项连接选择测试和 4 项 gateway 测试，支持 null endpoint 等待、同选择保留退避、暂停/替换时旧代次清理、入站队列优先级、ACTIVE 前握手门禁及同选择重连后的迟到结束通知。8 模块 JUnit 报告共 167 项，零失败/错误/跳过；其中本轮重跑 gateway/session 与相关回归 130 项，发现/地址校验的 37 项为已有通过报告（Gradle UP-TO-DATE）。`:app:compileDebugKotlin` 通过。契约见 [CONNECTION-SELECTION.md](../../src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)；未构建/安装新 APK，尚无正式手机自动连接证据。
 

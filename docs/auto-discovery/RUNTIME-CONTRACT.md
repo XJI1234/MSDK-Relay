@@ -48,6 +48,6 @@ Android 接收适配器只依赖 relay-discovery 数据类型与调用方回调�
 
 ## 实施证据与验证门槛
 
-已核对 MainActivity、RelayRuntimeHolder、MobileRelayGraph、RelayBootstrapModule、AppRuntime、AndroidPermissionPlatform 与 RelayForegroundService。当前权限平台有 rebind、没有 detach，仍强持有 Activity；服务 onDestroy 仅对 pendingStop 报 stopped，未实现上述非预期 failed。这两项是接线待修复项，不视为已有能力。
+已核对 MainActivity、RelayRuntimeHolder、MobileRelayGraph、RelayBootstrapModule、AppRuntime、AndroidPermissionPlatform 与 RelayForegroundService。2026-10-14 已实现权限宿主 detach/onDestroy（身份及操作令牌隔离，USB 用应用上下文保留）和服务非预期销毁 failed；这些是独立生命周期准备项。完整进程容器、无地址 App 启动、模式控制与现场后台行为仍待接线/验收。
 
 先独立验证网络适配器的重复通知、切换/失效代次、收包长度、来源子网、错误重试、初始化回滚及关闭资源，再接容器。容器验证无地址/权限拒绝与恢复、Activity 重建/detach、模式切换和迟到门禁、服务非预期销毁、启动/停止竞态。正式 APK 编译/安装后记录手机先开/电脑先开、Wi-Fi 重连、跨 AP、电脑重启/IP 变化、后台/锁屏/划卡及 2 手机/2 无人机/15 秒验收；JVM 测试或探针不能替代这些证据。

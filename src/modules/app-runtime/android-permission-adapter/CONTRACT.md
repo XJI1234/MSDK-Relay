@@ -1,7 +1,7 @@
 # android-permission-adapter 模块契约
 
 状态：已实现并已验证
-版本：1.0.0
+版本：1.1.0（2026-10-14）
 所属一级模块：app-runtime
 逻辑 Gradle 路径：:app-runtime:android-permission-adapter
 
@@ -24,10 +24,13 @@ adapter.snapshot() -> PermissionSnapshot
 adapter.request(required, callback) -> PermissionCancellation
 adapter.onUsbPresenceChanged(listener) -> PermissionCancellation
 adapter.rebind(activity, activityResultRegistry, lifecycleOwner) -> Unit
+adapter.detach(activity) -> Unit
 adapter.close() -> Unit
 ```
 
-必须在 `lifecycleOwner` 到达 `STARTED` 前调用 `attach`。`activity` 必须是持有 `activityResultRegistry` 的同一窗口，注册表必须存活至 `close`。适配器注册一个稳定的 Activity Result launcher 和一个非导出的 USB 广播接收器；USB 接收器必须注册在应用上下文上，从 Activity `STARTED` 起保持注册，直到 `close`，不得在 `onStop` 或界面重建时注销。界面重建后必须 `rebind` 到新窗口，不得再次 `attach`，也不得因此关闭适配器。调用方持有实例；中继仍在运行时不得因界面销毁调用 `close`。`onUsbPresenceChanged` 只通知附件接入或拔出，不完成权限请求。
+`activity` 必须是持有 `activityResultRegistry` 的同一窗口。attach/rebind/detach、运行权限请求及 close 在 UI 线程调用；attach/rebind 可在 onCreate 绑定，但缺少运行权限时只有 STARTED 的宿主才能发起系统请求。每次运行权限请求注册独立 Activity Result key 与操作令牌，终态/取消时注销；不采用生命周期注册重建后的同一 key，避免旧结果完成新请求。USB 接收器注册在 applicationContext，从 Activity 首次 STARTED 起保持注册直到 close，不在 onStop、detach 或界面重建时注销。
+
+detach 只解除身份匹配的当前宿主，清空 Activity/registry/lifecycle/launcher 引用；旧宿主的 detach 不影响新窗口。生命周期 onDestroy 自动执行同一解绑。运行权限等待在 detach/rebind 替换时交付 Failed，使协调器/运行时收敛；旧请求结果/取消不影响替代请求，纯 USB 等待和接入观察保留。脱离界面时权限检查使用 applicationContext，缺少权限显示 DENIED，不根据缺失的 rationale 推断永久拒绝。界面重建 rebind 后重新请求/检查权限，不关闭应用级适配器；close 永久清理全部资源。正式进程容器接线见 docs/auto-discovery/RUNTIME-CONTRACT.md，尚待实施。
 
 适配器不得通过 `PermissionPort` 暴露 `Activity`、`Intent`、`UsbAccessory`、权限字符串、`Exception` 或 Android 回调对象。
 

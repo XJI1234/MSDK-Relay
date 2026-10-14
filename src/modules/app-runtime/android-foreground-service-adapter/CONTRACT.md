@@ -5,7 +5,7 @@
 所属一级模块：app-runtime
 逻辑 Gradle 路径：:app-runtime:android-foreground-service-adapter
 
-2026-10-14 接线审计：端口测试已通过，但 Android 平台服务 onDestroy 当前未在无 pendingStop 且有 activeStart 时发布 failed，第 4 条的非预期销毁要求尚待修复/验证。正式容器/空 intent 行为见 [运行容器扩展契约](../../../../docs/auto-discovery/RUNTIME-CONTRACT.md)，不把 START_STICKY 当作业务恢复证明。
+2026-10-14 已补齐服务销毁路径：正常停止发布 stopped，非预期销毁发布 activeStart 对应 failed，启动失败消费该操作、不在销毁时重复发布。无活动操作的空 intent 调用 stopSelfResult，不创建缺失业务图；已有活动操作收到空 intent 不停止健康服务。终态规则由 Android 服务实际使用的 ForegroundServiceLifetime 持有，独立测试并贯通真实端口验证。正式容器接线仍待实施，见 [运行容器扩展契约](../../../../docs/auto-discovery/RUNTIME-CONTRACT.md)，不把 START_STICKY 当作业务恢复证明。
 
 ## 唯一职责
 

@@ -24,18 +24,28 @@ import com.skycommand.relay.runtime.permission.PermissionCancellation
 import com.skycommand.relay.runtime.permission.PermissionKind
 import com.skycommand.relay.runtime.permission.PermissionSnapshot
 import com.skycommand.relay.runtime.permission.PermissionState
+import java.util.concurrent.atomic.AtomicLong
 
 internal class AndroidPermissionPlatform private constructor(
-    private var activity: Activity,
-    private var activityResultRegistry: ActivityResultRegistry,
-    private var lifecycleOwner: LifecycleOwner,
+    activity: Activity,
+    activityResultRegistry: ActivityResultRegistry,
+    lifecycleOwner: LifecycleOwner,
 ) : PermissionAdapterPlatform, DefaultLifecycleObserver {
     private val lock = Any()
-    private val usbManager = activity.getSystemService(Context.USB_SERVICE) as UsbManager
-    private val history: SharedPreferences = activity.getSharedPreferences(HISTORY_NAME, Context.MODE_PRIVATE)
-    private val usbPermissionAction = "${activity.packageName}.permission.USB_ACCESS"
+    private val context = activity.applicationContext
+    private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val history: SharedPreferences = context.getSharedPreferences(HISTORY_NAME, Context.MODE_PRIVATE)
+    private val usbPermissionAction = "${context.packageName}.permission.USB_ACCESS"
     private val declaredPermissions = loadDeclaredPermissions()
-    private var runtimeLauncher: ActivityResultLauncher<Array<String>> = registerLauncher()
+    private val hosts = PermissionHostBinding<Host>()
+    private inner class Host(val activity: Activity, val registry: ActivityResultRegistry, val owner: LifecycleOwner) : AutoCloseable {
+        var launcher: ActivityResultLauncher<Array<String>>? = null
+        override fun close() {
+            runCatching { owner.lifecycle.removeObserver(this@AndroidPermissionPlatform) }
+            runCatching { launcher?.unregister() }
+            launcher = null
+        }
+    }
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -81,8 +91,6 @@ internal class AndroidPermissionPlatform private constructor(
         }
     }
 
-    private var runtimeCallback: (() -> Unit)? = null
-    private var runtimeFailure: (() -> Unit)? = null
     private var usbCallback: (() -> Unit)? = null
     private var usbFailure: (() -> Unit)? = null
     private var attachedAccessory: UsbAccessory? = null
@@ -92,20 +100,20 @@ internal class AndroidPermissionPlatform private constructor(
     private val usbPresenceListeners = mutableListOf<() -> Unit>()
 
     init {
-        lifecycleOwner.lifecycle.addObserver(this)
         synchronized(lock) { attachedAccessory = currentAccessory() }
+        rebind(activity, activityResultRegistry, lifecycleOwner)
     }
 
     override fun onStart(owner: LifecycleOwner) {
         synchronized(lock) {
-            if (closed || receiverRegistered) return
+            if (closed || hosts.currentHost()?.owner !== owner || receiverRegistered) return
             val filter = IntentFilter().apply {
                 addAction(UsbManager.ACTION_USB_ACCESSORY_ATTACHED)
                 addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED)
                 addAction(usbPermissionAction)
             }
             ContextCompat.registerReceiver(
-                activity.applicationContext,
+                context,
                 usbReceiver,
                 filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED,
@@ -120,6 +128,14 @@ internal class AndroidPermissionPlatform private constructor(
         // Keep the USB receiver registered while the Activity exists. Unregistering
         // here drops accessory attach and permission-result broadcasts whenever the
         // operator backgrounds the screen, which leaves the RC stuck disconnected.
+    }
+
+    override fun onDestroy(owner: LifecycleOwner) {
+        hosts.currentHost()?.takeIf { it.owner === owner }?.let { detach(it.activity) }
+    }
+
+    override fun detach(activity: Any) {
+        hosts.detach(activity)
     }
 
     override fun snapshot(): PermissionSnapshot = synchronized(lock) {
@@ -141,28 +157,31 @@ internal class AndroidPermissionPlatform private constructor(
             callback()
             return PermissionCancellation { }
         }
-        synchronized(lock) {
-            check(!closed) { "Permission platform is closed" }
-            check(runtimeCallback == null) { "Runtime permission request is already active" }
-            missing.forEach { permission -> history.edit().putBoolean(historyKey(permission), true).apply() }
-            runtimeCallback = callback
-            runtimeFailure = failure
+        synchronized(lock) { check(!closed) { "Permission platform is closed" } }
+        val token = checkNotNull(hosts.currentToken()) { "No current permission host" }
+        val host = checkNotNull(token.host) { "No current permission host" }
+        check(host.owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) { "Permission host is not visible" }
+        val operation = hosts.begin(token, callback, failure)
+        var launcher: ActivityResultLauncher<Array<String>>? = null
+        val cancellation = PermissionCancellation {
+            hosts.cancel(operation)
+            runCatching { launcher?.unregister() }
+            token.host?.let { if (it.launcher === launcher) it.launcher = null }
         }
+        missing.forEach { permission -> history.edit().putBoolean(historyKey(permission), true).apply() }
         try {
-            runtimeLauncher.launch(missing.toTypedArray())
+            // A unique key isolates late results from cancelled requests.
+            launcher = host.registry.register(
+                "$RUNTIME_LAUNCHER_KEY.${launcherSequence.incrementAndGet()}",
+                ActivityResultContracts.RequestMultiplePermissions(),
+            ) { hosts.complete(operation) }
+            host.launcher = launcher
+            launcher.launch(missing.toTypedArray())
         } catch (failure: Exception) {
-            synchronized(lock) {
-                runtimeCallback = null
-                runtimeFailure = null
-            }
+            cancellation.cancel()
             throw failure
         }
-        return PermissionCancellation {
-            synchronized(lock) {
-                runtimeCallback = null
-                runtimeFailure = null
-            }
-        }
+        return cancellation
     }
 
     override fun rebind(activity: Any, activityResultRegistry: Any, lifecycleOwner: Any) {
@@ -181,15 +200,14 @@ internal class AndroidPermissionPlatform private constructor(
         synchronized(lock) {
             check(!closed) { "Permission platform is closed" }
         }
-        this.lifecycleOwner.lifecycle.removeObserver(this)
-        runCatching { runtimeLauncher.unregister() }
-        this.activity = activity
-        this.activityResultRegistry = activityResultRegistry
-        this.lifecycleOwner = lifecycleOwner
-        runtimeLauncher = registerLauncher()
-        lifecycleOwner.lifecycle.addObserver(this)
-        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-            onStart(lifecycleOwner)
+        val host = Host(activity, activityResultRegistry, lifecycleOwner)
+        hosts.bind(activity, host)
+        try {
+            lifecycleOwner.lifecycle.addObserver(this)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) onStart(lifecycleOwner)
+        } catch (failure: Exception) {
+            hosts.detach(activity)
+            throw failure
         }
     }
 
@@ -228,19 +246,16 @@ internal class AndroidPermissionPlatform private constructor(
         synchronized(lock) {
             if (closed) return
             closed = true
-            runtimeCallback = null
-            runtimeFailure = null
             usbCallback = null
             usbFailure = null
             usbRequestInFlight = false
             usbPresenceListeners.clear()
             if (receiverRegistered) {
-                runCatching { activity.applicationContext.unregisterReceiver(usbReceiver) }
+                runCatching { context.unregisterReceiver(usbReceiver) }
                 receiverRegistered = false
             }
         }
-        lifecycleOwner.lifecycle.removeObserver(this)
-        runCatching { runtimeLauncher.unregister() }
+        hosts.close()
     }
 
     private fun notifyUsbPresenceChanged() {
@@ -262,9 +277,9 @@ internal class AndroidPermissionPlatform private constructor(
             usbRequestInFlight = true
         }
         try {
-            val intent = Intent(usbPermissionAction).setPackage(activity.packageName)
+            val intent = Intent(usbPermissionAction).setPackage(context.packageName)
             val pendingIntent = PendingIntent.getBroadcast(
-                activity.applicationContext,
+                context,
                 USB_PERMISSION_REQUEST_CODE,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -285,7 +300,8 @@ internal class AndroidPermissionPlatform private constructor(
             permissions = runtimePermissions(),
             isGranted = ::isGranted,
             wasRequested = { permission -> history.getBoolean(historyKey(permission), false) },
-            shouldShowRationale = activity::shouldShowRequestPermissionRationale,
+            // Without a UI host we cannot classify a prior denial as permanent.
+            shouldShowRationale = { hosts.currentHost()?.activity?.shouldShowRequestPermissionRationale(it) ?: true },
         )
     }
 
@@ -300,29 +316,17 @@ internal class AndroidPermissionPlatform private constructor(
         .filter(declaredPermissions::contains)
 
     private fun isGranted(permission: String): Boolean =
-        ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun currentAccessory(): UsbAccessory? = usbManager.accessoryList?.firstOrNull()
 
     private fun loadDeclaredPermissions(): Set<String> = runCatching {
         @Suppress("DEPRECATION")
-        activity.packageManager.getPackageInfo(
-            activity.packageName,
+        context.packageManager.getPackageInfo(
+            context.packageName,
             PackageManager.GET_PERMISSIONS,
         ).requestedPermissions.orEmpty().toSet()
     }.getOrDefault(emptySet())
-
-    private fun registerLauncher(): ActivityResultLauncher<Array<String>> =
-        activityResultRegistry.register(
-            RUNTIME_LAUNCHER_KEY,
-            lifecycleOwner,
-            ActivityResultContracts.RequestMultiplePermissions(),
-        ) {
-            val callback = synchronized(lock) {
-                runtimeCallback.also { runtimeCallback = null }
-            }
-            callback?.invoke()
-        }
 
     private fun historyKey(permission: String): String = "requested.$permission"
 
@@ -336,6 +340,7 @@ internal class AndroidPermissionPlatform private constructor(
     companion object {
         private const val HISTORY_NAME = "android-permission-history"
         private const val RUNTIME_LAUNCHER_KEY = "skycommand.relay.runtime.permissions"
+        private val launcherSequence = AtomicLong()
         private const val USB_PERMISSION_REQUEST_CODE = 17024
 
         fun attach(
