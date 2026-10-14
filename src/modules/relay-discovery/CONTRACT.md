@@ -32,4 +32,4 @@
 
 测试共享 JSON 示例、512 字节边界、UTF-8/JSON/类型/来源校验、双广播去重、多地址选择、3/8 秒边界、冲突消退/电脑重启、容量隔离与恢复、ACTIVE 保持、过期/冲突/网络变化后的迟到激活和旧断线，以及有界缓存。测试使用纯 JVM 和手动时钟，无真实 UDP 或飞行行为。
 
-Android 监听、服务归属、gateway/session 热更新接口另行扩展契约后接线；核心测试不证明正式 Relay 已自动连接、后台可用或 15 秒实机目标达标。
+2026-10-14 gateway/session 选择 API 和独立 [discovery-session-bridge](../app-runtime/discovery-session-bridge/CONTRACT.md) 已实现；桥接持有本核心并映射选择令牌、握手门禁与结束代次，核心自身仍无 gateway 依赖。Android 监听和服务归属另行扩展契约后接线；核心/桥接测试不证明正式 Relay 已自动连接、后台可用或 15 秒实机目标达标。

@@ -4,6 +4,8 @@
 版本：1.0.0
 Gradle 路径：:app-runtime
 
+2026-10-14 新增独立子模块 [discovery-session-bridge](discovery-session-bridge/CONTRACT.md)，组合发现核心与 gateway 公开控制，具备稳定选择、同步握手门禁与结束代次隔离。它尚未接入本门面或 Android 前台运行容器，不改变现有权限/服务/业务模块启动顺序。
+
 ## 唯一职责
 
 本模块持有 Android 中继运行时生命周期，并按固定顺序组合运行时职责：权限、前台服务、随后是注入的业务模块。`android-permission-adapter` 由 Android 应用组合层作为具体 `PermissionPort` 提供，并不是该平台无关门面的依赖。本模块是唯一允许组合这些运行时职责的模块。

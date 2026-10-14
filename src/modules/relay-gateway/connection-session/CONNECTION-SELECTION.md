@@ -26,4 +26,4 @@
 
 ## 实施/验证边界
 
-测试覆盖无地址 start/stop、显式停止后选择不自动启动、重复选择保持退避、各状态换地址/撤销、同 URL 新选择、旧 opened/paired/close/failure/handshake/retry、清理失败、新地址 open 拒绝、并发选择/stop、优先清除排队入站帧、握手门禁拒绝/异常和同选择重连后的迟到结束通知，以及 gateway 保留命令注册、丢弃旧完成回调和中止旧传输。运行容器的发现令牌与 selection 映射及 Android 生命周期另行接线；本文 API 测试不代表正式 App 自动连接完成。
+测试覆盖无地址 start/stop、显式停止后选择不自动启动、重复选择保持退避、各状态换地址/撤销、同 URL 新选择、旧 opened/paired/close/failure/handshake/retry、清理失败、新地址 open 拒绝、并发选择/stop、优先清除排队入站帧、握手门禁拒绝/异常和同选择重连后的迟到结束通知，以及 gateway 保留命令注册、丢弃旧完成回调和中止旧传输。2026-10-14 发现令牌与 selection 映射已由独立 [运行桥接](../../app-runtime/discovery-session-bridge/CONTRACT.md) 实现并测试；Android 生命周期另行接线，本文 API 测试不代表正式 App 自动连接完成。

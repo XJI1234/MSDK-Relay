@@ -1,17 +1,18 @@
 # 正式 Relay 自动发现接线检查表
 
-更新日期：2026-10-13。状态：纯 JVM 公告解析/候选核心与 gateway/session 可选连接选择 API 已完成；正式 Android 监听、发现与 session 的桥接以及生命周期接线待实施。共同协议以 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md 为准；两个仓库并排克隆时可访问[协议](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)和[设计](../../../Sky-Command/docs/auto-discovery/DESIGN.md)。GitHub 单仓库阅读需查看配套电脑开发分支。
+更新日期：2026-10-14。状态：纯 JVM 公告解析/候选核心、gateway/session 可选连接选择 API 及发现到会话桥接已完成；正式 Android 监听、无地址权限/前台运行容器及生命周期接线待实施。共同协议以 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md 为准；两个仓库并排克隆时可访问[协议](../../../Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md)和[设计](../../../Sky-Command/docs/auto-discovery/DESIGN.md)。GitHub 单仓库阅读需查看配套电脑开发分支。
 
 ## 下一步实施顺序
 
 1. **已完成**纯 Kotlin/JVM relay-discovery，按共享 JSON 示例验证 UDP 39082、512 字节上限、字段类型、3 秒观察/8 秒过期、多电脑冲突与容量保护；使用单调时钟，网络/选择令牌隔离迟到回调。接口见模块 CONTRACT，实际报告见本目录 README；探针 39081 未替换正式监听。
-2. **已完成** relay-gateway 与 connection-session 契约/API 扩展：初始 endpoint 可为 null，selectConnection 支持等待、暂停和串行替换，同一选择对象不重置退避；ACTIVE 前同步门禁及结束事件的 endedGeneration 隔离迟到 paired/断线通知。见 [连接选择契约](../../src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)。本项只完成 session 能力，运行容器映射未接线。
+2. **已完成** relay-gateway 与 connection-session 契约/API 扩展：初始 endpoint 可为 null，selectConnection 支持等待、暂停和串行替换，同一选择对象不重置退避；ACTIVE 前同步门禁及结束事件的 endedGeneration 隔离迟到 paired/断线通知。见 [连接选择契约](../../src/modules/relay-gateway/connection-session/CONNECTION-SELECTION.md)。
+   **已完成桥接子阶段**：独立 JVM `:app-runtime:discovery-session-bridge` 持有发现核心、稳定映射选择对象并组合 gateway 公开接口；22 项测试结果见 README，正式 App 尚未依赖该模块。接口/锁顺序见 [桥接契约](../../src/modules/app-runtime/discovery-session-bridge/CONTRACT.md)。
 3. 更新 app-runtime、foreground-service 与 settings 契约，令首次授权和前台服务启动不依赖电脑地址；无候选时容器运行、gateway STOPPED。UDP 监听/网络回调归唯一前台运行容器，Activity 只显示状态并重新绑定权限适配器。
 4. 实现 Android Wi-Fi socket/网络代次、容器与 MobileRelayGraph 接线。切换电脑只清理并替换 gateway 的连接配置，不关闭整个 graph、不重建 DJI/图传/任务对象，不恢复旧命令或任务传输。
 5. 调整主界面自动授权后启动、搜索/冲突/连接状态与隐藏手动入口，移除主界面停止按钮；核对同事的对频迁移分支后再改相关布局，避免重复实现。
 6. 构建并安装正式 Relay，完成手机先开/电脑先开、后台/锁屏/划掉卡片、电脑退出再上线/IP 变化、Wi-Fi 重连/跨 AP、2 手机/2 无人机及 15 秒目标验收。
 
-下一步从第 3 项的运行容器契约开始，先定义并验证发现到 session 的桥接，再接 Android。运行容器须将发现快照与 gateway 控制串行协调：一个发现选择令牌对应一个 ConnectionSelection，相同令牌复用对象；CONFLICT/WAITING/OBSERVING 使未 ACTIVE 会话暂停。paired 在同步 admit(selection, generation) 中按映射调用 activate，获准时记录实际激活代次；异步 endedGeneration 只在匹配当前激活代次时调用 disconnected，不能仅比较选择令牌或在异步 ACTIVE 通知中做门禁。门禁不得阻塞或反向调用 gateway 控制入口，桥接锁顺序必须避免同步 selectConnection 与门禁互相等待。正式接收适配器提供接收子网和网络令牌，使用 513 字节缓冲检测超长报文；复用 socket 缓冲时仅传入本次实际长度的拷贝。每秒 snapshot 驱动过期，不能把本核心误当作自带监听线程的模块。
+下一步从第 3 项的无地址权限/前台运行容器契约开始，再接第 4 项 Android Wi-Fi 接收适配器。桥接已实现：一个发现选择令牌对应一个 ConnectionSelection，重复公告/tick 复用对象；CONFLICT/WAITING/OBSERVING 暂停未 ACTIVE 会话。paired 在同步门禁按映射激活并记录实际代次，结束通知只清理匹配的获准代次；tick 和新代次门禁还会识别旧 ACTIVE 已结束，避免通知滞后时绕过最新冲突。状态锁不跨 session 控制调用，注销监听在控制锁外完成。运行容器先注入 pairingAdmission、绑定唯一 gateway（初始 endpoint=null），前台与权限就绪后调用 start，再每秒 tick；外部不能同时控制该 gateway，手动模式切换须先明确独占控制权。正式接收适配器提供接收子网和网络令牌，使用 513 字节缓冲检测超长报文；复用 socket 缓冲时仅传入本次实际长度的拷贝。真实服务销毁须停止网络/定时来源并 close 桥接；Activity 销毁不能关闭桥接。
 
 ## 已核对的生命周期风险
 

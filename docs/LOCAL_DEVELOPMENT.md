@@ -49,3 +49,15 @@ gateway/session 允许无初始地址启动等待，以稳定选择对象暂停�
 ```
 
 最终构建成功：session 69、gateway 10、transport 14、command 13、mission 14、outbound 10、discovery 34、endpoint-settings 3，共 167 项报告，零失败/错误/跳过；本轮重跑前 6 模块的 130 项，后 2 模块 37 项 UP-TO-DATE。新增 21 项连接选择和 4 项 gateway 测试，App Kotlin 编译通过；没有重新安装依赖或构建/安装 APK。既有 SDK XML 版本及 Gradle 弃用警告仍存在，未作为测试失败。报告、缓存和 JAR 保持忽略；正式 UDP、后台/锁屏、多手机及 15 秒目标仍待验收。
+
+## 发现到会话桥接验证（2026-10-14）
+
+新增纯 JVM `:app-runtime:discovery-session-bridge`，组合发现核心和 gateway 公开控制。模块契约定义注入同步门禁、绑定唯一 gateway、授权/前台就绪后启动、运行容器每秒 tick 及统一关闭的边界。它不持有 socket、Android Activity 或 DJI，尚未加入 App 依赖；当前已安装手机版本仍走手动地址流程。
+
+配置上文 JDK 17 与 Java 临时目录后执行：
+
+```powershell
+./gradlew.bat :app-runtime:discovery-session-bridge:test :relay-discovery:test :relay-gateway:connection-session:test :relay-gateway:test :app-runtime:test :app:compileDebugKotlin --offline --no-daemon --console=plain
+```
+
+最终构建成功：新桥接 22、发现 34、session 69、gateway 10、app-runtime 7，共 142 项报告零失败/错误/跳过；本轮重跑桥接 22 项，其余 120 项与 App 编译检查为 UP-TO-DATE。测试覆盖真实 session/gateway、延迟结束通知、门禁提交窗口、冲突/关闭各 30 轮并发及控制异常；桥接调用控制时释放状态锁、注销监听时释放控制锁。控制适配器已切换后抛错也会撤销缓存，使后续冲突仍能暂停旧目标。最初沙箱拒绝用户级 Gradle 缓存锁，按权限机制使用已有缓存在沙箱外离线验证，无依赖重装。未构建/安装 APK，正式 UDP/权限/前台容器接线与后台/两手机两无人机/15 秒验收仍待完成。

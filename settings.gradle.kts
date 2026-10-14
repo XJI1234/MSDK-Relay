@@ -115,6 +115,7 @@ includeRelayModule(":relay-settings:settings-store")
 includeRelayModule(":relay-settings:android-settings-adapter")
 
 includeRelayModule(":app-runtime")
+includeRelayModule(":app-runtime:discovery-session-bridge")
 includeRelayModule(":app-runtime:permission-coordinator")
 includeRelayModule(":app-runtime:android-permission-adapter")
 includeRelayModule(":app-runtime:android-foreground-service-adapter")
