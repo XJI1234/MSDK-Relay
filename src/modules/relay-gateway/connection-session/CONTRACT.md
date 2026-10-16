@@ -1,10 +1,12 @@
 # relay-gateway.connection-session 二级模块契约
 
 状态：已批准并实现
-版本：0.1.1
+版本：0.2.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)
 协议依赖：[`../protocol-core/CONTRACT.md`](../protocol-core/CONTRACT.md)
 模块标识：`relay-connection-session`
+
+可选 endpoint、串行连接选择/暂停、同地址的新选择身份与本地结束原因扩展见 [CONNECTION-SELECTION.md](CONNECTION-SELECTION.md)。该扩展优先于本文原固定 endpoint 规则；五态、协议握手和资源清理顺序保持有效。
 
 ## 1. 模块身份
 
@@ -38,7 +40,7 @@
 
 ### 2.2 明确不负责
 
-- 不保存或修改电脑地址、端口和 `deviceId`；这些由 `relay-settings` 提供；
+- 不持久化或自行发现电脑地址，不修改 deviceId；只消费 settings/发现运行容器提供的已校验连接选择，并按扩展契约切换当前目标；
 - 不创建稳定设备身份，也不把 `deviceId` 当作密码；
 - 不实现 OkHttp、Ktor 或其他 WebSocket 库；这些属于 `transport-adapter`；
 - 不定义 JSON 字段、协议限制或编码规则；这些属于 `protocol-core`；
@@ -102,7 +104,7 @@ ConnectionSession.onStateChanged(listener)
 
 | 字段 | 约束 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `endpoint` | 已由 `endpoint-settings` 校验的非空值 | 无 | 模块不得重新解释 URL 业务规则 |
+| `endpoint` | null 或通过 `endpoint-settings` 校验的值 | 无 | null 为等待选择；复用校验器，不重新定义 URL 规则 |
 | `deviceId` | 已满足 `protocol-core` 的 `deviceId` 约束 | 无 | 用于构造 `hello` |
 | `handshakeTimeoutMillis` | `1000..60000` | `10000` | 从 `hello` 被发送接口接受后开始计算 |
 | `reconnectInitialDelayMillis` | `250..30000` | `1000` | 第一次自动重连的等待时间 |
@@ -165,13 +167,17 @@ SessionSnapshot {
 SessionStateEvent {
   previousState: SessionState,
   snapshot: SessionSnapshot,
-  endReason: SessionEndReason?
+  endReason: SessionEndReason?,
+  connectionSelection: ConnectionSelection?,
+  endedGeneration: SessionGeneration?
 }
 ```
 
 ```text
 SessionEndReason {
   kind: EXPLICIT_STOP
+      | ENDPOINT_CHANGED
+      | CONNECTION_PAUSED
       | NOT_CONNECTED
       | HANDSHAKE_TIMEOUT
       | INVALID_FRAME
@@ -367,7 +373,7 @@ RECONNECT_WAIT
 - 字段缺失时按 v1 处理，这是当前电脑端兼容要求；
 - 帧属于当前代次，并且当前状态恰好是 `AWAITING_PAIRING`。
 
-接受后形成的活动会话上下文为：
+合法 paired 还须通过扩展契约中的同步 `SessionPairingAdmission.admit(selection, generation)` 门禁；拒绝或异常时暂停并清理，不进入 ACTIVE 或交付业务。获准后形成的活动会话上下文为：
 
 ```text
 ActiveSession {
@@ -693,7 +699,7 @@ min(reconnectInitialDelayMillis * 2^(n - 1), reconnectMaxDelayMillis)
 - handshake timeout 的最小值、最大值、低于最小值和高于最大值；
 - reconnect initial delay 的最小值、最大值和越界值；
 - reconnect max 小于 initial、等于 initial、等于上限和高于上限；
-- 空或未经校验的 endpoint、非法 `deviceId` 被拒绝且不调用 transport；
+- null endpoint 创建成功且等待选择；空字符串/非法 endpoint、非法 `deviceId` 被拒绝且不调用 transport；
 - 调用方不能通过配置改成非 v1 协议版本。
 
 ### 17.2 启动、停止和幂等

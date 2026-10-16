@@ -9,6 +9,7 @@ import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
 import com.skycommand.relay.photo.executor.DjiPhotoPort
 import com.skycommand.relay.photo.executor.PhotoDjiCompletion
+import com.skycommand.relay.photo.executor.PhotoDownloadProgress
 import com.skycommand.relay.photo.executor.PhotoHardwareRequest
 import com.skycommand.relay.photo.executor.PhotoLocalFile
 import com.skycommand.relay.photo.executor.PhotoReadable
@@ -22,13 +23,74 @@ import com.skycommand.relay.protocol.JsonArray
 import com.skycommand.relay.protocol.JsonNumber
 import com.skycommand.relay.protocol.JsonString
 import com.skycommand.relay.protocol.MediaResultFrame
+import com.skycommand.relay.protocol.PhotoProgressFrame
+import com.skycommand.relay.protocol.PhotoProgressPhase
 import com.skycommand.relay.protocol.RelayFrame
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class CameraPhotoContractTest {
+    @Test
+    fun fetchProgressKeepsCommandIdentityAndActualBytesUntilTheBatchFinishes() {
+        val port = Port()
+        val progress = mutableListOf<Pair<CommandFrame, PhotoProgressFrame>>()
+        val photo = photo(port, publishPhotoProgress = { command, frame -> progress += command to frame })
+        val command = fetch()
+        val completion = Completion()
+        try {
+            photo.commandHandler().handle(command, completion)
+            port.progress(PhotoDownloadProgress.Downloading("shot.jpg", 2, 4))
+            port.progress(PhotoDownloadProgress.Downloading("shot.jpg", 2, 4))
+            port.progress(PhotoDownloadProgress.Downloading("shot.jpg", 1, 4))
+            port.progress(PhotoDownloadProgress.Downloading("shot.jpg", 4, 4))
+            val bytes = byteArrayOf(1, 2, 3, 4)
+            port.delivered(PhotoLocalFile("shot.jpg", 4, PhotoMediaPublisher.sha256Hex(bytes), PhotoReadable { bytes.inputStream() }))
+            photo.acceptMediaResult(MediaResultFrame("photo-1", true, "stored"))
+            port.empty()
+
+            val frames = progress.map { (original, frame) -> assertSame(command, original); frame }
+            assertEquals(listOf(2L, 4L), frames.filter { it.phase == PhotoProgressPhase.DOWNLOADING }.map { it.transferredBytes })
+            assertEquals(0L, frames.last { it.phase == PhotoProgressPhase.SENDING }.transferredBytes)
+            assertEquals(PhotoProgressPhase.LISTING, frames.last().phase)
+            assertEquals(1L, frames.last().completedCount)
+            assertEquals((1L..frames.size.toLong()).toList(), frames.map { it.sequence })
+            assertTrue(completion.events.single().startsWith("ok:Photo delivered"))
+            port.progress(PhotoDownloadProgress.Downloading("late.jpg", 1, 1))
+            assertEquals(frames.size, progress.size)
+        } finally { photo.close() }
+    }
+
+    @Test
+    fun aFailingProgressObserverDoesNotChangeTheFetchOutcome() {
+        val port = Port()
+        val photo = photo(port, publishPhotoProgress = { _, _ -> error("observer") })
+        val completion = Completion()
+        try {
+            photo.commandHandler().handle(fetch(), completion)
+            port.empty()
+            assertTrue(completion.events.single().startsWith("ok:No unsent"))
+        } finally { photo.close() }
+    }
+
+    @Test
+    fun deviceInvalidationRetiresProgressBeforeLateDjiCallbacks() {
+        val port = Port()
+        val progress = mutableListOf<PhotoProgressFrame>()
+        val photo = photo(port, publishPhotoProgress = { _, frame -> progress += frame })
+        val completion = Completion()
+        try {
+            photo.commandHandler().handle(fetch(), completion)
+            photo.markDeviceUnavailable()
+            val count = progress.size
+            port.progress(PhotoDownloadProgress.Downloading("late.jpg", 1, 1))
+            assertEquals(count, progress.size)
+            assertTrue(completion.events.single().startsWith("reject:"))
+        } finally { photo.close() }
+    }
+
     @Test
     fun captureSuccessStoresIdentityAndRejectsASecondCommandUntilFinished() {
         val port = Port()
@@ -168,6 +230,7 @@ class CameraPhotoContractTest {
         scheduler: OperationScheduler = OperationScheduler { _, _ -> OperationCancellation { } },
         onCameraMediaBusy: () -> Unit = {},
         onCameraMediaReleased: () -> Unit = {},
+        publishPhotoProgress: (CommandFrame, PhotoProgressFrame) -> Unit = { _, _ -> },
     ): CameraPhoto =
         CameraPhoto.create(
             CameraPhotoDependencies(
@@ -179,6 +242,7 @@ class CameraPhotoContractTest {
                 mediaPublisher = PhotoMediaPublisher.create(writer, Clock(), timeoutMillis = 1_000),
                 onCameraMediaBusy = onCameraMediaBusy,
                 onCameraMediaReleased = onCameraMediaReleased,
+                publishPhotoProgress = publishPhotoProgress,
             ),
         )
 
@@ -221,6 +285,7 @@ class CameraPhotoContractTest {
         fun delivered(file: PhotoLocalFile) = checkNotNull(completion).delivered(file)
         fun empty() = checkNotNull(completion).empty()
         fun fail(failure: PhotoDjiFailure? = null) = checkNotNull(completion).fail(failure)
+        fun progress(progress: PhotoDownloadProgress) = checkNotNull(completion).onProgress(progress)
         private var hardwareReleased: (() -> Unit)? = null
         override fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {
             check(checkNotNull(this.completion) === completion)

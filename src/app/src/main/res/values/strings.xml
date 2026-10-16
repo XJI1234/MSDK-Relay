@@ -21,9 +21,20 @@
     <string name="status_battery">主电池连接 [BatteryKey.KeyConnection, LEFT_OR_MAIN]：%1$s</string>
     <string name="status_stream">图传：%1$s</string>
     <string name="status_mission">航线：%1$s</string>
-    <string name="pairing_hint">对频是让遥控器和飞机建立链路。启动中继并连上遥控器后，若飞机还没连上，点开始对频；对频成功后再等飞机连上。</string>
-    <string name="start_pairing">开始对频</string>
-    <string name="stop_pairing">停止对频</string>
-    <string name="message_pairing_rejected">对频请求被拒绝。需要中继已启动、遥控器已连接，且飞机尚未连上。</string>
-    <string name="message_pairing_stop_rejected">停止对频被拒绝。当前没有正在进行的对频。</string>
+
+    <string name="retry_relay">授权 / 重试</string>
+    <string name="permission_settings">到系统设置授权</string>
+    <string name="manual_connection">使用手动地址</string>
+    <string name="automatic_connection">返回自动发现</string>
+    <string name="message_stopping">正在清理运行模块，请稍后重试</string>
+    <string name="message_connection_control_failed">连接模式切换失败，请重试</string>
+    <string name="discovery_permissions">等待系统授权</string>
+    <string name="discovery_runtime_failed">运行未就绪，请检查权限并重试</string>
+    <string name="discovery_preparing">准备自动连接</string>
+    <string name="discovery_source_failed">网络监听失败，请重试</string>
+    <string name="discovery_connected">已连接</string>
+    <string name="discovery_conflict">发现多台电脑，等待冲突解除</string>
+    <string name="discovery_connecting">连接中 / 等待重试</string>
+    <string name="discovery_searching">搜索电脑，等待上线</string>
+    <string name="discovery_manual">手动调试：%1$s</string>
 </resources>

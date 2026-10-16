@@ -4,6 +4,10 @@
 版本：1.0.0
 Gradle 路径：:app-runtime
 
+2026-10-14 新增独立子模块 [discovery-session-bridge](discovery-session-bridge/CONTRACT.md)，组合发现核心与 gateway 公开控制，具备稳定选择、同步握手门禁与结束代次隔离。它由正式 App 组合层调用，不引入本门面的平台依赖，不改变权限/服务/业务模块启动顺序。
+
+正式 App 的无地址启动、对象归属、模式独占与停止收敛遵循 [运行容器扩展契约](../../../docs/auto-discovery/RUNTIME-CONTRACT.md)，该扩展已在 App 组合层接线，实机验收待完成。容器生命周期 RUNNING 不等于电脑连接 ACTIVE；只切换连接不能重建业务图。
+
 ## 唯一职责
 
 本模块持有 Android 中继运行时生命周期，并按固定顺序组合运行时职责：权限、前台服务、随后是注入的业务模块。`android-permission-adapter` 由 Android 应用组合层作为具体 `PermissionPort` 提供，并不是该平台无关门面的依赖。本模块是唯一允许组合这些运行时职责的模块。
@@ -35,3 +39,5 @@ runtime.onChanged(listener) -> Registration
 ## 测试
 
 必须覆盖已授予权限启动、异步权限完成、拒绝/取消、服务失败与同步回调、模块失败时清理服务、正常逆序停止、重复/并发调用、延迟回调、监听器失败及注册。
+
+2026-10-14 模块启动中前台服务失败：原子标记 STOPPING 与 FOREGROUND_SERVICE 失败，等待当轮 bootstrap.start 返回后清理已启动模块，再转 FAILED；停止请求后的迟到服务失败同样不得提前暴露终态。开始模块与结束启动的状态修改在运行时锁下提交，防止失败与 RUNNING 互相覆盖。新增 3 项延迟启动行为测试，runtime 共 10 项通过。

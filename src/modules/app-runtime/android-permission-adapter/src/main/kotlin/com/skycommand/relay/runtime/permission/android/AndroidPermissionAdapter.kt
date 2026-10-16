@@ -22,6 +22,8 @@ internal interface PermissionAdapterPlatform {
 
     fun rebind(activity: Any, activityResultRegistry: Any, lifecycleOwner: Any) = Unit
 
+    fun detach(activity: Any) = Unit
+
     fun close() = Unit
 }
 
@@ -110,6 +112,12 @@ class AndroidPermissionAdapter internal constructor(
         runCatching { platform.close() }
     }
 
+    /** Must run on the UI thread; a stale Activity cannot detach its successor. */
+    fun detach(activity: Any) {
+        if (synchronized(lock) { closed }) return
+        platform.detach(activity)
+    }
+
     private fun onPlatformResult(operation: Operation) {
         if (!isActive(operation)) return
         val snapshot = runCatching { platform.snapshot() }.getOrNull()
@@ -193,7 +201,7 @@ class AndroidPermissionAdapter internal constructor(
         }
 
         fun cancelPlatformRequests() {
-            val current = synchronized(lock) { cancellations.toList() }
+            val current = synchronized(lock) { cancellations.toList().also { cancellations.clear() } }
             current.forEach { runCatching { it.cancel() } }
         }
     }

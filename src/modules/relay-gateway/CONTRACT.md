@@ -1,5 +1,7 @@
 # relay-gateway 一级模块契约
 
+2026-10-13 连接选择扩展：初始 endpoint 可为 null，gateway 暴露 `selectConnection(ConnectionSelection?)` 和只读 `connectionSnapshot()`；等待、暂停和串行替换的结果/清理语义见 [connection-session/CONNECTION-SELECTION.md](connection-session/CONNECTION-SELECTION.md)。gateway 不选择候选，不调用 start 重置发现重试，不重建命令注册表、任务或 DJI 对象；正式运行容器接线另行实施。
+
 状态：已修订；协议与命令目录已实现，真实 DJI 业务待实机验证
 版本：0.3.0
 所属程序：MSDK Relay Android

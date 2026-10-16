@@ -150,6 +150,8 @@ tasks.configureEach {
 }
 
 dependencies {
+    implementation(project(":app-runtime:discovery-session-bridge"))
+    implementation(project(":relay-discovery:android-discovery-adapter"))
     implementation(project(":relay-gateway")); implementation(project(":relay-gateway:transport-adapter")); implementation(project(":relay-gateway:protocol-core"))
     implementation(project(":device-connection")); implementation(project(":device-connection:android-dji-sdk-adapter")); implementation(project(":device-connection:android-remote-controller-adapter")); implementation(project(":device-connection:android-aircraft-adapter")); implementation(project(":device-connection:android-pairing-command-adapter")); implementation(project(":device-connection:android-pairing-status-adapter"))
     implementation(project(":telemetry")); implementation(project(":telemetry:android-flight-telemetry-adapter"))

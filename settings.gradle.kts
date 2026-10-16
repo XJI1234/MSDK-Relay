@@ -33,6 +33,8 @@ fun includeRelayModule(path: String) {
 }
 
 includeRelayModule(":relay-gateway")
+includeRelayModule(":relay-discovery")
+includeRelayModule(":relay-discovery:android-discovery-adapter")
 includeRelayModule(":relay-gateway:protocol-core")
 includeRelayModule(":relay-gateway:connection-session")
 includeRelayModule(":relay-gateway:outbound-publisher")
@@ -114,6 +116,7 @@ includeRelayModule(":relay-settings:settings-store")
 includeRelayModule(":relay-settings:android-settings-adapter")
 
 includeRelayModule(":app-runtime")
+includeRelayModule(":app-runtime:discovery-session-bridge")
 includeRelayModule(":app-runtime:permission-coordinator")
 includeRelayModule(":app-runtime:android-permission-adapter")
 includeRelayModule(":app-runtime:android-foreground-service-adapter")

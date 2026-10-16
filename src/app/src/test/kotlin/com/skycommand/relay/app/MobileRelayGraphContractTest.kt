@@ -245,23 +245,9 @@ class MobileRelayGraphContractTest {
         ).first { it.exists() }.readText()
         assertTrue(source.contains("MissionTelemetryDiagnosticRecorder(journal)"))
         assertTrue(source.contains("waylineTelemetryDiagnostics.record(wayline.snapshot())"))
-        assertTrue(source.contains("AndroidDjiWaylineAdapter.create(activity, diagnosticSink"))
+        assertTrue(source.contains("AndroidDjiWaylineAdapter.create(applicationContext, diagnosticSink"))
         assertTrue(source.contains("EXECUTION_STATE_OBSERVED"))
         assertTrue(source.contains("WAYLINE_INTERRUPT_OBSERVED"))
-    }
-}
-
-class MainActivityRetentionContractTest {
-    @Test
-    fun destroyingTheScreenDoesNotCloseARetainedRelay() {
-        val source = listOf(
-            Path("src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
-            Path("src/app/src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
-        ).first { it.exists() }.readText()
-        assertTrue(source.contains("RelaySurfaceRetention.shouldRetain"))
-        assertTrue(source.contains("RelayRuntimeHolder"))
-        assertTrue(source.contains("permissionAdapter.rebind"))
-        assertTrue(!source.contains("graph?.close()\n        graph = null\n        permissionAdapter.close()"))
     }
 }
 

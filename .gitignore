@@ -11,3 +11,19 @@ cmake-build-*/
 
 # Local device diagnostics, screenshots and extracted SDK/build files.
 /tmp-*
+
+# Local packages, diagnostics and credentials (including files copied out of build/).
+*.apk
+*.aab
+*.log
+*.logcat
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+# Keep the tracked, shared gradle.properties free of secrets.
+gradle.local.properties

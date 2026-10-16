@@ -1,6 +1,6 @@
 package com.skycommand.relay.app
 
-import androidx.activity.ComponentActivity
+import android.content.Context
 import com.skycommand.relay.device.DeviceConnection
 import com.skycommand.relay.device.DeviceConnectionDependencies
 import com.skycommand.relay.device.DeviceConnectionStartResult
@@ -38,6 +38,9 @@ import com.skycommand.relay.diagnostics.gateway.DiagnosticTimeoutScheduler
 import com.skycommand.relay.diagnostics.gateway.GatewayDiagnosticPublisher
 import com.skycommand.relay.diagnostics.gateway.RelayGatewayDiagnosticPort
 import com.skycommand.relay.runtime.AppRuntime
+import com.skycommand.relay.runtime.discovery.GatewayDiscoverySessionPort
+import com.skycommand.relay.runtime.discovery.RelayConnectionControl
+import com.skycommand.relay.runtime.discovery.RelayConnectionControlSnapshot
 import com.skycommand.relay.runtime.RuntimeCancellation
 import com.skycommand.relay.runtime.RuntimeStartResult
 import com.skycommand.relay.runtime.RuntimeState
@@ -50,6 +53,7 @@ import com.skycommand.relay.runtime.permission.PermissionRequestResult
 import com.skycommand.relay.runtime.permission.PermissionState
 import com.skycommand.relay.runtime.permission.android.AndroidPermissionAdapter
 import com.skycommand.relay.runtime.service.ForegroundServiceController
+import com.skycommand.relay.runtime.service.ForegroundServiceState
 import com.skycommand.relay.runtime.service.android.AndroidForegroundServicePort
 import com.skycommand.relay.runtime.service.android.ForegroundNotificationSpec
 import com.skycommand.relay.stream.LiveStream
@@ -121,6 +125,7 @@ data class MobileRelayStatus(
     val mission: String,
     val canStartPairing: Boolean,
     val canStopPairing: Boolean,
+    val connection: RelayConnectionControlSnapshot? = null,
 )
 
 class MobileRelayGraph private constructor(
@@ -144,6 +149,7 @@ class MobileRelayGraph private constructor(
     private val waylineAdapter: AndroidDjiWaylineAdapter,
     private val staging: AndroidMissionStagingStorage,
     private val foregroundPort: AndroidForegroundServicePort,
+    private val foregroundController: ForegroundServiceController,
     private val executor: ScheduledThreadPoolExecutor,
     private val timeoutExecutor: ScheduledThreadPoolExecutor,
     private val captureDiagnosticExecutor: ExecutorService,
@@ -152,6 +158,8 @@ class MobileRelayGraph private constructor(
     private val flightTelemetryDiagnostics: FlightTelemetryDiagnosticRecorder,
     private val waylineTelemetryDiagnostics: MissionTelemetryDiagnosticRecorder,
     private val permissionAdapter: AndroidPermissionAdapter,
+    private val connectionControl: RelayConnectionControl,
+    private val onReleased: () -> Unit,
 ) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     private val listeners = CopyOnWriteArraySet<(MobileRelayStatus) -> Unit>()
@@ -164,14 +172,32 @@ class MobileRelayGraph private constructor(
     private var lastFlightControllerLink = LinkState.UNKNOWN
     private val videoSourceLifecycleLock = Any()
     private var videoSourceInvalidated = false
+    private val releaseCoordinator = GraphReleaseCoordinator(
+        runtime::snapshot,
+        foregroundController::snapshot,
+        schedule = { executor.execute(it) },
+        stop = {
+            runCatching { startCancellation?.cancel() }
+            startCancellation = null
+            runCatching { cancelUsbWatch() }
+            runCatching { runtime.stop() }
+        },
+        release = ::releaseResources,
+    )
 
-    fun start(): RuntimeStartResult {
-        val result = runtime.start(setOf(PermissionKind.RUNTIME))
-        if (result is RuntimeStartResult.Accepted) startCancellation = result.cancellation
-        return result
+    private fun <T> withOperation(whenClosing: T, action: () -> T): T {
+        if (!releaseCoordinator.enter()) return whenClosing
+        return try { action() } finally { releaseCoordinator.leave() }
     }
 
-    fun stop(): RuntimeStopResult {
+    fun start(): RuntimeStartResult = withOperation(RuntimeStartResult.TransitionInProgress) {
+        val result = runtime.start(setOf(PermissionKind.RUNTIME))
+        if (result is RuntimeStartResult.Accepted) startCancellation = result.cancellation
+        result
+    }
+
+    fun stop(): RuntimeStopResult = withOperation(RuntimeStopResult.TransitionInProgress) {
+        connectionControl.stop()
         cancelUsbWatch()
         flightTelemetryDiagnostics.reset()
         waylineTelemetryDiagnostics.reset()
@@ -182,10 +208,14 @@ class MobileRelayGraph private constructor(
         synchronized(videoSourceLifecycleLock) { videoSourceInvalidated = false }
         startCancellation?.cancel()
         startCancellation = null
-        return runtime.stop()
+        runtime.stop()
     }
 
     fun startPairing(): PairingRequestResult = device.requestPairingStart(30_000) { notifyStatus() }
+    fun isClosing(): Boolean = closed.get()
+    fun retryConnection(): Boolean = withOperation(false) { runtime.snapshot() == RuntimeState.RUNNING && connectionControl.start() }
+    fun automaticConnection(): Boolean = withOperation(false) { !closed.get() && connectionControl.automatic() }
+    fun manualConnection(endpoint: String): Boolean = withOperation(false) { !closed.get() && connectionControl.manual(endpoint) }
     fun stopPairing(): PairingRequestResult = device.requestPairingStop(30_000) { notifyStatus() }
 
     fun status(): MobileRelayStatus {
@@ -207,6 +237,7 @@ class MobileRelayGraph private constructor(
             mission = missionSnapshot.upload.toString() + "/" + missionSnapshot.execution.name,
             canStartPairing = running && capabilities.canStartPairing,
             canStopPairing = running && capabilities.canStopPairing,
+            connection = connectionControl.snapshot(),
         )
     }
 
@@ -222,11 +253,14 @@ class MobileRelayGraph private constructor(
         }.let { registration -> CloseableRegistration(registration::unregister) }
         registrations += runtime.onChanged {
             notifyStatus()
-            if (runtime.snapshot() == RuntimeState.RUNNING) watchUsbAccessory()
+            if (!closed.get() && runtime.snapshot() == RuntimeState.RUNNING) watchUsbAccessory()
+            if (!closed.get() && runtime.snapshot() == RuntimeState.FAILED && foregroundController.snapshot() == ForegroundServiceState.FAILED) close()
+            releaseCoordinator.changed()
         }.let { registration ->
             CloseableRegistration { registration.unregister() }
         }
         registrations += device.onChanged {
+            if (closed.get()) return@onChanged
             synchronizeCameraMediaReadiness()
             synchronizeRtmpStreamWithVideoSource()
             synchronizeFlightTelemetryWithFlightController()
@@ -235,10 +269,14 @@ class MobileRelayGraph private constructor(
             CloseableRegistration { registration.unregister() }
         }
         registrations += permissionAdapter.onUsbPresenceChanged {
-            onUsbPresenceChanged()
+            if (!closed.get()) onUsbPresenceChanged()
         }.let { cancellation ->
             CloseableRegistration { cancellation.cancel() }
         }
+        registrations += foregroundController.onChanged {
+            if (it == ForegroundServiceState.FAILED) runCatching { connectionControl.stop() }
+            releaseCoordinator.changed()
+        }.let { registration -> CloseableRegistration(registration::unregister) }
         registrations += gateway.onStateChanged { event ->
             val ended = event.endReason
             val noisyHandshake = ended == null && (
@@ -264,6 +302,8 @@ class MobileRelayGraph private constructor(
                 SessionEndKind.HANDSHAKE_TIMEOUT -> "Phone did not receive paired within handshake timeout"
                 SessionEndKind.NOT_CONNECTED -> "Phone to desktop transport closed"
                 SessionEndKind.EXPLICIT_STOP -> "Phone stopped the desktop session"
+                SessionEndKind.ENDPOINT_CHANGED -> "Phone changed the desktop connection selection"
+                SessionEndKind.CONNECTION_PAUSED -> "Phone paused the desktop connection selection"
                 SessionEndKind.INVALID_FRAME -> "Phone discarded an invalid protocol frame"
                 SessionEndKind.UNSUPPORTED_FRAME -> "Phone received an unsupported protocol frame"
                 SessionEndKind.PROTOCOL_VERSION_UNSUPPORTED -> "Phone and desktop protocol versions do not match"
@@ -402,15 +442,19 @@ class MobileRelayGraph private constructor(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        runCatching { startCancellation?.cancel() }
-        startCancellation = null
-        runCatching { cancelUsbWatch() }
-        runCatching { runtime.stop() }
+        if (closed.compareAndSet(false, true)) runCatching { connectionControl.close() }
+        releaseCoordinator.close()
+    }
+
+    private fun releaseResources() {
+        runCatching { connectionControl.close() }
         runCatching { diagnostics.stop() }
         runCatching { cameraFrameEvaluation.cancel(false) }
-        registrations.asReversed().forEach { runCatching { it.unregister() } }
-        registrations.clear()
+        removeRegistrations()
+        runCatching { cameraFrameObserver.stop() }
+        runCatching { telemetry.stop() }
+        runCatching { flight.close() }
+        runCatching { device.stop() }
         runCatching { wayline.markDeviceUnavailable() }
         runCatching { videoTransports.close() }
         runCatching { whipStream.close() }
@@ -427,391 +471,445 @@ class MobileRelayGraph private constructor(
         executor.shutdownNow()
         timeoutExecutor.shutdownNow()
         listeners.clear()
+        runCatching { onReleased() }
+    }
+
+    private fun removeRegistrations() {
+        registrations.asReversed().forEach { runCatching { it.unregister() } }
+        registrations.clear()
     }
 
     companion object {
         fun create(
-            activity: ComponentActivity,
-            endpoint: String,
+            context: Context,
+            endpoint: String?,
             deviceId: String,
             permissionAdapter: AndroidPermissionAdapter,
+            onReleased: () -> Unit = {},
         ): MobileRelayGraph {
-            val executor = ScheduledThreadPoolExecutor(2) { task ->
-                Thread(task, "msdk-relay").apply { isDaemon = true }
-            }.apply { removeOnCancelPolicy = true }
-            val timeoutExecutor = ScheduledThreadPoolExecutor(1) { task ->
-                Thread(task, "msdk-relay-timeout").apply { isDaemon = true }
-            }.apply { removeOnCancelPolicy = true }
-            val captureDiagnosticExecutor = Executors.newSingleThreadExecutor { task ->
-                Thread(task, "msdk-capture-diagnostics").apply { isDaemon = true }
-            }
-            val operationExecutor = OperationExecutor { task -> executor.execute(task) }
-            val operationScheduler = OperationScheduler { delay, callback ->
-                val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
-                OperationCancellation { future.cancel(false) }
-            }
-            val gatewayScheduler = MonotonicScheduler { delay, callback ->
-                val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
-                ScheduledCancellation { future.cancel(false) }
-            }
-            val diagnosticStore = AndroidDiagnosticStore.create(activity)
-            val journal = DiagnosticJournal.create(
-                runId = UUID.randomUUID().toString(),
-                capacity = 256,
-                clock = DiagnosticClock { System.currentTimeMillis() },
-                persistence = diagnosticStore.persistence(),
-                recoveredEvents = diagnosticStore.restore(),
-            )
-            val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
-            val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
-            val liveCaptureDiagnostics = LiveCaptureDiagnosticRecorder(journal) { task -> captureDiagnosticExecutor.execute(task) }
-            val cameraMediaReadiness = CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())
-            val device = DeviceConnection.create(
-                DeviceConnectionDependencies(
-                    AndroidDjiSdkPort.create(activity),
-                    AndroidRemoteControllerPort.create(),
-                    AndroidAircraftPort.create(),
-                    AndroidPairingPort.create(),
-                    AndroidPairingStatusPort.create(),
-                    operationExecutor,
-                    operationScheduler,
-                    sdkDiagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.ERROR,
-                            "device-connection",
-                            diagnostic.kind.name,
-                            null,
-                            sdkLifecycleDiagnosticDetail(diagnostic.kind),
-                        )
-                    },
-                    deviceStateDiagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "device-connection",
-                            diagnostic.kind.name,
-                            null,
-                            "Device state listener failed while receiving a state update",
-                        )
-                    },
-                    remoteControllerDiagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "device-connection",
-                            diagnostic.kind.name,
-                            null,
-                            "Remote controller observation could not be processed",
-                        )
-                    },
-                    pairingStatusDiagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "device-connection",
-                            diagnostic.kind.name,
-                            null,
-                            "Pairing status observation could not be processed",
-                        )
-                    },
-                    aircraftDiagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "device-connection",
-                            diagnostic.kind.name,
-                            null,
-                            "Aircraft observation could not be processed",
-                        )
-                    },
-                ),
-            )
-            val flight = AndroidFlightTelemetrySource.create()
-            val staging = AndroidMissionStagingStorage.create(activity)
-            val waylineAdapter = AndroidDjiWaylineAdapter.create(activity, diagnosticSink = { kind, detail ->
-                val level = when (kind) {
-                    "EXECUTION_STATE_OBSERVED",
-                    "WAYLINE_PROGRESS_OBSERVED",
-                    -> DiagnosticLevel.INFO
-                    "WAYLINE_INTERRUPT_OBSERVED",
-                    -> DiagnosticLevel.WARN
-                    else -> DiagnosticLevel.WARN
+            val applicationContext = context.applicationContext
+            var graph: MobileRelayGraph? = null
+            val assembly = GraphAssembly()
+            try {
+                val connectionControl = RelayConnectionControl(
+                    androidConnectionDiscoveryFactory(applicationContext),
+                    onChanged = { graph?.notifyStatus() },
+                )
+                assembly.add { connectionControl.close() }
+                if (endpoint != null) check(connectionControl.manual(endpoint)) { "Invalid manual endpoint" }
+                val executor = ScheduledThreadPoolExecutor(2) { task ->
+                    Thread(task, "msdk-relay").apply { isDaemon = true }
+                }.apply { removeOnCancelPolicy = true }
+                assembly.add { executor.shutdownNow() }
+                val timeoutExecutor = ScheduledThreadPoolExecutor(1) { task ->
+                    Thread(task, "msdk-relay-timeout").apply { isDaemon = true }
+                }.apply { removeOnCancelPolicy = true }
+                assembly.add { timeoutExecutor.shutdownNow() }
+                val captureDiagnosticExecutor = Executors.newSingleThreadExecutor { task ->
+                    Thread(task, "msdk-capture-diagnostics").apply { isDaemon = true }
                 }
-                journal.record(level, "wayline-mission", kind, null, detail)
-            })
-            val wayline = WaylineMission.create(
-                WaylineMissionDependencies(
-                    stagingStorage = staging,
-                    contentReader = staging,
-                    uploadPort = waylineAdapter,
-                    controlPort = waylineAdapter,
-                    executionSignalSource = waylineAdapter,
-                    operationCoordinator = device.waylineOperations(),
-                    uploadTimeoutMillis = 60_000,
-                    controlTimeoutMillis = 60_000,
-                    diagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "wayline-mission",
-                            diagnostic.kind.name,
-                            null,
-                            "Mission state listener failed while receiving a state update",
-                        )
-                    },
-                ),
-            )
-            val cameraFrameObserver = CameraFrameObserver.create(
-                AndroidCameraFrameObservationPort.create(),
-                diagnosticSink = { kind ->
-                    liveCaptureDiagnostics.recordCameraFailure(kind)
-                },
-            )
-            val cameraZeroFrameRecovery = CameraZeroFrameRecovery(
-                cameraMediaReadiness,
-                cameraFrameObserver,
-                liveCaptureDiagnostics::recordCameraZeroFrameRecovery,
-            )
-            val stream = LiveStream.create(
-                LiveStreamDependencies(
-                    AndroidDjiStreamPort.create { event ->
-                        cameraZeroFrameRecovery.onRtmpEvent(event)
-                        liveCaptureDiagnostics.recordRtmp(event)
-                    },
-                    device.streamOperations(),
-                    StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() },
+                assembly.add { captureDiagnosticExecutor.shutdownNow() }
+                val operationExecutor = OperationExecutor { task -> executor.execute(task) }
+                val operationScheduler = OperationScheduler { delay, callback ->
+                    val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                    OperationCancellation { future.cancel(false) }
+                }
+                val gatewayScheduler = MonotonicScheduler { delay, callback ->
+                    val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                    ScheduledCancellation { future.cancel(false) }
+                }
+                val diagnosticStore = AndroidDiagnosticStore.create(applicationContext)
+                val journal = DiagnosticJournal.create(
+                    runId = UUID.randomUUID().toString(),
+                    capacity = 256,
+                    clock = DiagnosticClock { System.currentTimeMillis() },
+                    persistence = diagnosticStore.persistence(),
+                    recoveredEvents = diagnosticStore.restore(),
+                )
+                val flightTelemetryDiagnostics = FlightTelemetryDiagnosticRecorder(journal)
+                val waylineTelemetryDiagnostics = MissionTelemetryDiagnosticRecorder(journal)
+                val liveCaptureDiagnostics = LiveCaptureDiagnosticRecorder(journal) { task -> captureDiagnosticExecutor.execute(task) }
+                val cameraMediaReadiness = CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())
+                val device = DeviceConnection.create(
+                    DeviceConnectionDependencies(
+                        AndroidDjiSdkPort.create(applicationContext),
+                        AndroidRemoteControllerPort.create(),
+                        AndroidAircraftPort.create(),
+                        AndroidPairingPort.create(),
+                        AndroidPairingStatusPort.create(),
+                        operationExecutor,
+                        operationScheduler,
+                        sdkDiagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.ERROR,
+                                "device-connection",
+                                diagnostic.kind.name,
+                                null,
+                                sdkLifecycleDiagnosticDetail(diagnostic.kind),
+                            )
+                        },
+                        deviceStateDiagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "device-connection",
+                                diagnostic.kind.name,
+                                null,
+                                "Device state listener failed while receiving a state update",
+                            )
+                        },
+                        remoteControllerDiagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "device-connection",
+                                diagnostic.kind.name,
+                                null,
+                                "Remote controller observation could not be processed",
+                            )
+                        },
+                        pairingStatusDiagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "device-connection",
+                                diagnostic.kind.name,
+                                null,
+                                "Pairing status observation could not be processed",
+                            )
+                        },
+                        aircraftDiagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "device-connection",
+                                diagnostic.kind.name,
+                                null,
+                                "Aircraft observation could not be processed",
+                            )
+                        },
+                    ),
+                )
+                assembly.add { device.stop() }
+                val flight = AndroidFlightTelemetrySource.create()
+                assembly.add { flight.close() }
+                val staging = AndroidMissionStagingStorage.create(applicationContext)
+                assembly.add { staging.close() }
+                val waylineAdapter = AndroidDjiWaylineAdapter.create(applicationContext, diagnosticSink = { kind, detail ->
+                    val level = when (kind) {
+                        "EXECUTION_STATE_OBSERVED",
+                        "WAYLINE_PROGRESS_OBSERVED",
+                        -> DiagnosticLevel.INFO
+                        "WAYLINE_INTERRUPT_OBSERVED",
+                        -> DiagnosticLevel.WARN
+                        else -> DiagnosticLevel.WARN
+                    }
+                    journal.record(level, "wayline-mission", kind, null, detail)
+                })
+                assembly.add { waylineAdapter.close() }
+                val wayline = WaylineMission.create(
+                    WaylineMissionDependencies(
+                        stagingStorage = staging,
+                        contentReader = staging,
+                        uploadPort = waylineAdapter,
+                        controlPort = waylineAdapter,
+                        executionSignalSource = waylineAdapter,
+                        operationCoordinator = device.waylineOperations(),
+                        uploadTimeoutMillis = 60_000,
+                        controlTimeoutMillis = 60_000,
+                        diagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "wayline-mission",
+                                diagnostic.kind.name,
+                                null,
+                                "Mission state listener failed while receiving a state update",
+                            )
+                        },
+                    ),
+                )
+                assembly.add { wayline.markDeviceUnavailable() }
+                val cameraFrameObserver = CameraFrameObserver.create(
+                    AndroidCameraFrameObservationPort.create(),
                     diagnosticSink = { kind ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "live-stream",
-                            kind.name,
-                            null,
-                            "Stream state listener failed while receiving a state update",
-                        )
+                        liveCaptureDiagnostics.recordCameraFailure(kind)
                     },
-                    cameraFrameObserver = cameraFrameObserver,
-                ),
-            )
-            val whipStream = WhipLiveStream.create(
-                WhipLiveStreamDependencies(
-                    deviceId = deviceId,
-                    source = CameraStreamSource.create(
-                        AndroidCameraStreamApi.create(),
+                )
+                assembly.add { cameraFrameObserver.stop() }
+                val cameraZeroFrameRecovery = CameraZeroFrameRecovery(
+                    cameraMediaReadiness,
+                    cameraFrameObserver,
+                    liveCaptureDiagnostics::recordCameraZeroFrameRecovery,
+                )
+                val stream = LiveStream.create(
+                    LiveStreamDependencies(
+                        AndroidDjiStreamPort.create { event ->
+                            cameraZeroFrameRecovery.onRtmpEvent(event)
+                            liveCaptureDiagnostics.recordRtmp(event)
+                        },
+                        device.streamOperations(),
+                        StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() },
+                        diagnosticSink = { kind ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "live-stream",
+                                kind.name,
+                                null,
+                                "Stream state listener failed while receiving a state update",
+                            )
+                        },
+                        cameraFrameObserver = cameraFrameObserver,
+                    ),
+                )
+                assembly.add { stream.close() }
+                val whipStream = WhipLiveStream.create(
+                    WhipLiveStreamDependencies(
+                        deviceId = deviceId,
+                        source = CameraStreamSource.create(
+                            AndroidCameraStreamApi.create(),
+                            diagnosticSink = { kind ->
+                                journal.record(
+                                    DiagnosticLevel.WARN,
+                                    "live-stream-webrtc",
+                                    kind.name,
+                                    null,
+                                    "DJI CameraStream source reported a WHIP input issue",
+                                )
+                            },
+                        ),
+                        transport = AndroidWhipTransport.create(applicationContext),
                         diagnosticSink = { kind ->
                             journal.record(
                                 DiagnosticLevel.WARN,
                                 "live-stream-webrtc",
                                 kind.name,
                                 null,
-                                "DJI CameraStream source reported a WHIP input issue",
+                                "WHIP stream state listener failed",
                             )
                         },
                     ),
-                    transport = AndroidWhipTransport.create(activity),
-                    diagnosticSink = { kind ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "live-stream-webrtc",
-                            kind.name,
-                            null,
-                            "WHIP stream state listener failed",
-                        )
-                    },
-                ),
-            )
-            val flightControl = FlightControl.create(
-                FlightControlDependencies(
-                    AndroidDjiFlightPort.create(),
-                    device.flightOperations(),
-                ),
-            )
-            val deviceSettings = DeviceSettings.create(
-                DeviceSettingsDependencies(
-                    AndroidDjiSettingsPort.create(),
-                    cameraOperationCoordinator = device.settingsOperations(),
-                    transmissionSettingsOperationCoordinator = device.settingsOperations(),
-                ),
-            )
-            val gateway = RelayGateway.create(
-                RelayGatewayConfig(
-                    endpoint,
-                    deviceId,
-                    wayline.missionSink(),
-                    handshakeTimeoutMillis = 15_000,
-                    diagnosticSink = { diagnostic ->
-                        journal.record(
-                            DiagnosticLevel.WARN,
-                            "relay-gateway",
-                            diagnostic.kind.name,
-                            null,
-                            diagnostic.detail,
-                        )
-                    },
-                ),
-                OkHttpTransportConnector(),
-                gatewayScheduler,
-            )
-            val diagnostics = GatewayDiagnosticPublisher.create(
-                journal,
-                RelayGatewayDiagnosticPort(gateway),
-                DiagnosticTimeoutScheduler { delay, callback ->
-                    val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
-                    DiagnosticRegistration { future.cancel(false) }
-                },
-            )
-            wayline.onPhaseChanged { fact ->
-                val result = gateway.publishMissionPhase(
-                    MissionPhaseFrame(
-                        missionRevision = fact.missionRevision,
-                        deviceGeneration = fact.deviceGeneration,
-                        sequence = fact.sequence,
-                        phase = when (fact.phase) {
-                            com.skycommand.relay.wayline.phase.MissionPhase.START_POINT_REACHED ->
-                                com.skycommand.relay.protocol.MissionPhase.START_POINT_REACHED
-                            com.skycommand.relay.wayline.phase.MissionPhase.ROUTE_EXECUTION_STARTED ->
-                                com.skycommand.relay.protocol.MissionPhase.ROUTE_EXECUTION_STARTED
-                        },
-                        fileName = fact.fileName,
+                )
+                assembly.add { whipStream.close() }
+                val flightControl = FlightControl.create(
+                    FlightControlDependencies(
+                        AndroidDjiFlightPort.create(),
+                        device.flightOperations(),
                     ),
                 )
-                if (result is PublishResult.Rejected) {
-                    journal.record(
-                        DiagnosticLevel.WARN,
-                        "wayline-mission",
-                        "MISSION_PHASE_PUBLISH_REJECTED",
+                assembly.add { flightControl.close() }
+                val deviceSettings = DeviceSettings.create(
+                    DeviceSettingsDependencies(
+                        AndroidDjiSettingsPort.create(),
+                        cameraOperationCoordinator = device.settingsOperations(),
+                        transmissionSettingsOperationCoordinator = device.settingsOperations(),
+                    ),
+                )
+                assembly.add { deviceSettings.close() }
+                val gateway = RelayGateway.create(
+                    RelayGatewayConfig(
                         null,
-                        "Gateway was unavailable when a mission phase fact was produced",
-                    )
-                }
-            }
-            val source = CompositeTelemetrySource(
-                feed({ device.snapshot() }) { changed ->
-                    device.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
-                },
-                feed({ flight.snapshot() }) { changed ->
-                    flight.onChanged {
-                        val snapshot = flight.snapshot()
-                        flightTelemetryDiagnostics.record(snapshot)
-                        flightControl.observeDjiFlightState(snapshot.toFlightActionState())
-                        changed()
-                    }.let { CloseableRegistration(it::unregister) }
-                },
-                feed({ stream.snapshot() }) { changed ->
-                    stream.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
-                },
-                feed({ wayline.snapshot() }) { changed ->
-                    wayline.onChanged {
-                        waylineTelemetryDiagnostics.record(wayline.snapshot())
-                        changed()
-                    }.let { CloseableRegistration(it::unregister) }
-                },
-                feed({ cameraFrameObserver.snapshot() }) { changed ->
-                    cameraFrameObserver.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
-                },
-            )
-            val cameraFrameEvaluation = executor.scheduleWithFixedDelay(
-                { cameraFrameObserver.evaluate() },
-                1,
-                1,
-                TimeUnit.SECONDS,
-            )
-            val telemetrySequence = TelemetryFrameSequence()
-            val telemetry = Telemetry.create(
-                source,
-                TelemetrySink { snapshot ->
-                    when (gateway.publishTelemetry(TelemetryFrameMapper.map(snapshot, telemetrySequence.next()))) {
-                        PublishResult.Delivered -> PublishTelemetryResult.Published
-                        is PublishResult.Rejected -> PublishTelemetryResult.Rejected
-                    }
-                },
-            )
-            val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
-            val cameraPhoto = CameraPhoto.create(
-                CameraPhotoDependencies(
-                    AndroidDjiPhotoPort.create(activity.cacheDir),
-                    device.photoOperations(),
-                    PhotoMediaPublisher.create(
-                        PhotoMediaWriter { frame -> publishPhotoMedia(gateway, journal, frame) },
-                        PhotoMediaClock { delay, callback ->
-                            val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
-                            PhotoMediaCancellation { future.cancel(false) }
+                        deviceId,
+                        wayline.missionSink(),
+                        handshakeTimeoutMillis = 15_000,
+                        pairingAdmission = connectionControl.pairingAdmission,
+                        diagnosticSink = { diagnostic ->
+                            journal.record(
+                                DiagnosticLevel.WARN,
+                                "relay-gateway",
+                                diagnostic.kind.name,
+                                null,
+                                diagnostic.detail,
+                            )
                         },
                     ),
-                    onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
-                    onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
-                    sentLedger = PhotoSentLedger.file(java.io.File(activity.filesDir, "sent-photos.txt")),
-                    publishPhotoProgress = { command, frame -> gateway.publishPhotoProgress(command, frame) },
-                ),
-            )
-            gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
-            registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, cameraPhoto, videoTransports, wayline)
-            val lifecycle = RelayBootstrapModule(
-                object : RelayLifecyclePorts {
-                    override fun sdkAvailability() = device.snapshot().sdkAvailability
-                    override fun onDeviceChanged(listener: () -> Unit) =
-                        device.onChanged { listener() }.let { CloseableRegistration(it::unregister) }
-                    override fun onGatewayStateChanged(listener: (SessionState) -> Unit) =
-                        gateway.onStateChanged { listener(it.snapshot.state) }.let { CloseableRegistration(it::unregister) }
-                    override fun startDevice() {
-                        val result = device.start()
-                        if (result is DeviceConnectionStartResult.StartRejected) error(result.safeReason)
-                    }
-                    override fun stopDevice() { device.stop() }
-                    override fun startTelemetry() { telemetry.start() }
-                    override fun stopTelemetry() { telemetry.stop() }
-                    override fun resetTelemetryPublicationBaseline() { telemetry.resetPublicationBaseline() }
-                    override fun publishTelemetry() { telemetry.publishCurrent() }
-                    override fun publishLinkSnapshot() {
-                        val snapshot = when (val result = telemetry.read()) {
-                            is TelemetryReadResult.ReadSucceeded -> result.snapshot
-                            TelemetryReadResult.ReadUnavailable -> SnapshotAssembler.assemble(device.snapshot())
-                        }
-                        gateway.publishTelemetry(
-                            TelemetryFrameMapper.map(snapshot, telemetrySequence.next()),
-                        )
-                    }
-                    override fun startGateway() {
-                        diagnostics.start()
-                        gateway.start()
-                    }
-                    override fun stopGateway() {
-                        diagnostics.stop()
-                        gateway.stop()
-                    }
-                    override fun closeFlightTelemetry() { flight.close() }
-                    override fun markStreamUnavailable() {
-                        videoTransports.markDeviceUnavailable()
-                        stream.markDeviceUnavailable()
-                        whipStream.markDeviceUnavailable()
-                    }
-                    override fun markMissionUnavailable() { wayline.markDeviceUnavailable() }
-                    override fun markFlightControlUnavailable() { flightControl.markDeviceUnavailable() }
-                    override fun markDeviceSettingsUnavailable() { deviceSettings.markDeviceUnavailable() }
-                    override fun markCameraPhotoUnavailable() { cameraPhoto.markDeviceUnavailable() }
-                    override fun abortCameraPhotoTransfer() { cameraPhoto.abortTransfer() }
-                    override fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind) {
+                    OkHttpTransportConnector(),
+                    gatewayScheduler,
+                )
+                assembly.add { gateway.stop() }
+                val diagnostics = GatewayDiagnosticPublisher.create(
+                    journal,
+                    RelayGatewayDiagnosticPort(gateway),
+                    DiagnosticTimeoutScheduler { delay, callback ->
+                        val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                        DiagnosticRegistration { future.cancel(false) }
+                    },
+                )
+                assembly.add { diagnostics.stop() }
+                val missionPhaseRegistration = wayline.onPhaseChanged { fact ->
+                    val result = gateway.publishMissionPhase(
+                        MissionPhaseFrame(
+                            missionRevision = fact.missionRevision,
+                            deviceGeneration = fact.deviceGeneration,
+                            sequence = fact.sequence,
+                            phase = when (fact.phase) {
+                                com.skycommand.relay.wayline.phase.MissionPhase.START_POINT_REACHED ->
+                                    com.skycommand.relay.protocol.MissionPhase.START_POINT_REACHED
+                                com.skycommand.relay.wayline.phase.MissionPhase.ROUTE_EXECUTION_STARTED ->
+                                    com.skycommand.relay.protocol.MissionPhase.ROUTE_EXECUTION_STARTED
+                            },
+                            fileName = fact.fileName,
+                        ),
+                    )
+                    if (result is PublishResult.Rejected) {
                         journal.record(
-                            DiagnosticLevel.ERROR,
-                            "app-runtime",
-                            kind.name,
+                            DiagnosticLevel.WARN,
+                            "wayline-mission",
+                            "MISSION_PHASE_PUBLISH_REJECTED",
                             null,
-                            "Relay lifecycle operation could not be completed",
+                            "Gateway was unavailable when a mission phase fact was produced",
                         )
                     }
-                },
-            )
-            val foregroundPort = AndroidForegroundServicePort.create(
-                activity,
-                ForegroundNotificationSpec(
-                    "msdk-relay", R.string.relay_channel, R.string.relay_running, 1001,
-                    android.R.drawable.stat_sys_upload,
-                ),
-            )
-            val permissions = PermissionCoordinator.create(permissionAdapter)
-            val runtime = AppRuntime.create(
-                permissions,
-                ForegroundServiceController.create(foregroundPort),
-                AppBootstrap.create(listOf(lifecycle)),
-            )
-            return MobileRelayGraph(
-                runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, cameraMediaReadiness, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
-                staging, foregroundPort, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter,
-            ).also { it.installStatusNotifications() }
+                }
+                assembly.add { missionPhaseRegistration.unregister() }
+                val source = CompositeTelemetrySource(
+                    feed({ device.snapshot() }) { changed ->
+                        device.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
+                    },
+                    feed({ flight.snapshot() }) { changed ->
+                        flight.onChanged {
+                            val snapshot = flight.snapshot()
+                            flightTelemetryDiagnostics.record(snapshot)
+                            flightControl.observeDjiFlightState(snapshot.toFlightActionState())
+                            changed()
+                        }.let { CloseableRegistration(it::unregister) }
+                    },
+                    feed({ stream.snapshot() }) { changed ->
+                        stream.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
+                    },
+                    feed({ wayline.snapshot() }) { changed ->
+                        wayline.onChanged {
+                            waylineTelemetryDiagnostics.record(wayline.snapshot())
+                            changed()
+                        }.let { CloseableRegistration(it::unregister) }
+                    },
+                    feed({ cameraFrameObserver.snapshot() }) { changed ->
+                        cameraFrameObserver.onChanged { changed() }.let { CloseableRegistration(it::unregister) }
+                    },
+                )
+                val cameraFrameEvaluation = executor.scheduleWithFixedDelay(
+                    { cameraFrameObserver.evaluate() },
+                    1,
+                    1,
+                    TimeUnit.SECONDS,
+                )
+                val telemetrySequence = TelemetryFrameSequence()
+                assembly.add { cameraFrameEvaluation.cancel(false) }
+                val telemetry = Telemetry.create(
+                    source,
+                    TelemetrySink { snapshot ->
+                        when (gateway.publishTelemetry(TelemetryFrameMapper.map(snapshot, telemetrySequence.next()))) {
+                            PublishResult.Delivered -> PublishTelemetryResult.Published
+                            is PublishResult.Rejected -> PublishTelemetryResult.Rejected
+                        }
+                    },
+                )
+                assembly.add { telemetry.stop() }
+                val videoTransports = VideoTransportInterlock(stream.commandHandler(), whipStream.commandHandler())
+                assembly.add { videoTransports.close() }
+                connectionControl.bind(GatewayDiscoverySessionPort(gateway))
+                val cameraPhoto = CameraPhoto.create(
+                    CameraPhotoDependencies(
+                        AndroidDjiPhotoPort.create(applicationContext.cacheDir),
+                        device.photoOperations(),
+                        PhotoMediaPublisher.create(
+                            PhotoMediaWriter { frame -> publishPhotoMedia(gateway, journal, frame) },
+                            PhotoMediaClock { delay, callback ->
+                                val future = timeoutExecutor.schedule(callback, delay, TimeUnit.MILLISECONDS)
+                                PhotoMediaCancellation { future.cancel(false) }
+                            },
+                        ),
+                        onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
+                        onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
+                        sentLedger = PhotoSentLedger.file(java.io.File(applicationContext.filesDir, "sent-photos.txt")),
+                        publishPhotoProgress = { command, frame -> gateway.publishPhotoProgress(command, frame) },
+                    ),
+                )
+                assembly.add { cameraPhoto.close() }
+                gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
+                registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, cameraPhoto, videoTransports, wayline)
+                lateinit var foregroundController: ForegroundServiceController
+                val lifecycle = RelayBootstrapModule(
+                    object : RelayLifecyclePorts {
+                        override fun sdkAvailability() = device.snapshot().sdkAvailability
+                        override fun onDeviceChanged(listener: () -> Unit) =
+                            device.onChanged { listener() }.let { CloseableRegistration(it::unregister) }
+                        override fun onGatewayStateChanged(listener: (SessionState) -> Unit) =
+                            gateway.onStateChanged { listener(it.snapshot.state) }.let { CloseableRegistration(it::unregister) }
+                        override fun startDevice() {
+                            val result = device.start()
+                            if (result is DeviceConnectionStartResult.StartRejected) error(result.safeReason)
+                        }
+                        override fun stopDevice() { device.stop() }
+                        override fun startTelemetry() { telemetry.start() }
+                        override fun stopTelemetry() { telemetry.stop() }
+                        override fun resetTelemetryPublicationBaseline() { telemetry.resetPublicationBaseline() }
+                        override fun publishTelemetry() { telemetry.publishCurrent() }
+                        override fun publishLinkSnapshot() {
+                            val snapshot = when (val result = telemetry.read()) {
+                                is TelemetryReadResult.ReadSucceeded -> result.snapshot
+                                TelemetryReadResult.ReadUnavailable -> SnapshotAssembler.assemble(device.snapshot())
+                            }
+                            gateway.publishTelemetry(
+                                TelemetryFrameMapper.map(snapshot, telemetrySequence.next()),
+                            )
+                        }
+                        override fun startGateway() {
+                            check(foregroundController.snapshot() == ForegroundServiceState.RUNNING) { "Foreground service is unavailable" }
+                            diagnostics.start()
+                            check(connectionControl.start()) { "Connection control failed to start" }
+                        }
+                        override fun stopGateway() {
+                            diagnostics.stop()
+                            check(connectionControl.stop()) { "Connection control failed to stop" }
+                        }
+                        override fun closeFlightTelemetry() { flight.close() }
+                        override fun markStreamUnavailable() {
+                            videoTransports.markDeviceUnavailable()
+                            stream.markDeviceUnavailable()
+                            whipStream.markDeviceUnavailable()
+                        }
+                        override fun markMissionUnavailable() { wayline.markDeviceUnavailable() }
+                        override fun markFlightControlUnavailable() { flightControl.markDeviceUnavailable() }
+                        override fun markDeviceSettingsUnavailable() { deviceSettings.markDeviceUnavailable() }
+                        override fun markCameraPhotoUnavailable() { cameraPhoto.markDeviceUnavailable() }
+                        override fun abortCameraPhotoTransfer() { cameraPhoto.abortTransfer() }
+                        override fun reportDiagnostic(kind: RelayBootstrapDiagnosticKind) {
+                            journal.record(
+                                DiagnosticLevel.ERROR,
+                                "app-runtime",
+                                kind.name,
+                                null,
+                                "Relay lifecycle operation could not be completed",
+                            )
+                        }
+                    },
+                )
+                val foregroundPort = AndroidForegroundServicePort.create(
+                    applicationContext,
+                    ForegroundNotificationSpec(
+                        "msdk-relay", R.string.relay_channel, R.string.relay_running, 1001,
+                        android.R.drawable.stat_sys_upload,
+                    ),
+                )
+                assembly.add { foregroundPort.close() }
+                val permissions = PermissionCoordinator.create(permissionAdapter)
+                foregroundController = ForegroundServiceController.create(foregroundPort)
+                val runtime = AppRuntime.create(
+                    permissions,
+                    foregroundController,
+                    AppBootstrap.create(listOf(lifecycle)),
+                )
+                return MobileRelayGraph(
+                    runtime, permissions, device, gateway, diagnostics, telemetry, flight, flightControl, deviceSettings, cameraPhoto, cameraMediaReadiness, stream, cameraFrameObserver, cameraFrameEvaluation, whipStream, videoTransports, wayline, waylineAdapter,
+                    staging, foregroundPort, foregroundController, executor, timeoutExecutor, captureDiagnosticExecutor, journal, liveCaptureDiagnostics, flightTelemetryDiagnostics, waylineTelemetryDiagnostics, permissionAdapter, connectionControl, onReleased,
+                ).also {
+                    graph = it
+                    it.registrations += CloseableRegistration(missionPhaseRegistration::unregister)
+                    it.installStatusNotifications()
+                    assembly.commit()
+                }
+            } catch (failure: Throwable) {
+                graph?.removeRegistrations()
+                graph = null
+                assembly.rollback(failure)
+                throw failure
+            }
         }
 
         private fun <T> feed(

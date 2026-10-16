@@ -16,6 +16,7 @@ import kotlin.concurrent.withLock
 class ConnectionSession private constructor(
     private val config: SessionConfig,
     private val dependencies: SessionDependencies,
+    initialSelection: ConnectionSelection?,
 ) {
     @Volatile
     private var currentSnapshot = SessionSnapshot(SessionState.STOPPED, null, null)
@@ -46,6 +47,7 @@ class ConnectionSession private constructor(
     }
 
     private var desiredRunning = false
+    private var currentSelection = initialSelection
     private var currentGeneration: SessionGeneration? = null
     private var currentConnection: TransportConnection? = null
     private var opened = false
@@ -78,10 +80,10 @@ class ConnectionSession private constructor(
     }
 
     fun stop(): StopResult = eventLoop.callPriority {
+        desiredRunning = false
         when (currentSnapshot.state) {
             SessionState.STOPPED -> StopResult.AlreadyStopped
             SessionState.RECONNECT_WAIT -> {
-                desiredRunning = false
                 cancelRetry()
                 val reason = reason(SessionEndKind.EXPLICIT_STOP, "Session stopped by caller")
                 transition(SessionSnapshot(SessionState.STOPPED, null, null), reason)
@@ -92,11 +94,30 @@ class ConnectionSession private constructor(
             SessionState.AWAITING_PAIRING,
             SessionState.ACTIVE,
             -> {
-                desiredRunning = false
                 endCurrent(reason(SessionEndKind.EXPLICIT_STOP, "Session stopped by caller"))
                 StopResult.Stopped
             }
         }
+    }
+
+    /** Replaces only the computer session; a null selection waits without retrying. */
+    fun selectConnection(selection: ConnectionSelection?): SelectionResult = eventLoop.callPriority {
+        if (selection === currentSelection) return@callPriority SelectionResult.Unchanged
+        cancelRetry()
+        val endReason = if (selection == null) {
+            reason(SessionEndKind.CONNECTION_PAUSED, "Connection selection paused")
+        } else {
+            reason(SessionEndKind.ENDPOINT_CHANGED, "Connection selection changed")
+        }
+        if (currentGeneration != null) {
+            endCurrent(endReason, allowReconnect = false)
+        } else if (currentSnapshot.state == SessionState.RECONNECT_WAIT) {
+            transition(SessionSnapshot(SessionState.STOPPED, null, null), endReason)
+        }
+        currentSelection = selection
+        consecutiveFailures = 0
+        if (desiredRunning && selection != null) startAttempt()
+        SelectionResult.Changed
     }
 
     fun snapshot(): SessionSnapshot = currentSnapshot
@@ -122,6 +143,7 @@ class ConnectionSession private constructor(
     }
 
     private fun startAttempt() {
+        val selection = currentSelection ?: return
         val generation = SessionGeneration.create()
         currentGeneration = generation
         currentConnection = null
@@ -130,7 +152,7 @@ class ConnectionSession private constructor(
         transition(SessionSnapshot(SessionState.CONNECTING, generation, null), null)
 
         val openResult = try {
-            dependencies.connector.open(config.endpoint, generation, transportListener)
+            dependencies.connector.open(selection.endpoint, generation, transportListener)
         } catch (_: Throwable) {
             recordDiagnostic(SessionDiagnosticKind.DEPENDENCY_FAILURE, "Transport connector threw an exception")
             TransportOpenResult.OpenRejected("connector failure")
@@ -278,6 +300,19 @@ class ConnectionSession private constructor(
 
     private fun activate(frame: PairedFrame) {
         val generation = currentGeneration ?: return
+        val selection = currentSelection ?: return
+        val admitted = try {
+            dependencies.pairingAdmission.admit(selection, generation)
+        } catch (_: Throwable) {
+            recordDiagnostic(SessionDiagnosticKind.DEPENDENCY_FAILURE, "Pairing admission failed")
+            false
+        }
+        if (!admitted) {
+            endCurrent(reason(SessionEndKind.CONNECTION_PAUSED, "Connection pairing was not admitted"), allowReconnect = false)
+            currentSelection = null
+            consecutiveFailures = 0
+            return
+        }
         cancelHandshakeTimeout()
         consecutiveFailures = 0
         transition(SessionSnapshot(SessionState.ACTIVE, generation, frame.sessionId), null)
@@ -307,11 +342,11 @@ class ConnectionSession private constructor(
         endCurrent(reason(SessionEndKind.NOT_CONNECTED, "Inbound frame queue overflow"))
     }
 
-    private fun endCurrent(endReason: SessionEndReason) {
+    private fun endCurrent(endReason: SessionEndReason, allowReconnect: Boolean = true) {
         val generation = currentGeneration ?: return
         val connection = currentConnection
         val previousState = currentSnapshot.state
-        val reconnect = desiredRunning && endReason.kind != SessionEndKind.EXPLICIT_STOP
+        val reconnect = allowReconnect && desiredRunning && currentSelection != null && endReason.kind != SessionEndKind.EXPLICIT_STOP
 
         currentGeneration = null
         opened = false
@@ -333,7 +368,7 @@ class ConnectionSession private constructor(
             consecutiveFailures += 1
             scheduleRetry()
         }
-        enqueueStateEvent(previousState, currentSnapshot, endReason)
+        enqueueStateEvent(previousState, currentSnapshot, endReason, generation)
     }
 
     private fun scheduleRetry() {
@@ -399,8 +434,9 @@ class ConnectionSession private constructor(
         previousState: SessionState,
         snapshot: SessionSnapshot,
         endReason: SessionEndReason?,
+        endedGeneration: SessionGeneration? = null,
     ) {
-        val event = SessionStateEvent(previousState, snapshot, endReason)
+        val event = SessionStateEvent(previousState, snapshot, endReason, currentSelection, endedGeneration)
         val activeListeners = listeners.filter(ListenerSlot::isActive)
         safeDependency("State notification enqueue failed") {
             dependencies.stateNotifier.enqueue(event, activeListeners)
@@ -511,18 +547,21 @@ class ConnectionSession private constructor(
 
     companion object {
         fun create(config: SessionConfig, dependencies: SessionDependencies): SessionCreationResult {
+            val selection = config.endpoint?.let { endpoint ->
+                when (val validation = ConnectionSelection.create(endpoint)) {
+                    is ConnectionSelectionResult.Valid -> validation.selection
+                    ConnectionSelectionResult.Invalid -> return ConfigurationRejected("Endpoint is invalid")
+                }
+            }
             val error = validateConfig(config)
             return if (error == null) {
-                SessionCreated(ConnectionSession(config, dependencies))
+                SessionCreated(ConnectionSession(config, dependencies, selection))
             } else {
                 ConfigurationRejected(error)
             }
         }
 
         private fun validateConfig(config: SessionConfig): String? {
-            if (config.endpoint.isBlank()) {
-                return "Endpoint is invalid"
-            }
             if (validate(HelloFrame(config.deviceId)) is Rejected) {
                 return "Device identity is invalid"
             }

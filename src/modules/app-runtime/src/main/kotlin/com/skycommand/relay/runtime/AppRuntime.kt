@@ -67,6 +67,7 @@ class AppRuntime private constructor(
     private var generation = 0L
     private var permissionCancellation: PermissionCancellation? = null
     private var startFailure: RuntimeStartFailure? = null
+    private var moduleStartInProgress = false
 
     init {
         foregroundService.onChanged { serviceState -> onForegroundChanged(serviceState) }
@@ -211,34 +212,63 @@ class AppRuntime private constructor(
                 RuntimeState.STOPPING -> stopForegroundAfterInterruptedStartup()
                 else -> Unit
             }
-            ForegroundServiceState.STOPPED -> if (snapshot() == RuntimeState.STOPPING) transitionTo(RuntimeState.STOPPED)
-            ForegroundServiceState.FAILED -> when (snapshot()) {
-                RuntimeState.STARTING_SERVICE ->
-                    fail(operation, RuntimeState.STARTING_SERVICE, RuntimeStartFailure.FOREGROUND_SERVICE)
+            ForegroundServiceState.STOPPED -> if (snapshot() == RuntimeState.STOPPING && !synchronized(lock) { moduleStartInProgress }) transitionTo(RuntimeState.STOPPED)
+            ForegroundServiceState.FAILED -> onForegroundFailed()
+            else -> Unit
+        }
+    }
 
-                RuntimeState.STOPPING -> transitionTo(RuntimeState.STOPPED)
-                RuntimeState.RUNNING -> {
-                    // The Android service can be destroyed by the system without a user stop.
-                    // Tear down the business graph before exposing the terminal runtime state.
-                    runCatching { bootstrap.stop() }
-                    transitionTo(RuntimeState.FAILED)
+    private fun onForegroundFailed() {
+        val previous: RuntimeState
+        val waitForModules: Boolean
+        synchronized(lock) {
+            previous = state
+            waitForModules = moduleStartInProgress
+            when (state) {
+                RuntimeState.STARTING_SERVICE -> {
+                    startFailure = RuntimeStartFailure.FOREGROUND_SERVICE
+                    state = RuntimeState.FAILED
                 }
+                RuntimeState.STARTING_MODULES -> {
+                    startFailure = RuntimeStartFailure.FOREGROUND_SERVICE
+                    state = RuntimeState.STOPPING
+                }
+                RuntimeState.STOPPING -> if (waitForModules) startFailure = RuntimeStartFailure.FOREGROUND_SERVICE
+                RuntimeState.RUNNING -> state = RuntimeState.STOPPING
                 else -> Unit
+            }
+        }
+        when (previous) {
+            RuntimeState.STARTING_SERVICE -> notifyChanged(RuntimeState.FAILED)
+            RuntimeState.STARTING_MODULES -> notifyChanged(RuntimeState.STOPPING)
+            RuntimeState.STOPPING -> if (!waitForModules) transitionTo(RuntimeState.STOPPED)
+            RuntimeState.RUNNING -> {
+                runCatching { bootstrap.stop() }
+                transitionTo(RuntimeState.FAILED)
             }
             else -> Unit
         }
     }
 
     private fun beginModules(operation: Long) {
-        if (!isCurrent(operation, RuntimeState.STARTING_SERVICE)) return
-        transitionTo(RuntimeState.STARTING_MODULES)
-        when (bootstrap.start()) {
+        synchronized(lock) {
+            if (generation != operation || state != RuntimeState.STARTING_SERVICE) return
+            state = RuntimeState.STARTING_MODULES
+            moduleStartInProgress = true
+        }
+        notifyChanged(RuntimeState.STARTING_MODULES)
+        val result = try { bootstrap.start() }
+        finally { synchronized(lock) { moduleStartInProgress = false } }
+        when (result) {
             BootstrapResult.Started,
             BootstrapResult.AlreadyRunning,
-            -> when (snapshot()) {
-                RuntimeState.STARTING_MODULES -> transitionTo(RuntimeState.RUNNING)
-                RuntimeState.STOPPING -> stopModulesAfterInterruptedStartup()
-                else -> Unit
+            -> {
+                val running = synchronized(lock) {
+                    if (state == RuntimeState.STARTING_MODULES) { state = RuntimeState.RUNNING; true }
+                    else false
+                }
+                if (running) notifyChanged(RuntimeState.RUNNING)
+                else if (snapshot() == RuntimeState.STOPPING) stopModulesAfterInterruptedStartup()
             }
 
             else -> {
@@ -254,6 +284,10 @@ class AppRuntime private constructor(
 
     private fun stopModulesAfterInterruptedStartup() {
         val modules = bootstrap.stop()
+        if (synchronized(lock) { startFailure == RuntimeStartFailure.FOREGROUND_SERVICE } && foregroundService.snapshot() == ForegroundServiceState.FAILED) {
+            transitionTo(RuntimeState.FAILED)
+            return
+        }
         val service = foregroundService.stop()
         if (modules is BootstrapResult.Rejected || service is ForegroundRequestResult.Rejected) {
             transitionTo(RuntimeState.FAILED)
@@ -264,6 +298,10 @@ class AppRuntime private constructor(
 
     private fun stopForegroundAfterInterruptedStartup() {
         if (snapshot() != RuntimeState.STOPPING) return
+        if (synchronized(lock) { startFailure == RuntimeStartFailure.FOREGROUND_SERVICE } && foregroundService.snapshot() == ForegroundServiceState.FAILED) {
+            transitionTo(RuntimeState.FAILED)
+            return
+        }
         val service = foregroundService.stop()
         if (service is ForegroundRequestResult.Rejected) {
             transitionTo(RuntimeState.FAILED)
