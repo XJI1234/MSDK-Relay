@@ -226,6 +226,19 @@ object RelayFrameCodec {
                 ),
             )
 
+            "photo-progress" -> decoded(
+                PhotoProgressFrame(
+                    id = requiredText(root, "id"),
+                    sequence = requiredLong(root, "sequence"),
+                    phase = requiredPhotoProgressPhase(requiredText(root, "phase")),
+                    photoIndex = requiredLong(root, "photoIndex"),
+                    completedCount = requiredLong(root, "completedCount"),
+                    fileName = requiredNullableText(root, "fileName"),
+                    transferredBytes = requiredLong(root, "transferredBytes"),
+                    totalBytes = requiredNullableLong(root, "totalBytes"),
+                ),
+            )
+
             "media-begin" -> decoded(
                 MediaBeginFrame(
                     id = requiredText(root, "id"),
@@ -360,6 +373,18 @@ object RelayFrameCodec {
                 root.put("acknowledgedSequence", frame.acknowledgedSequence)
             }
 
+            is PhotoProgressFrame -> {
+                root.put("type", "photo-progress")
+                root.put("id", frame.id)
+                root.put("sequence", frame.sequence)
+                root.put("phase", frame.phase.wireValue)
+                root.put("photoIndex", frame.photoIndex)
+                root.put("completedCount", frame.completedCount)
+                frame.fileName?.let { root.put("fileName", it) } ?: root.putNull("fileName")
+                root.put("transferredBytes", frame.transferredBytes)
+                frame.totalBytes?.let { root.put("totalBytes", it) } ?: root.putNull("totalBytes")
+            }
+
             is MediaBeginFrame -> {
                 root.put("type", "media-begin")
                 root.put("id", frame.id)
@@ -434,10 +459,26 @@ object RelayFrameCodec {
         return value.longValue()
     }
 
+    private fun requiredNullableText(node: JsonNode, name: String): String? {
+        val value = node.get(name)
+            ?: throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name is required"))
+        return if (value.isNull) null else requiredText(node, name)
+    }
+
+    private fun requiredNullableLong(node: JsonNode, name: String): Long? {
+        val value = node.get(name)
+            ?: throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Field $name is required"))
+        return if (value.isNull) null else requiredLong(node, name)
+    }
+
     private fun requiredMissionPhase(value: String): MissionPhase =
         runCatching { MissionPhase.valueOf(value) }.getOrElse {
             throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Mission phase is invalid"))
         }
+
+    private fun requiredPhotoProgressPhase(value: String): PhotoProgressPhase =
+        PhotoProgressPhase.entries.firstOrNull { it.wireValue == value }
+            ?: throw CodecFailure(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Photo progress phase is invalid"))
 
     private fun requiredObject(node: JsonNode, name: String): JsonNode {
         val value = node.get(name)

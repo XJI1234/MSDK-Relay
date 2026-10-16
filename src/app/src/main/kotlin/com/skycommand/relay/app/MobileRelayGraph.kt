@@ -735,6 +735,7 @@ class MobileRelayGraph private constructor(
                     onCameraMediaBusy = cameraMediaReadiness::onCameraMediaBusy,
                     onCameraMediaReleased = cameraMediaReadiness::onCameraMediaReleased,
                     sentLedger = PhotoSentLedger.file(java.io.File(activity.filesDir, "sent-photos.txt")),
+                    publishPhotoProgress = { command, frame -> gateway.publishPhotoProgress(command, frame) },
                 ),
             )
             gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)

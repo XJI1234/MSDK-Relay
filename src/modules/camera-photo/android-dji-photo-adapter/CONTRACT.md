@@ -36,6 +36,8 @@ PhotoHardwarePort.abort(completion)
 
 成功回调不得包含 Android `Context`、`File`、DJI 枚举对象或绝对路径。下载句柄只能被 `photo-media-publisher` 以固定大小缓冲区打开读取并在关闭时删除临时文件。`abort` 必须尽力取消未完成的下载并删除未完成的临时文件。
 
+`DjiPhotoDownloadCompletion` 通过平台无关 `PhotoDownloadProgress` 上报列表请求实际开始，以及 `MediaFileDownloadListener.onProgress(total, current)` 的原图字节数。实际 `MediaFile.fileName` 用于每个下载进度；下载开始先报告零字节，完成时报告缓存文件的最终大小。进度先投递 `photo-delivery` 执行器；中止、关闭或过期操作的进度丢弃，回调异常不得改变原图操作。无效字节值不得伪造进度，总大小未知保持 `null`。
+
 ## 4. 状态和生命周期
 
 适配器不跨命令保存相册。每次请求持有独立 SDK 监听与可变状态；按本次 completion 中止，关闭或 `abort` 后到达的 DJI 回调必须丢弃，不得对新请求的 SDK 会话继续下载或恢复模式。请求完成、失败或关闭时必须取消本实例在 `KeyManager` 注册的全部监听，避免连续回传累积监听闭包。私有缓存文件只存活到本次 `download` 成功交接或失败清理。`KeyNewlyGeneratedMediaFile` 不带请求身份，迟到的硬件媒体事件归属仍须实机验证。

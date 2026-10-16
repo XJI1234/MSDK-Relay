@@ -6,6 +6,7 @@ import com.skycommand.relay.photo.executor.CameraMediaRecoveryPort
 import com.skycommand.relay.photo.executor.CameraMediaStateSnapshot
 import com.skycommand.relay.photo.executor.DjiPhotoPort
 import com.skycommand.relay.photo.executor.PhotoDjiCompletion
+import com.skycommand.relay.photo.executor.PhotoDownloadProgress
 import com.skycommand.relay.photo.executor.PhotoHardwareRequest
 import com.skycommand.relay.photo.executor.PhotoLocalFile
 import com.skycommand.relay.photo.executor.PhotoReadable
@@ -23,6 +24,7 @@ internal interface DjiPhotoCaptureCompletion {
 }
 
 internal interface DjiPhotoDownloadCompletion {
+    fun onProgress(progress: PhotoDownloadProgress) = Unit
     fun succeed(file: File, fileName: String)
     fun empty()
     fun fail()
@@ -164,6 +166,17 @@ class AndroidDjiPhotoPort internal constructor(
 
     private fun downloadCompletion(operation: Active, fallbackName: String?): DjiPhotoDownloadCompletion =
         object : DjiPhotoDownloadCompletion {
+            override fun onProgress(progress: PhotoDownloadProgress) {
+                runCatching {
+                    delivery.execute {
+                        synchronized(lock) {
+                            if (active === operation && !closed) {
+                                runCatching { operation.completion.onProgress(progress) }
+                            }
+                        }
+                    }
+                }
+            }
             override fun succeed(file: File, fileName: String) {
                 val name = fileName.ifBlank { fallbackName ?: "" }
                 runCatching { delivery.execute { delivered(operation, name, file) } }

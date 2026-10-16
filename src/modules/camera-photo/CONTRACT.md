@@ -42,6 +42,8 @@ camera.photo.fetch      fields: { knownPhotos: [{ fileName, sha256 }] }
 
 没有待传照片时，`fetch` 仍为成功命令，但结果为 `{ domain: "photo", outcome: "NONE", count: 0 }`。`knownPhotos` 是调用电脑当前收件箱清单；手机逐张下载并等待电脑 `media-result.ok=true` 后继续，直到 `NONE`。手机端持久发送账本不能替代本次电脑清单。
 
+`fetch` 还通过原始命令所属会话发布 `photo-progress`：开始及每次查询下一张时为 `listing`，真实 DJI 原图下载为 `downloading`，原图已经下载并交给媒体发送器时为 `sending`。每批 `sequence` 从 1 严格递增；`photoIndex` 在查询时为 0，实际文件为 `completedCount + 1`。`completedCount` 仅在电脑 `media-result.ok=true` 后增加；批量失败、超时、取消的 `command-result.result.count` 也返回已确认数量。下载进度来自 DJI 的真实字节回调和最终缓存大小，文件名来自实际媒体文件，不推测总张数。阶段、文件切换和最终字节数立即发布，同一文件普通字节更新最多约每 250 ms 发布一次。进度发布异常不得改变拍照或回传结果；命令结束、取消或原会话失效后，旧进度不得进入新的请求或连接。
+
 `fileName` 必须是 `1..128` 个 Unicode 码点的基名，不含 `/`、`\`、`..` 或控制字符，并以 ASCII 大小写不敏感的 `.jpg`、`.jpeg` 或 `.dng` 结尾。`index` 只标识本次拍照在适配器观察中的文件序号，不是相册浏览器。旧电脑端可忽略未知 `result`；未实现本命令的旧手机端按未知命令拒绝，不得断开会话。
 
 `ok: true` 的含义：

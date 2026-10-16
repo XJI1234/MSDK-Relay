@@ -39,6 +39,7 @@ import com.skycommand.relay.protocol.MissionCompleteFrame
 import com.skycommand.relay.protocol.MissionResultFrame
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.RelayFrame
+import com.skycommand.relay.protocol.PhotoProgressFrame
 import com.skycommand.relay.protocol.TelemetryFrame
 import java.util.concurrent.ForkJoinPool
 
@@ -90,6 +91,15 @@ class RelayGateway private constructor(
     fun publishMediaChunk(frame: MediaChunkFrame): PublishResult = publish(frame)
 
     fun publishMediaComplete(frame: MediaCompleteFrame): PublishResult = publish(frame)
+
+    fun publishPhotoProgress(originalCommand: CommandFrame, frame: PhotoProgressFrame): PublishResult {
+        if (originalCommand.name != "camera.photo.fetch" || originalCommand.id != frame.id) {
+            return PublishResult.Rejected(PublishRejectionKind.DIRECTION_NOT_ALLOWED)
+        }
+        val originalSession = commands.activeSessionFor(originalCommand)
+            ?: return PublishResult.Rejected(PublishRejectionKind.STALE_SESSION)
+        return outbound.publish(originalSession, frame)
+    }
 
     fun registerDiagnosticAcknowledgementHandler(
         handler: DiagnosticAcknowledgementHandler,

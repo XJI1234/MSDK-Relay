@@ -2,6 +2,7 @@ package com.skycommand.relay.photo.dji.android
 
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
+import com.skycommand.relay.photo.executor.PhotoDownloadProgress
 import dji.sdk.keyvalue.key.CameraKey
 import dji.sdk.keyvalue.key.DJIKey
 import dji.sdk.keyvalue.key.KeyTools
@@ -525,6 +526,7 @@ internal class MsdkV5PhotoApi(
         completion: DjiPhotoDownloadCompletion,
     ) {
         val media = MediaDataCenter.getInstance().mediaManager
+        reportProgress(completion, PhotoDownloadProgress.Listing)
         media.pullMediaFileListFromCamera(
             PullMediaFileListParam.Builder()
                 .filter(MediaFileFilter.ALL)
@@ -559,8 +561,13 @@ internal class MsdkV5PhotoApi(
         file.pullOriginalMediaFileFromCamera(
             0L,
             object : MediaFileDownloadListener {
-                override fun onStart() = Unit
-                override fun onProgress(total: Long, current: Long) = Unit
+                override fun onStart() {
+                    reportProgress(completion, PhotoDownloadProgress.Downloading(file.fileName, 0, null))
+                }
+                override fun onProgress(total: Long, current: Long) {
+                    if (current < 0 || (total > 0 && current > total)) return
+                    reportProgress(completion, PhotoDownloadProgress.Downloading(file.fileName, current, total.takeIf { it > 0 }))
+                }
                 override fun onRealtimeDataUpdate(data: ByteArray, position: Long) {
                     if (!aborted.get()) output.write(data)
                 }
@@ -576,6 +583,8 @@ internal class MsdkV5PhotoApi(
                         abandonAndContinue(file, destFile, completion)
                         return
                     }
+                    val finalSize = destFile.length()
+                    reportProgress(completion, PhotoDownloadProgress.Downloading(file.fileName, finalSize, finalSize))
                     leavePlaybackThen {
                         if (aborted.get()) {
                             destFile.delete()
@@ -599,6 +608,12 @@ internal class MsdkV5PhotoApi(
                 }
             },
         )
+    }
+
+    private fun reportProgress(completion: DjiPhotoDownloadCompletion, progress: PhotoDownloadProgress) {
+        if (!aborted.get() && downloadCompletion.get() === completion) {
+            runCatching { completion.onProgress(progress) }
+        }
     }
 
     private fun isOriginalPhoto(file: MediaFile): Boolean {

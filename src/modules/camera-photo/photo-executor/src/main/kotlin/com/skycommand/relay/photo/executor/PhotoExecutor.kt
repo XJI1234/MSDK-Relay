@@ -11,6 +11,7 @@ import com.skycommand.relay.device.operation.UnconfirmedOutcomeAdmission
 import com.skycommand.relay.photo.command.PhotoCaptureIdentity
 import com.skycommand.relay.photo.command.PhotoDjiFailure
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 fun interface PhotoReadable {
@@ -25,7 +26,17 @@ data class PhotoLocalFile(
     val readable: PhotoReadable,
 )
 
+sealed interface PhotoDownloadProgress {
+    data object Listing : PhotoDownloadProgress
+    data class Downloading(
+        val fileName: String,
+        val transferredBytes: Long,
+        val totalBytes: Long?,
+    ) : PhotoDownloadProgress
+}
+
 interface PhotoDjiCompletion {
+    fun onProgress(progress: PhotoDownloadProgress) = Unit
     fun captured(identity: PhotoCaptureIdentity)
     fun delivered(file: PhotoLocalFile)
     fun empty()
@@ -56,6 +67,7 @@ fun interface PhotoExecutionListener {
     fun onCompleted(outcome: PhotoExecutionOutcome, failure: PhotoDjiFailure?) = onCompleted(outcome)
 
     fun onHardwareReleased() = Unit
+    fun onProgress(progress: PhotoDownloadProgress) = Unit
 }
 
 sealed interface PhotoExecutionOutcome {
@@ -81,6 +93,7 @@ class PhotoExecutor private constructor(
         var delivered: PhotoLocalFile? = null
         var emptied = false
         var failure: PhotoDjiFailure? = null
+        val finished = AtomicBoolean(false)
         val submission = coordinator.submit(
             object : DjiOperation {
                 private val portCompletion = AtomicReference<PhotoDjiCompletion?>(null)
@@ -90,6 +103,9 @@ class PhotoExecutor private constructor(
 
                 override fun run(completion: OperationCompletion) {
                     val callback = object : PhotoDjiCompletion {
+                        override fun onProgress(progress: PhotoDownloadProgress) {
+                            if (!finished.get()) runCatching { listener.onProgress(progress) }
+                        }
                         override fun captured(identity: PhotoCaptureIdentity) {
                             captured = identity
                             completion.succeed()
@@ -124,6 +140,7 @@ class PhotoExecutor private constructor(
             },
             timeoutMillis(request),
             OperationResultListener { outcome ->
+                finished.set(true)
                 val terminal = when (outcome) {
                     OperationOutcome.SUCCEEDED -> when (request) {
                         PhotoHardwareRequest.Capture -> captured?.let(PhotoExecutionOutcome::Captured)

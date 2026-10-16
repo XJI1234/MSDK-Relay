@@ -162,6 +162,23 @@ data class MediaResultFrame(
     val detail: String,
 ) : RelayFrame
 
+enum class PhotoProgressPhase(val wireValue: String) {
+    LISTING("listing"),
+    DOWNLOADING("downloading"),
+    SENDING("sending"),
+}
+
+data class PhotoProgressFrame(
+    val id: String,
+    val sequence: Long,
+    val phase: PhotoProgressPhase,
+    val photoIndex: Long,
+    val completedCount: Long,
+    val fileName: String?,
+    val transferredBytes: Long,
+    val totalBytes: Long?,
+) : RelayFrame
+
 fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
     val result: ProtocolResult<Unit> = when (frame) {
         is HelloFrame -> validateHello(frame)
@@ -180,6 +197,7 @@ fun validate(frame: RelayFrame): ProtocolResult<RelayFrame> {
         is MediaChunkFrame -> validateMediaChunk(frame)
         is MediaCompleteFrame -> validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Media ID is invalid")
         is MediaResultFrame -> validateResult(frame.id, frame.detail)
+        is PhotoProgressFrame -> validatePhotoProgress(frame)
     }
     return when (result) {
         is Accepted -> Accepted(frame)
@@ -435,6 +453,28 @@ private fun validateMediaChunk(frame: MediaChunkFrame): ProtocolResult<Unit> {
     return validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Media ID is invalid")
         .then { validateChunkBytes(frame.bytes) }
 }
+
+private fun validatePhotoProgress(frame: PhotoProgressFrame): ProtocolResult<Unit> =
+    validateId(frame.id, ProtocolErrorCode.INVALID_MESSAGE_ID, "Photo request ID is invalid").then {
+        val maxSafeInteger = 9_007_199_254_740_991L
+        when {
+            frame.sequence !in 1..maxSafeInteger ||
+                frame.photoIndex !in 0..maxSafeInteger ||
+                frame.completedCount !in 0..maxSafeInteger ->
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Photo progress counter is invalid"))
+            frame.transferredBytes !in 0..ProtocolLimits.maxMissionBytes ||
+                (frame.totalBytes != null &&
+                    (frame.totalBytes !in 1..ProtocolLimits.maxMissionBytes || frame.transferredBytes > frame.totalBytes)) ->
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Photo progress bytes are invalid"))
+            frame.phase == PhotoProgressPhase.LISTING &&
+                (frame.photoIndex != 0L || frame.fileName != null || frame.transferredBytes != 0L || frame.totalBytes != null) ->
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Photo listing progress is invalid"))
+            frame.phase != PhotoProgressPhase.LISTING &&
+                (frame.photoIndex != frame.completedCount + 1 || frame.fileName == null || !isSafeMediaFileName(frame.fileName)) ->
+                Rejected(ProtocolError(ProtocolErrorCode.INVALID_FIELD, "Photo file progress is invalid"))
+            else -> Accepted(Unit)
+        }
+    }
 
 private fun validateChunkBytes(bytes: ByteArray): ProtocolResult<Unit> {
     return when {

@@ -140,6 +140,8 @@ RelayFrameCodec.decode(bytes)
 
 方向由 gateway 后续路由模块执行，本模块只负责帧结构。当前 v1 帧如下：
 
+`photo-progress` 是协议版本 `1` 的兼容新增帧，方向为手机到电脑；旧接收方按未知类型忽略，不改变命令或媒体帧。所有字段必填：`type: "photo-progress"`、`id`（原始 `camera.photo.fetch` 命令 ID）、`sequence`（`1..9007199254740991`）、`phase`（`listing`、`downloading`、`sending`）、`photoIndex` 和 `completedCount`（`0..9007199254740991` 整数）、`fileName`（安全 JPG/JPEG/DNG 基名或 `null`）、`transferredBytes`（`0..104857600` 整数）、`totalBytes`（`1..104857600` 整数或 `null`）。已知总大小时 transferredBytes 不得超过 totalBytes。listing 必须使用 photoIndex=0、fileName=null、transferredBytes=0、totalBytes=null；其他阶段必须使用 photoIndex=completedCount+1 和实际安全文件名。每批 sequence 严格递增由照片模块和接收方维护；单帧校验只校验字段关系及边界，不保存批量状态。
+
 ### 5.1 `hello`
 
 ```text

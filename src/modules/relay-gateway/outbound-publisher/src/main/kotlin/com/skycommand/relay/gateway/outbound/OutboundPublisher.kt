@@ -17,6 +17,7 @@ import com.skycommand.relay.protocol.MediaCompleteFrame
 import com.skycommand.relay.protocol.MissionResultFrame
 import com.skycommand.relay.protocol.MissionPhaseFrame
 import com.skycommand.relay.protocol.RelayFrame
+import com.skycommand.relay.protocol.PhotoProgressFrame
 import com.skycommand.relay.protocol.RelayFrameCodec
 import com.skycommand.relay.protocol.TelemetryFrame
 import java.util.concurrent.locks.ReentrantLock
@@ -74,6 +75,7 @@ class OutboundPublisher : SessionOutbound {
             frame !is CommandResultFrame &&
             frame !is MissionResultFrame &&
             frame !is MissionPhaseFrame &&
+            frame !is PhotoProgressFrame &&
             frame !is DiagnosticReportFrame &&
             frame !is MediaBeginFrame &&
             frame !is MediaChunkFrame &&

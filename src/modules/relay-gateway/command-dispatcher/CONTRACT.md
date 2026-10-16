@@ -14,6 +14,8 @@ Gradle 路径：`:relay-gateway:command-dispatcher`
 
 ## 1. 唯一职责
 
+`activeSessionFor(originalCommand)` 只为完全相同且仍在途的命令对象返回原请求捕获的 `ActiveSession`，供 gateway 发布请求附属事件。完成或会话取消立即移除该关联；相同字符串 ID 或结构相等的另一对象不能取得旧请求会话。
+
 `command-dispatcher` 只负责一件事：**把当前活动会话收到的 `CommandFrame` 按命令名交给已注册处理器，并把每个命令 ID 的唯一终态结果交给发送模块。**
 
 它把注册表、重复 ID、防止旧会话结果发布、异步完成竞争、处理器异常和结果脱敏隐藏在一个小接口之后。调用方不需要知道命令是否同步完成、哪个处理器被选中，或结果如何顺序发送。

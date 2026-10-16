@@ -11,6 +11,8 @@
 
 调用方不需要了解 OkHttp、WebSocket、JSON 库、线程模型或连接内部状态。
 
+`publishPhotoProgress(originalCommand, frame)` 仅接受仍在途的原始 `camera.photo.fetch` 命令对象及同 ID 的 `photo-progress`，并通过该命令捕获的会话发布。失效、完成或不同命令对象返回拒绝；绝不将旧进度绑定到当前新连接。照片业务通过组合根注入该门面，不直接使用会话或网络实现。
+
 ## 2. 负责与不负责
 
 负责：

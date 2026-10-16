@@ -30,6 +30,7 @@
 
 ```text
 execute(request, completion) -> 提交接受 | 提交拒绝
+completion.onProgress(Listing | Downloading(fileName, transferredBytes, totalBytes?))
 ```
 
 端口成功：
@@ -44,6 +45,8 @@ DownloadSucceeded(fileName, size, sha256, readable)
 ## 4. 状态和生命周期
 
 执行器不保存“最近一张照片”。超时或取消后本次结果仍未确认，协调器可接受新的拍照或下载尝试；旧请求的迟到回调不能推进新请求。关闭时取消尚未开始的提交。
+
+下载进度是 Android 端口提供的平台无关事实，执行器只转交给本次监听器。进入终态后丢弃进度；监听器抛异常不能失败 DJI 操作。未知总字节数保持 `null`，不生成百分比或推测媒体数量。
 
 ## 5. 数据所有权
 

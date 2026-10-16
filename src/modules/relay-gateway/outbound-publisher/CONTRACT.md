@@ -1,5 +1,7 @@
 # relay-gateway.outbound-publisher 二级模块契约
 
+`photo-progress` 允许在 ACTIVE 会话从手机发送到电脑，遵守既有编码、发送顺序和会话代次隔离规则。
+
 状态：已批准并实现
 版本：0.1.0
 父模块：[`../CONTRACT.md`](../CONTRACT.md)

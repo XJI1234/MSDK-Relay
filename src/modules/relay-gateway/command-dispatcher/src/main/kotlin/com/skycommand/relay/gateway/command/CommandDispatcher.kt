@@ -81,6 +81,10 @@ class CommandDispatcher(
         }
     }
 
+    fun activeSessionFor(originalCommand: CommandFrame): ActiveSession? = lock.withLock {
+        pending.values.firstOrNull { it.request === originalCommand }?.activeSession
+    }
+
     fun dispatch(activeSession: ActiveSession, command: CommandFrame): DispatchResult {
         val key = PendingKey(activeSession.generation, command.id)
         val pendingCommand = lock.withLock {
@@ -94,7 +98,7 @@ class CommandDispatcher(
             if (pending.keys.count { it.generation == activeSession.generation } >= maxPendingCommandsPerGeneration) {
                 return rejectImmediately(activeSession, command.id, DispatchRejectionKind.CAPACITY_EXCEEDED)
             }
-            PendingCommand(activeSession, command.id, handler).also { pending[key] = it }
+            PendingCommand(activeSession, command.id, handler, command).also { pending[key] = it }
         }
 
         val completion = Completion(key)
@@ -167,6 +171,7 @@ class CommandDispatcher(
         val activeSession: ActiveSession,
         val id: String,
         val handler: CommandHandler,
+        val request: CommandFrame,
     )
 
     private companion object {
