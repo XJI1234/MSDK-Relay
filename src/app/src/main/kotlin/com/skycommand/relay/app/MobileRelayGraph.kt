@@ -492,7 +492,7 @@ class MobileRelayGraph private constructor(
             val assembly = GraphAssembly()
             try {
                 val connectionControl = RelayConnectionControl(
-                    androidConnectionDiscoveryFactory(applicationContext),
+                    androidConnectionDiscoveryFactory(applicationContext) { graph?.gateway?.connectionState() != SessionState.ACTIVE },
                     onChanged = { graph?.notifyStatus() },
                 )
                 assembly.add { connectionControl.close() }
@@ -587,7 +587,9 @@ class MobileRelayGraph private constructor(
                     ),
                 )
                 assembly.add { device.stop() }
-                val flight = AndroidFlightTelemetrySource.create()
+                val flight = AndroidFlightTelemetrySource.create(diagnosticSink = { code, detail ->
+                    journal.record(DiagnosticLevel.INFO, "telemetry", code, null, detail)
+                })
                 assembly.add { flight.close() }
                 val staging = AndroidMissionStagingStorage.create(applicationContext)
                 assembly.add { staging.close() }
@@ -822,7 +824,7 @@ class MobileRelayGraph private constructor(
                 )
                 assembly.add { cameraPhoto.close() }
                 gateway.registerMediaResultHandler(cameraPhoto::acceptMediaResult)
-                registerCommands(gateway, journal, telemetry, device, flightControl, deviceSettings, cameraPhoto, videoTransports, wayline)
+                registerCommands(gateway, journal, telemetry, device, flightControl, flight, deviceSettings, cameraPhoto, videoTransports, wayline)
                 lateinit var foregroundController: ForegroundServiceController
                 val lifecycle = RelayBootstrapModule(
                     object : RelayLifecyclePorts {
@@ -830,7 +832,19 @@ class MobileRelayGraph private constructor(
                         override fun onDeviceChanged(listener: () -> Unit) =
                             device.onChanged { listener() }.let { CloseableRegistration(it::unregister) }
                         override fun onGatewayStateChanged(listener: (SessionState) -> Unit) =
-                            gateway.onStateChanged { listener(it.snapshot.state) }.let { CloseableRegistration(it::unregister) }
+                            gateway.onStateChanged { event ->
+                                if (event.snapshot.state == SessionState.ACTIVE) {
+                                    connectionControl.snapshot().discovery?.target?.endpoint?.let { endpoint ->
+                                        val saved = runCatching {
+                                            com.skycommand.relay.discovery.android.AndroidDiscoveryReceiver.rememberComputerIpv4(applicationContext, java.net.URI(endpoint).host)
+                                        }.getOrDefault(false)
+                                        if (!saved) {
+                                            journal.record(DiagnosticLevel.WARN, "relay-discovery", "DISCOVERY_HINT_SAVE_FAILED", null, "Last paired discovery hint could not be saved")
+                                        }
+                                    }
+                                }
+                                listener(event.snapshot.state)
+                            }.let { CloseableRegistration(it::unregister) }
                         override fun startDevice() {
                             val result = device.start()
                             if (result is DeviceConnectionStartResult.StartRejected) error(result.safeReason)
@@ -926,6 +940,7 @@ class MobileRelayGraph private constructor(
             telemetry: Telemetry,
             device: DeviceConnection,
             flightControl: FlightControl,
+            flight: FlightTelemetrySource,
             deviceSettings: DeviceSettings,
             cameraPhoto: CameraPhoto,
             videoTransports: VideoTransportInterlock,
@@ -956,7 +971,7 @@ class MobileRelayGraph private constructor(
                 register(gateway, journal, it, videoTransports.handlerFor(it))
             }
             listOf("flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing", "flight.stop-go-home").forEach {
-                register(gateway, journal, it, flightControl.commandHandler())
+                register(gateway, journal, it, flightControl.commandHandler(), flight::snapshot)
             }
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
                 register(gateway, journal, it, deviceSettings.commandHandler())
@@ -1018,8 +1033,8 @@ class MobileRelayGraph private constructor(
             return result is PublishResult.Delivered
         }
 
-        private fun register(gateway: RelayGateway, journal: DiagnosticJournal, name: String, handler: CommandHandler) {
-            check(gateway.registerCommandHandler(name, CommandDiagnosticRecorder(journal).wrap(handler)) == RegistrationResult.Registered) {
+        private fun register(gateway: RelayGateway, journal: DiagnosticJournal, name: String, handler: CommandHandler, flightSnapshot: (() -> FlightTelemetrySnapshot)? = null) {
+            check(gateway.registerCommandHandler(name, CommandDiagnosticRecorder(journal, flightSnapshot).wrap(handler)) == RegistrationResult.Registered) {
                 "Command registration failed"
             }
         }

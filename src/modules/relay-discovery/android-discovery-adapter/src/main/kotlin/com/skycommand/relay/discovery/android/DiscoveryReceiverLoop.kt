@@ -10,18 +10,33 @@ interface DiscoveryReceiverSink {
     fun advanceNetwork(): DiscoveryNetworkGeneration
     fun receive(generation: DiscoveryNetworkGeneration, bytes: ByteArray, sourceIpv4: String, subnet: Ipv4Subnet)
     fun tick()
+    fun shouldSolicit(): Boolean = true
     fun onStateChanged(state: DiscoveryReceiverState) = Unit
 }
 
 internal data class WifiLink(val handle: Long, val interfaceName: String, val ipv4: String, val prefix: Int) {
     fun subnet(): Ipv4Subnet? = Ipv4Subnet.create(ipv4, prefix)
+    fun queryAddresses(previousComputerIpv4: String?): List<String> {
+        val hint = previousComputerIpv4?.takeIf { it != ipv4 && subnet()?.containsHost(it) == true }
+        return listOfNotNull(hint) + broadcastAddresses()
+    }
+    fun broadcastAddresses(): List<String> {
+        val address = ipv4.split('.').fold(0L) { value, part -> (value shl 8) or part.toLong() }
+        val broadcast = address or (0xffffffffL ushr prefix)
+        val directed = listOf(24, 16, 8, 0).joinToString(".") { ((broadcast ushr it) and 255).toString() }
+        return listOf(directed, "255.255.255.255").distinct()
+    }
 }
 
 internal fun interface ReceiverCancellation { fun cancel() }
 
+internal interface DiscoveryReader : AutoCloseable {
+    fun requestAnnouncement(): Boolean
+}
+
 internal interface ReceiverPlatform {
     fun watch(changed: (Long, WifiLink?) -> Unit): ReceiverCancellation
-    fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): AutoCloseable
+    fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): DiscoveryReader
     fun later(delayMillis: Long, task: () -> Unit): ReceiverCancellation
 }
 
@@ -30,7 +45,7 @@ internal class DiscoveryReceiverLoop(private val platform: ReceiverPlatform, pri
     private class Epoch(val link: WifiLink, val generation: DiscoveryNetworkGeneration, val subnet: Ipv4Subnet)
     private val links = mutableMapOf<Long, WifiLink>()
     private var watcher: ReceiverCancellation? = null
-    private var reader: AutoCloseable? = null
+    private var reader: DiscoveryReader? = null
     private var retry: ReceiverCancellation? = null
     private var ticker: ReceiverCancellation? = null
     private var epoch: Epoch? = null
@@ -72,6 +87,7 @@ internal class DiscoveryReceiverLoop(private val platform: ReceiverPlatform, pri
         try {
             reader = platform.open(current.link, { bytes, source -> packet(current, bytes, source) }, { broken(current) })
             report(DiscoveryReceiverState.LISTENING)
+            solicit()
         } catch (_: Exception) { broken(current) }
     }
 
@@ -105,9 +121,17 @@ internal class DiscoveryReceiverLoop(private val platform: ReceiverPlatform, pri
             guarded {
                 ticker = null
                 sink.tick()
+                solicit()
                 scheduleTick()
             }
         }
+    }
+
+    private fun solicit() {
+        if (epoch == null || !sink.shouldSolicit()) return
+        val owned = reader ?: return
+        // Best effort: old desktops and networks blocking requests retain passive discovery.
+        owned.requestAnnouncement()
     }
 
     private inline fun guarded(action: () -> Unit) {

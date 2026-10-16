@@ -1,5 +1,7 @@
 # 手机公告解析与候选协调核心
 
+2026-10-16 `Ipv4Subnet.containsHost(ipv4)` 校验来源是否为本子网内有效单播主机，拒绝非法文本、网络地址和广播地址；供 Android 请求提示地址筛选使用，不产生或激活候选。
+
 版本：1.0；Gradle 路径 `:relay-discovery`。2026-10-13。纯 Kotlin/JVM，无 Android、DJI、socket 或 gateway 依赖。双端网络格式见配套 Sky-Command/docs/auto-discovery/WIRE-PROTOCOL.md。
 
 ## 公告边界

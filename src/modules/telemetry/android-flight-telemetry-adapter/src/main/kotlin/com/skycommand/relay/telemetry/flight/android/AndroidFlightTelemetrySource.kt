@@ -232,6 +232,7 @@ class AndroidFlightTelemetrySource internal constructor(
     companion object {
         private const val UNAVAILABLE_REASON = "flight telemetry listener unavailable"
 
-        fun create(): FlightTelemetrySource = AndroidFlightTelemetrySource(MsdkV5FlightTelemetryApi())
+        fun create(diagnosticSink: (String, String) -> Unit = { _, _ -> }): FlightTelemetrySource =
+            AndroidFlightTelemetrySource(MsdkV5FlightTelemetryApi(diagnosticSink = diagnosticSink))
     }
 }

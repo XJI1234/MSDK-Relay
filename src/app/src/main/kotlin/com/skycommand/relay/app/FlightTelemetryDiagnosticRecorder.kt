@@ -40,6 +40,7 @@ internal class FlightTelemetryDiagnosticRecorder(
             null,
             "sourceGeneration=${next.sourceGeneration};sourceRevision=${next.sourceRevision};changed=$changedText",
         )
+        journal.record(DiagnosticLevel.INFO, "telemetry", "FLIGHT_STATE_SNAPSHOT", null, flightDiagnosticContext(next))
     }
 
     fun reset() {
@@ -78,4 +79,13 @@ internal class FlightTelemetryDiagnosticRecorder(
 
         fun value(value: Any?): String = value?.toString() ?: "null"
     }
+}
+
+internal fun flightDiagnosticContext(snapshot: FlightTelemetrySnapshot): String = with(snapshot) {
+    "sourceGeneration=$sourceGeneration;sourceRevision=$sourceRevision;" +
+        "isFlying=$isFlying;motorsOn=$motorsOn;flightMode=$flightMode;" +
+        "landingConfirmationNeeded=$landingConfirmationNeeded;landingProtectionState=$landingProtectionState;" +
+        "altitudeMeters=$altitudeMeters;gpsSignalLevel=$gpsSignalLevel;gpsSatelliteCount=$gpsSatelliteCount;" +
+        "visionSensorUsed=$visionSensorUsed;visionSystemWarning=$visionSystemWarning;" +
+        "visionPositioningEnabled=$visionPositioningEnabled"
 }

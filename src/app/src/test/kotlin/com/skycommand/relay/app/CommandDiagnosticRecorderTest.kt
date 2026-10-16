@@ -7,12 +7,46 @@ import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
+import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CommandDiagnosticRecorderTest {
+    @Test
+    fun recordsTheCurrentFlightSnapshotOnBothRequestAndDjiCallback() {
+        val journal = journal()
+        val completion = Completion()
+        var snapshot = FlightTelemetrySnapshot(
+            flightMode = "GPS_ATTI", landingConfirmationNeeded = false, altitudeMeters = 0.6,
+        )
+        CommandDiagnosticRecorder(journal, flightSnapshot = { snapshot })
+            .wrap(CommandHandler { _, callback ->
+                snapshot = snapshot.copy(flightMode = "CONFIRM_LANDING", landingConfirmationNeeded = true)
+                callback.succeed("Landing confirmation command completed")
+            }).handle(command("flight.confirm-landing"), completion)
+
+        val events = journal.pending(32).filter { it.eventCode == "FLIGHT_COMMAND_STATE" }
+        assertTrue(events[0].safeDetail.contains("flightMode=GPS_ATTI"))
+        assertTrue(events[0].safeDetail.contains("landingConfirmationNeeded=false"))
+        assertTrue(events[1].safeDetail.contains("flightMode=CONFIRM_LANDING"))
+        assertTrue(events[1].safeDetail.contains("landingConfirmationNeeded=true"))
+        assertEquals(listOf("ok:Landing confirmation command completed"), completion.events)
+    }
+
+    @Test
+    fun aFailedSnapshotReadDoesNotChangeTheFlightCommandOrReceipt() {
+        val journal = journal()
+        val completion = Completion()
+        CommandDiagnosticRecorder(journal, flightSnapshot = { error("snapshot failed") })
+            .wrap(CommandHandler { _, callback -> callback.succeed("Accepted") })
+            .handle(command("flight.land"), completion)
+        assertEquals(listOf("ok:Accepted"), completion.events)
+        assertEquals(4, journal.pending(32).size)
+        assertTrue(journal.pending(32).filter { it.eventCode == "FLIGHT_COMMAND_STATE" }.all { it.safeDetail.contains("flightSnapshot=unavailable") })
+    }
+
     @Test
     fun recordsRequestAndDjiRejectedTerminalResultWithItsOriginalDetails() {
         var elapsedMillis = 1_000L

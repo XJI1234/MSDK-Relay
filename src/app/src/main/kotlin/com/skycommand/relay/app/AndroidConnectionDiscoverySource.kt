@@ -14,10 +14,10 @@ internal interface ConnectionDiscoveryReceiver : AutoCloseable {
     fun start()
 }
 
-internal fun androidConnectionDiscoveryFactory(context: Context): DiscoverySourceFactory {
+internal fun androidConnectionDiscoveryFactory(context: Context, shouldSolicit: () -> Boolean): DiscoverySourceFactory {
     val applicationContext = context.applicationContext
     return DiscoverySourceFactory { sink ->
-        AndroidConnectionDiscoverySource(sink) { receiverSink ->
+        AndroidConnectionDiscoverySource(sink, shouldSolicit) { receiverSink ->
             val receiver = AndroidDiscoveryReceiver.create(applicationContext, receiverSink)
             object : ConnectionDiscoveryReceiver {
                 override fun start() = receiver.start()
@@ -30,6 +30,7 @@ internal fun androidConnectionDiscoveryFactory(context: Context): DiscoverySourc
 /** Receiver creation is deferred until start; close never waits for sink callbacks. */
 internal class AndroidConnectionDiscoverySource(
     private val sink: DiscoverySourceSink,
+    private val solicitationRequested: () -> Boolean = { true },
     private val createReceiver: (DiscoveryReceiverSink) -> ConnectionDiscoveryReceiver,
 ) : DiscoverySource {
     private val lock = Any()
@@ -44,6 +45,7 @@ internal class AndroidConnectionDiscoverySource(
             if (!closed) sink.receive(generation, bytes, sourceIpv4, subnet)
         }
         override fun tick() { if (!closed) sink.tick() }
+        override fun shouldSolicit() = !closed && solicitationRequested()
         override fun onStateChanged(state: DiscoveryReceiverState) {
             if (!closed && state == DiscoveryReceiverState.FAILED) sink.failed()
         }

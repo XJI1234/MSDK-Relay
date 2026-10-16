@@ -7,11 +7,13 @@ import com.skycommand.relay.gateway.command.CommandHandler
 import com.skycommand.relay.protocol.CommandFrame
 import com.skycommand.relay.protocol.JsonObject
 import com.skycommand.relay.protocol.JsonString
+import com.skycommand.relay.telemetry.snapshot.FlightTelemetrySnapshot
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Observes command lifecycles without changing their results or DJI behavior. */
 internal class CommandDiagnosticRecorder(
     private val journal: DiagnosticJournal,
+    private val flightSnapshot: (() -> FlightTelemetrySnapshot)? = null,
     private val elapsedMillis: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     fun wrap(handler: CommandHandler): CommandHandler = CommandHandler { command, completion ->
@@ -36,6 +38,7 @@ internal class CommandDiagnosticRecorder(
                 "${command.name} phase=requested",
             )
         }
+        recordFlightContext(command, "requested")
     }
 
     private fun writeTerminal(
@@ -64,6 +67,7 @@ internal class CommandDiagnosticRecorder(
                 },
             )
         }
+        recordFlightContext(command, "terminal")
     }
 
     private fun writeHandlerFailure(command: CommandFrame, startedAt: Long) {
@@ -92,6 +96,15 @@ internal class CommandDiagnosticRecorder(
 
     private fun recordSafely(write: () -> Unit) {
         runCatching(write)
+    }
+
+    private fun recordFlightContext(command: CommandFrame, phase: String) {
+        val snapshot = flightSnapshot ?: return
+        if (!command.name.startsWith("flight.")) return
+        val context = runCatching { flightDiagnosticContext(snapshot()) }.getOrDefault("flightSnapshot=unavailable")
+        recordSafely {
+            journal.record(DiagnosticLevel.INFO, "flight-control", "FLIGHT_COMMAND_STATE", command.id, "phase=$phase;$context")
+        }
     }
 
     private fun resultDiagnosticDetail(result: JsonObject?): String {

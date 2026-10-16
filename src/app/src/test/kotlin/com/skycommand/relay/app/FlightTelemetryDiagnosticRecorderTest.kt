@@ -9,6 +9,27 @@ import kotlin.test.assertTrue
 
 class FlightTelemetryDiagnosticRecorderTest {
     @Test
+    fun modeExitRecordsUnchangedConfirmationAndProtectionContext() {
+        val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
+        val recorder = FlightTelemetryDiagnosticRecorder(journal)
+        val landing = FlightTelemetrySnapshot(
+            isFlying = true, motorsOn = true, flightMode = "AUTO_LANDING",
+            altitudeMeters = 0.6, landingConfirmationNeeded = false,
+            landingProtectionState = "NONE", gpsSatelliteCount = 0,
+            visionSensorUsed = true, visionSystemWarning = "NONE",
+        )
+        recorder.record(landing)
+        recorder.record(landing.copy(flightMode = "GPS_ATTI"))
+
+        val exit = journal.pending(32).last().safeDetail
+        assertTrue(exit.contains("landingConfirmationNeeded=false"))
+        assertTrue(exit.contains("landingProtectionState=NONE"))
+        assertTrue(exit.contains("altitudeMeters=0.6"))
+        assertTrue(exit.contains("gpsSatelliteCount=0"))
+        assertTrue(exit.contains("visionSensorUsed=true"))
+    }
+
+    @Test
     fun recordsLandingFactsWithTheirMsdkKeysAndObservationMetadata() {
         val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
         val recorder = FlightTelemetryDiagnosticRecorder(journal)
@@ -26,7 +47,7 @@ class FlightTelemetryDiagnosticRecorderTest {
             ),
         )
 
-        val event = journal.pending(32).single()
+        val event = journal.pending(32).single { it.eventCode == "FLIGHT_STATE_CHANGED" }
         assertEquals("telemetry", event.module)
         assertEquals("FLIGHT_STATE_CHANGED", event.eventCode)
         assertTrue(event.safeDetail.contains("sourceGeneration=3;sourceRevision=14"))
@@ -41,18 +62,18 @@ class FlightTelemetryDiagnosticRecorderTest {
         val journal = DiagnosticJournal.create("run-1", 8, FixedClock)
         val recorder = FlightTelemetryDiagnosticRecorder(journal)
         recorder.record(FlightTelemetrySnapshot(isFlying = true, altitudeMeters = 3.0))
-        journal.acknowledge("run-1", 1)
+        journal.acknowledge("run-1", 2)
 
         recorder.record(FlightTelemetrySnapshot(isFlying = true, altitudeMeters = 2.8))
         assertEquals(emptyList(), journal.pending(32))
 
         recorder.record(FlightTelemetrySnapshot(isFlying = true, altitudeMeters = 2.2))
-        assertEquals(1, journal.pending(32).size)
-        assertTrue(journal.pending(32).single().safeDetail.contains("FlightControllerKey.KeyAltitude=2.8->2.2"))
+        assertEquals(2, journal.pending(32).size)
+        assertTrue(journal.pending(32).first().safeDetail.contains("FlightControllerKey.KeyAltitude=2.8->2.2"))
 
         recorder.record(FlightTelemetrySnapshot(isFlying = true, flightMode = "AUTO_LANDING", altitudeMeters = 2.3))
-        assertEquals(2, journal.pending(32).size)
-        assertTrue(journal.pending(32).last().safeDetail.contains("FlightControllerKey.KeyFCFlightMode=null->AUTO_LANDING"))
+        assertEquals(4, journal.pending(32).size)
+        assertTrue(journal.pending(32).last { it.eventCode == "FLIGHT_STATE_CHANGED" }.safeDetail.contains("FlightControllerKey.KeyFCFlightMode=null->AUTO_LANDING"))
     }
 
     @Test
@@ -63,8 +84,8 @@ class FlightTelemetryDiagnosticRecorderTest {
         recorder.reset()
         recorder.record(FlightTelemetrySnapshot(isFlying = true))
 
-        assertEquals(2, journal.pending(32).size)
-        assertTrue(journal.pending(32).last().safeDetail.contains("KeyIsFlying=null->true"))
+        assertEquals(4, journal.pending(32).size)
+        assertTrue(journal.pending(32).last { it.eventCode == "FLIGHT_STATE_CHANGED" }.safeDetail.contains("KeyIsFlying=null->true"))
     }
 
     private object FixedClock : DiagnosticClock {

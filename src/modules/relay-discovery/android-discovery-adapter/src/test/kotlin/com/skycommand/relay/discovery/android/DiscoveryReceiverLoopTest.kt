@@ -14,6 +14,8 @@ class DiscoveryReceiverLoopTest {
         var advances = 0
         var ticks = 0
         var failPacket = false
+        var soliciting = true
+        override fun shouldSolicit() = soliciting
         override fun advanceNetwork(): DiscoveryNetworkGeneration {
             advances++
             return coordinator.advanceNetwork()
@@ -28,7 +30,10 @@ class DiscoveryReceiverLoopTest {
     }
     private class Platform : ReceiverPlatform {
         class Task(val delay: Long, val action: () -> Unit) { var cancelled = false }
-        class Reader(val packet: (ByteArray, String) -> Unit, val failed: () -> Unit) : AutoCloseable {
+        class Reader(val packet: (ByteArray, String) -> Unit, val failed: () -> Unit) : DiscoveryReader {
+            var requests = 0
+            var canRequest = true
+            override fun requestAnnouncement(): Boolean { requests++; return canRequest }
             var closes = 0
             override fun close() { closes++ }
             fun deliver(bytes: ByteArray = byteArrayOf(1)) = packet(bytes, "192.168.1.2")
@@ -47,7 +52,7 @@ class DiscoveryReceiverLoopTest {
             this.changed = changed
             return ReceiverCancellation { unwatch++ }
         }
-        override fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): AutoCloseable {
+        override fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): DiscoveryReader {
             opens++
             if (failOpen) error("bind failed")
             return Reader(packet, failed).also { readers += it }
@@ -77,6 +82,52 @@ class DiscoveryReceiverLoopTest {
         assertEquals(1, f.sink.ticks)
         assertEquals(2, f.platform.tasks.size)
         assertEquals(0, f.platform.opens)
+    }
+
+    @Test fun solicitsAtEachTickUntilConnectedAndResumesAfterDisconnect() {
+        val f = Fixture()
+        f.listen()
+        val reader = f.platform.readers.single()
+        assertEquals(1, reader.requests)
+        repeat(20) { f.platform.tasks.last().action() }
+        assertEquals(21, reader.requests)
+        f.sink.soliciting = false
+        repeat(20) { f.platform.tasks.last().action() }
+        assertEquals(21, reader.requests)
+        f.sink.soliciting = true
+        f.platform.tasks.last().action()
+        assertEquals(22, reader.requests)
+        f.platform.update(f.wifi.copy(ipv4 = "192.168.1.11"))
+        assertEquals(1, f.platform.readers.last().requests)
+        val current = f.platform.readers.last()
+        f.platform.lose(1)
+        f.platform.tasks.last().action()
+        assertEquals(1, current.requests)
+    }
+
+    @Test fun blockedSolicitationKeepsPassiveReceptionAndTicking() {
+        val f = Fixture()
+        f.listen()
+        val reader = f.platform.readers.single().apply { canRequest = false }
+        f.platform.tasks.last().action()
+        reader.deliver()
+        assertEquals(1, f.sink.packets.size)
+        assertEquals(1, f.sink.ticks)
+        assertEquals(DiscoveryReceiverState.LISTENING, f.sink.states.last())
+        assertEquals(0, reader.closes)
+    }
+
+    @Test fun solicitationUsesRealSubnetBroadcasts() {
+        assertEquals(listOf("10.20.191.255", "255.255.255.255"), WifiLink(1, "wlan0", "10.20.168.217", 18).broadcastAddresses())
+        assertEquals(listOf("192.168.1.3", "255.255.255.255"), WifiLink(1, "wlan0", "192.168.1.2", 30).broadcastAddresses())
+    }
+
+    @Test fun priorComputerIsOnlyASameSubnetDiscoveryHintWithBroadcastFallback() {
+        val wifi = WifiLink(1, "wlan0", "10.20.168.217", 18)
+        assertEquals(listOf("10.20.165.251", "10.20.191.255", "255.255.255.255"), wifi.queryAddresses("10.20.165.251"))
+        for (invalid in listOf(null, "10.21.1.2", "10.20.128.0", "10.20.191.255", "127.0.0.1", "bad", "10.20.168.217")) {
+            assertEquals(wifi.broadcastAddresses(), wifi.queryAddresses(invalid))
+        }
     }
 
     @Test fun duplicateLinkPreservesSocketAndGeneration() {

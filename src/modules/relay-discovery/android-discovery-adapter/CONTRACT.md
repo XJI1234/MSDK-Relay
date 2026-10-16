@@ -13,3 +13,9 @@
 每秒 tick 驱动调用方观察和过期，与是否已有 Wi-Fi 无关；使用单调时间的调度，调用方桥接应采用单调 clock。网络丢失/替换或接收异常先撤销旧 reader，关闭 socket/释放锁，再 advanceNetwork。接收/绑定失败按 1、2、4、8 秒（上限）重试；正常收包后重置退避，成功 bind 本身不重置，以防反复接收失败忙循环。没有 Wi-Fi 不安排绑定重试；链路变化取消旧重试。状态 WAITING_WIFI/LISTENING/RETRYING/FAILED 不含 IP、包或异常。sink 控制回调抛错会使来源进入 FAILED 并释放来源；不伪造发现/连接成功，不继续失控重试。
 
 验证覆盖启动幂等、同链路去重、候选网络丢失、IPv4/接口变化、旧包/重试失效、有效长度与实际拷贝、来源/子网、错误退避、监听注册失败、部分初始化回滚及永久关闭。Android API 路径编译不等于真机广播送达、Wi-Fi 重连/跨 AP 或后台验收。容器接线按 docs/auto-discovery/RUNTIME-CONTRACT.md；探针 39081 不变。
+
+2026-10-16 主动发现扩展：每个 WLAN reader 建立后立即及后续每秒，从同一接收 socket（源端口 39082、绑定当前 WLAN）向实际子网定向广播及 255.255.255.255 发送精确 ASCII `SKY_COMMAND_RELAY_DISCOVER_V1`。组合根通过 `shouldSolicit()` 提供当前电脑会话是否未 ACTIVE；ACTIVE 时停止请求，断线后恢复，每个 tick 至多一轮。无需手填电脑地址或扫描子网。旧 reader 关闭/网络换代后不再发送；无 WLAN/reader 不发送。发送失败返回 false，仍保留被动接收和 tick，不把失败误报为已连接。电脑监听 UDP 39082 并经原公告 socket 向请求来源单播原有公告；手机解析、3 秒观察、多候选冲突、8 秒过期和 ACTIVE 门禁完全沿用原核心。测试增加真实 UDP 请求内容/源端口、关闭后禁发、ACTIVE 停发/断线恢复、发送失败保留被动来源及真实子网广播计算。
+
+为减少校园网双向广播延迟，组合根仅在 AUTO 的合法 paired/ACTIVE 后通过 `rememberComputerIpv4` 保存该电脑 IPv4 到本适配器的私有 `relay-discovery` preferences。新 reader 优先向该提示地址单播请求，但只在它是当前 WLAN 子网有效主机且不是手机自身时使用；始终保留双广播。该提示不是候选或连接目标，不直接创建 WebSocket，不读取或覆盖手动地址，不持久化发现令牌、会话代次或设备命令。必须重新收到有效公告并通过原 3 秒观察与握手门禁；提示过时/其他子网/读取失败均回退广播。缓存保存失败不得打断健康电脑会话。
+
+Android 的 `DatagramSocket.receive` 与 `setBroadcast` 共用 socket monitor；广播选项必须在接收线程启动前配置一次，不能在主动查询/tick 中设置，否则阻塞接收会卡住串行发现与观察。配置失败仍保留被动接收与可用单播。回归测试模拟 Android 的 monitor 争用，并验证广播选项失败不影响单播/接收。2026-10-16 正式 Debug APK 在同 WLAN、已授权、亮屏前台的应用进程冷启动实测 5.072/4.273/4.329 秒进入 ACTIVE，电脑同时收到新会话；未包含整机重启、Wi-Fi 入网、首次权限或锁屏省电验收。

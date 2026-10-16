@@ -7,6 +7,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
+import com.skycommand.relay.discovery.Ipv4Subnet
 import java.net.Inet4Address
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.RejectedExecutionException
@@ -14,6 +15,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+
+private const val DISCOVERY_PREFERENCES = "relay-discovery"
+private const val LAST_PAIRED_IPV4 = "last-paired-ipv4"
 
 class AndroidDiscoveryReceiver private constructor(context: Context, sink: DiscoveryReceiverSink) : AutoCloseable {
     private val closed = AtomicBoolean(false)
@@ -62,13 +66,21 @@ class AndroidDiscoveryReceiver private constructor(context: Context, sink: Disco
     }
 
     companion object {
+        fun rememberComputerIpv4(context: Context, ipv4: String): Boolean {
+            if (Ipv4Subnet.create(ipv4, 1) == null) return false
+            return runCatching {
+                context.applicationContext.getSharedPreferences(DISCOVERY_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putString(LAST_PAIRED_IPV4, ipv4).apply()
+            }.isSuccess
+        }
+
         fun create(applicationContext: Context, sink: DiscoveryReceiverSink): AndroidDiscoveryReceiver =
             AndroidDiscoveryReceiver(applicationContext, sink)
     }
 }
 
 internal class AndroidReceiverPlatform(
-    context: Context,
+    private val context: Context,
     private val executor: ScheduledThreadPoolExecutor,
     private val dispatch: (() -> Unit) -> Unit,
     private val dispatchPacket: (() -> Unit) -> Unit,
@@ -125,7 +137,7 @@ internal class AndroidReceiverPlatform(
             .filter { it.subnet() != null }.sortedBy { it.ipv4 }.firstOrNull()
     }
 
-    override fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): AutoCloseable =
+    override fun open(link: WifiLink, packet: (ByteArray, String) -> Unit, failed: () -> Unit): DiscoveryReader =
         WifiUdpReader.open(
             acquireWifiLock = {
                 val lock = wifi.createMulticastLock("relay-discovery").apply { setReferenceCounted(false) }
@@ -139,6 +151,9 @@ internal class AndroidReceiverPlatform(
             bindNetwork = { Network.fromNetworkHandle(link.handle).bindSocket(it) },
             packet = { bytes, source -> dispatchPacket { packet(bytes, source) } },
             failed = { dispatch(failed) },
+            queryAddresses = link.queryAddresses(runCatching {
+                context.getSharedPreferences(DISCOVERY_PREFERENCES, Context.MODE_PRIVATE).getString(LAST_PAIRED_IPV4, null)
+            }.getOrNull()),
         )
 
     override fun later(delayMillis: Long, task: () -> Unit): ReceiverCancellation {

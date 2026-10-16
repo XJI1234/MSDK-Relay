@@ -85,7 +85,7 @@ class MsdkV5FlightTelemetryKeyMappingTest {
         assertTrue(source.contains("requestInitialValue(altitudeKey, ObservedKey.ALTITUDE,"))
         assertTrue(source.contains("requestInitialValue(locationKey, ObservedKey.LOCATION,"))
         assertTrue(source.contains("manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T>"))
-        assertTrue(source.contains("eventRevisions[observedKey] != initialEventRevision"))
+        assertTrue(source.contains("(eventRevisions[observedKey] ?: 0L) != initialEventRevision"))
         assertFalse(source.contains("publishInitial()"))
         assertFalse(source.contains("manager.getValue(isFlyingKey)"))
         assertFalse(source.contains("manager.getValue(motorsOnKey)"))

@@ -38,6 +38,11 @@ sealed interface AnnouncementParseResult {
 }
 
 class Ipv4Subnet private constructor(private val network: Long, private val mask: Long) {
+    fun containsHost(ipv4: String): Boolean {
+        val address = parseIpv4(ipv4) ?: return false
+        return isUnicast(address) && (address and mask) == network && !isNonHost(address)
+    }
+
     internal fun isNonHost(address: Long): Boolean =
         address == network || address == (network or (mask xor 0xffffffffL))
 

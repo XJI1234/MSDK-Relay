@@ -2,9 +2,11 @@ package com.skycommand.relay.telemetry.flight.android
 
 import dji.sdk.keyvalue.key.BatteryKey
 import dji.sdk.keyvalue.key.DJIKey
+import dji.sdk.keyvalue.key.DJIKeyInfo
 import dji.sdk.keyvalue.key.FlightAssistantKey
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
+import dji.sdk.keyvalue.key.RemoteControllerKey
 import dji.sdk.keyvalue.value.common.ComponentIndexType
 import dji.sdk.keyvalue.value.common.LocationCoordinate2D
 import dji.sdk.keyvalue.value.flightcontroller.FCFlightMode
@@ -18,9 +20,10 @@ import com.skycommand.relay.telemetry.snapshot.LowBatteryRthState
 
 internal class MsdkV5FlightTelemetryApi(
     private val manager: KeyManager = KeyManager.getInstance(),
+    private val diagnosticSink: (String, String) -> Unit = { _, _ -> },
 ) : DjiFlightTelemetryApi {
     override fun observe(listener: DjiFlightTelemetryListener): DjiFlightTelemetryObservation {
-        val observation = KeyManagerFlightTelemetryObservation(manager, listener)
+        val observation = KeyManagerFlightTelemetryObservation(manager, listener, diagnosticSink)
         observation.start()
         return observation
     }
@@ -29,6 +32,7 @@ internal class MsdkV5FlightTelemetryApi(
 private class KeyManagerFlightTelemetryObservation(
     private val manager: KeyManager,
     private val listener: DjiFlightTelemetryListener,
+    private val diagnosticSink: (String, String) -> Unit,
 ) : DjiFlightTelemetryObservation {
     private val lock = Any()
     private val flightControllerOwner = Any()
@@ -155,6 +159,10 @@ private class KeyManagerFlightTelemetryObservation(
     }
 
     private fun startFlightControllerObservation(generation: Long) {
+        val confirmationDiagnostic = FlightDiagnosticProbe(
+            "FlightControllerKey.KeyIsLandingConfirmationNeeded", generation,
+            { synchronized(lock) { active && flightControllerGeneration == generation } }, diagnosticSink,
+        )
         try {
             manager.listen(isFlyingKey, flightControllerOwner) { _, next ->
                 publishEvent(ObservedKey.IS_FLYING, generation) { copy(isFlying = next) }
@@ -196,6 +204,7 @@ private class KeyManagerFlightTelemetryObservation(
                 publishEvent(ObservedKey.LANDING_PROTECTION_STATE, generation) { copy(landingProtectionState = next?.name) }
             }
             manager.listen(landingConfirmationNeededKey, flightControllerOwner) { _, next ->
+                confirmationDiagnostic.event(next.toString())
                 publishEvent(ObservedKey.LANDING_CONFIRMATION_NEEDED, generation) { copy(landingConfirmationNeeded = next) }
             }
             manager.listen(takeoffFailureErrorKey, flightControllerOwner) { _, next ->
@@ -241,7 +250,7 @@ private class KeyManagerFlightTelemetryObservation(
             requestInitialValue(landingProtectionStateKey, ObservedKey.LANDING_PROTECTION_STATE, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.copy(landingProtectionState = value?.name)
             }
-            requestInitialValue(landingConfirmationNeededKey, ObservedKey.LANDING_CONFIRMATION_NEEDED, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+            requestInitialValue(landingConfirmationNeededKey, ObservedKey.LANDING_CONFIRMATION_NEEDED, isCurrent = { flightControllerGeneration == generation }, diagnostic = confirmationDiagnostic) { current, value ->
                 current.copy(landingConfirmationNeeded = value)
             }
             requestInitialValue(takeoffFailureErrorKey, ObservedKey.TAKEOFF_FAILURE_ERROR, isCurrent = { flightControllerGeneration == generation }) { current, value ->
@@ -250,10 +259,45 @@ private class KeyManagerFlightTelemetryObservation(
             requestInitialValue(motorStartFailureErrorKey, ObservedKey.MOTOR_START_FAILURE_ERROR, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.copy(motorStartFailureError = value?.name)
             }
+            startLandingDiagnostics(generation)
         } catch (failure: Throwable) {
             runCatching { manager.cancelListen(flightControllerOwner) }
             throw failure
         }
+    }
+
+    private fun startLandingDiagnostics(generation: Long) {
+        observeDiagnostic(FlightControllerKey.KeyLandingProtectType, "FlightControllerKey.KeyLandingProtectType", generation) { it?.name ?: "null" }
+        observeDiagnostic(FlightControllerKey.KeyMissionExitReason, "FlightControllerKey.KeyMissionExitReason", generation) {
+            if (it == null) "null" else "misType=${it.misType},exitReason=${it.exitReason}"
+        }
+        observeDiagnostic(FlightControllerKey.KeyFlightControlAuthorityChangeReason, "FlightControllerKey.KeyFlightControlAuthorityChangeReason", generation) { it?.name ?: "null" }
+        observeDiagnostic(FlightControllerKey.KeyIsInLandingMode, "FlightControllerKey.KeyIsInLandingMode", generation) { it.toString() }
+        observeDiagnostic(RemoteControllerKey.KeyPauseButtonDown, "RemoteControllerKey.KeyPauseButtonDown", generation) { it.toString() }
+        observeDiagnostic(RemoteControllerKey.KeyStickLeftVertical, "RemoteControllerKey.KeyStickLeftVertical", generation, minimumDelta = 100) { it.toString() }
+        observeDiagnostic(RemoteControllerKey.KeyStickRightVertical, "RemoteControllerKey.KeyStickRightVertical", generation, minimumDelta = 100) { it.toString() }
+    }
+
+    private fun <T> observeDiagnostic(
+        keyInfo: DJIKeyInfo<T>,
+        name: String,
+        generation: Long,
+        minimumDelta: Int = 0,
+        format: (T?) -> String,
+    ) {
+        val probe = FlightDiagnosticProbe(name, generation, {
+            synchronized(lock) { active && flightControllerGeneration == generation }
+        }, diagnosticSink, minimumDelta)
+        // Unsupported consumer keys must never interrupt the main telemetry observer.
+        runCatching {
+            val key = KeyTools.createKey(keyInfo)
+            manager.listen(key, flightControllerOwner) { _, value -> probe.event(format(value)) }
+            val revision = probe.revision()
+            manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T> {
+                override fun onSuccess(value: T) = probe.initial(format(value), revision)
+                override fun onFailure(error: IDJIError) = probe.unavailable(revision)
+            })
+        }.onFailure { probe.unavailable() }
     }
 
     private fun publishEvent(
@@ -277,26 +321,29 @@ private class KeyManagerFlightTelemetryObservation(
         observedKey: ObservedKey,
         isCurrent: () -> Boolean = { true },
         afterAccepted: ((T?) -> Unit)? = null,
+        diagnostic: FlightDiagnosticProbe? = null,
         transform: (FlightTelemetryFact, T?) -> FlightTelemetryFact,
     ) {
-        val initialEventRevision = synchronized(lock) {
+        val initialRead = synchronized(lock) {
             if (!active) return
-            eventRevisions[observedKey] ?: 0L
+            FlightTelemetryInitialValue(
+                lock, eventRevisions, observedKey,
+                isCurrent = { active && isCurrent() },
+                transform = { value: T -> transform(fact, value).also { fact = it } },
+                publish = listener::onChanged,
+                afterAccepted = afterAccepted,
+            )
         }
+        val diagnosticRevision = diagnostic?.revision() ?: 0L
         manager.getValue(key, object : CommonCallbacks.CompletionCallbackWithParam<T> {
             override fun onSuccess(value: T) {
-                val next = synchronized(lock) {
-                    if (!active || !isCurrent() || eventRevisions[observedKey] != initialEventRevision) {
-                        null
-                    } else {
-                        transform(fact, value).also { fact = it }
-                    }
-                }
-                next?.let(listener::onChanged)
-                if (next != null) afterAccepted?.invoke(value)
+                diagnostic?.initial(value.toString(), diagnosticRevision)
+                initialRead.onSuccess(value)
             }
 
-            override fun onFailure(error: IDJIError) = Unit
+            override fun onFailure(error: IDJIError) {
+                diagnostic?.unavailable(diagnosticRevision)
+            }
         })
     }
 
@@ -377,4 +424,29 @@ private class KeyManagerFlightTelemetryObservation(
         MOTOR_START_FAILURE_ERROR,
     }
 
+}
+
+/** Construct under [lock]; accept a hardware read only while its observation and event revision are current. */
+internal class FlightTelemetryInitialValue<K, T>(
+    private val lock: Any,
+    private val eventRevisions: Map<K, Long>,
+    private val observedKey: K,
+    private val isCurrent: () -> Boolean,
+    private val transform: (T) -> FlightTelemetryFact,
+    private val publish: (FlightTelemetryFact) -> Unit,
+    private val afterAccepted: ((T) -> Unit)? = null,
+) {
+    private val initialEventRevision = eventRevisions[observedKey] ?: 0L
+
+    fun onSuccess(value: T) {
+        val next = synchronized(lock) {
+            if (!isCurrent() || (eventRevisions[observedKey] ?: 0L) != initialEventRevision) {
+                null
+            } else {
+                transform(value)
+            }
+        }
+        next?.let(publish)
+        if (next != null) afterAccepted?.invoke(value)
+    }
 }

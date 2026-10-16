@@ -28,7 +28,17 @@ source.close() -> Unit
 
 组合根在 MSDK 不再 `READY` 或飞控 Key 明确断开时调用 `invalidateFlightControllerFacts()`：适配器必须同步清空仅属于飞控或飞控辅助的字段并增加飞控观察代次，旧飞控监听和旧异步首读从此无权恢复这些字段。该方法不读取 MSDK 缓存，也不发起飞行操作，且不得清空或停止电池观察。MSDK 已 `READY` 后该 Key 从非连接状态转为明确连接时，组合根调用 `refreshFlightControllerFacts()`；适配器先维持飞控事实为空，再建立新代次的飞控 `listen + 异步 getValue(callback)` 观察，并在新值到达后逐项发布。重建期间或失败后飞控字段保持未知，不能重新公开断开前坐标、飞行状态、GPS、视觉或起降诊断。该调用还必须在不取消电池监听、不清空既有电池事实的前提下，对 `BatteryKey.KeyConnection(LEFT_OR_MAIN)` 发起一次新的异步硬件读取；只有该 Key 明确连接后才能再读取电量。这样电池 Key 初读早于机载硬件就绪时可恢复，但飞控状态绝不被用来推断电池状态。
 
+`create(diagnosticSink = { code, detail -> ... })` 可选地接收只读降落诊断：
+`FLIGHT_LANDING_DIAGNOSTIC` 记录当前飞控观察代次内的 `KeyIsLandingConfirmationNeeded`（从正常遥测回调记录原值，区分 event / initial / unavailable，不重复注册监听或读取）、`KeyLandingProtectType`、
+`KeyMissionExitReason`（保留 misType / exitReason 原始数值，不推断含义）、
+`KeyFlightControlAuthorityChangeReason`、`KeyIsInLandingMode`，及遥控器暂停键、左右竖直杆原值。
+每个诊断键独立 listen 后异步初读；新事件优先，初读失败/不支持明确记录 unavailable，
+单键失败不得中断正常遥测；关闭/失效后忽略旧回调。重复值不记录，杆量与上次记录差值小于 100 时不记录，
+避免中位抖动占满诊断队列。诊断不进入协议、不参与门禁、不调用任何 Action、不创建线程或轮询。
+
 ## 字段规则
+
+初读版本记录与回调比较均把“尚未收到该 Key 的事件”视为版本 0；不能将缺键的 null 与已记录的 0 比较而误丢首值。该规则对确认降落及其它遥测键一致，仍保留后到初读不得覆盖较新事件、失效或旧代次不得恢复事实的约束。
 
 1. `isFlying`、`motorsOn` 仅来自对应 DJI 飞控键；平台没有有效值时为 `null`。
 2. `flightMode` 仅来自 DJI 飞行模式的稳定名称；MSDK 明确返回的 `UNKNOWN` 必须原样保留，使上层可区分“MSDK 返回未知”与“尚未取得值”。空值、空白、控制字符、超长或未识别值为 `null`。

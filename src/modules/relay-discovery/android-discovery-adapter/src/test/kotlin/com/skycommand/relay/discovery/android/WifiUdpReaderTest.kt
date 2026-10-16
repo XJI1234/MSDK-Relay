@@ -5,12 +5,83 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Test
 import kotlin.test.*
 
 class WifiUdpReaderTest {
+    @Test fun broadcastOptionFailureKeepsUnicastAndPassiveReception() {
+        DatagramSocket(0).use { desktop ->
+            desktop.soTimeout = 1_000
+            val received = LinkedBlockingQueue<ByteArray>()
+            val reader = WifiUdpReader.open(
+                acquireWifiLock = { AutoCloseable {} }, bindNetwork = {},
+                packet = { bytes, _ -> received.add(bytes) }, failed = { fail("passive receiver failed") },
+                port = 0, queryAddresses = listOf("127.0.0.1"), queryPort = desktop.localPort,
+                createSocket = {
+                    object : DatagramSocket(null as java.net.SocketAddress?) {
+                        override fun setBroadcast(on: Boolean) { throw java.net.SocketException("broadcast unavailable") }
+                    }
+                },
+            )
+            try {
+                assertTrue(reader.requestAnnouncement())
+                val request = DatagramPacket(ByteArray(128), 128)
+                desktop.receive(request)
+                val announcement = byteArrayOf(1, 2, 3)
+                desktop.send(DatagramPacket(announcement, announcement.size, request.address, request.port))
+                assertContentEquals(announcement, assertNotNull(received.poll(3, TimeUnit.SECONDS)))
+            } finally { reader.close() }
+        }
+    }
+
+    @Test fun requestsDoNotWaitForTheAndroidReceiveMonitor() {
+        DatagramSocket(0).use { desktop ->
+            desktop.soTimeout = 1_000
+            var ownedSocket: DatagramSocket? = null
+            val reader = WifiUdpReader.open(
+                acquireWifiLock = { AutoCloseable {} }, bindNetwork = { ownedSocket = it },
+                packet = { _, _ -> }, failed = {},
+                port = 0, queryAddresses = listOf("127.0.0.1"), queryPort = desktop.localPort,
+                createSocket = {
+                    object : DatagramSocket(null as java.net.SocketAddress?) {
+                        override fun setBroadcast(on: Boolean) = synchronized(this) { super.setBroadcast(on) }
+                    }
+                },
+            )
+            try {
+                // Android receive() holds this monitor while waiting for a packet.
+                // setBroadcast() also takes it; solicitation must not change socket options.
+                synchronized(assertNotNull(ownedSocket)) {
+                    val request = CompletableFuture.supplyAsync { reader.requestAnnouncement() }
+                    assertTrue(request.get(1, TimeUnit.SECONDS))
+                    val packet = DatagramPacket(ByteArray(128), 128)
+                    desktop.receive(packet)
+                    assertEquals("SKY_COMMAND_RELAY_DISCOVER_V1", String(packet.data, 0, packet.length, Charsets.US_ASCII))
+                }
+            } finally { reader.close() }
+        }
+    }
+
+    @Test fun requestsAnAnnouncementFromTheOwnedReceiveSocketAndStopsAfterClose() {
+        DatagramSocket(0).use { desktop ->
+            desktop.soTimeout = 1_000
+            val reader = WifiUdpReader.open(
+                acquireWifiLock = { AutoCloseable {} }, bindNetwork = {}, packet = { _, _ -> }, failed = {},
+                port = 0, queryAddresses = listOf("127.0.0.1"), queryPort = desktop.localPort,
+            )
+            try {
+                assertTrue(reader.requestAnnouncement())
+                val packet = DatagramPacket(ByteArray(128), 128)
+                desktop.receive(packet)
+                assertEquals("SKY_COMMAND_RELAY_DISCOVER_V1", String(packet.data, 0, packet.length, Charsets.US_ASCII))
+                assertEquals(reader.localPort, packet.port)
+            } finally { reader.close() }
+            assertFalse(reader.requestAnnouncement())
+        }
+    }
     @Test fun copiesOnlyActualLengthAndOffset() {
         val buffer = byteArrayOf(9, 1, 2, 9, 9)
         val packet = DatagramPacket(buffer, 1, 2, InetAddress.getByName("192.168.1.2"), 39082)

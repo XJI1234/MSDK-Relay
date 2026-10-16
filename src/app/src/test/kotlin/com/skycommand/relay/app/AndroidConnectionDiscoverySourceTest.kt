@@ -9,6 +9,16 @@ import com.skycommand.relay.runtime.discovery.DiscoverySourceSink
 import kotlin.test.*
 
 class AndroidConnectionDiscoverySourceTest {
+    @Test fun solicitationFollowsConnectionStateAndStopsWhenSourceCloses() {
+        val f = Fixture(); f.source.start()
+        assertTrue(f.receiverSink.shouldSolicit())
+        f.soliciting = false
+        assertFalse(f.receiverSink.shouldSolicit())
+        f.soliciting = true
+        assertTrue(f.receiverSink.shouldSolicit())
+        f.source.close()
+        assertFalse(f.receiverSink.shouldSolicit())
+    }
     @Test fun creationIsLazyAndStartAndCloseAreIdempotent() {
         val f = Fixture()
         assertEquals(0, f.created)
@@ -60,6 +70,7 @@ class AndroidConnectionDiscoverySourceTest {
         var startFailure = false; var closeFailure = false
         var duringStart: () -> Unit = {}
         var failures = 0; var ticks = 0
+        var soliciting = true
         val generation = DiscoveryCoordinator().networkGeneration()
         var receivedGeneration: DiscoveryNetworkGeneration? = null
         var bytes: ByteArray? = null; var ip: String? = null; var subnet: Ipv4Subnet? = null
@@ -71,7 +82,7 @@ class AndroidConnectionDiscoverySourceTest {
             }
             override fun tick() { ticks++ }
             override fun failed() { failures++ }
-        }) { sink ->
+        }, { soliciting }) { sink ->
             created++; receiverSink = sink
             object : ConnectionDiscoveryReceiver {
                 override fun start() { starts++; duringStart(); if (startFailure) error("start") }
