@@ -1,5 +1,7 @@
 # 手机自动发现与连接任务索引
 
+2026-10-16 已发布开发分支 `dev/local-startup-20261012`，手机 [Draft PR #1](https://github.com/XJI1234/MSDK-Relay/pull/1) 与配套电脑 [Draft PR #1](https://github.com/XJI1234/Sky-Command/pull/1) 已建立，组长审查后决定是否合并，main 未修改。以下历史阶段的“尚未推送”表示当时状态；功能验收限制仍有效。独立示例说明另见 [MSDK PR #1](https://github.com/XJI1234/MSDK/pull/1)。
+
 2026-10-14 晚最新实机状态：小米 10 / Android 13 已通过 USB 安装正式 APK。校园网重连后仍不可达；用户选择热点对照及 USB 调试，正式 AUTO/paired、Wi-Fi 重连、短时后台、电脑退出等待/重启恢复通过单手机观察，两次恢复 UI 采样上界 8.67 秒、14.17 秒。详见 [脱敏实机结果](../../../Sky-Command/docs/auto-discovery/DEVICE-RESULTS-20261014.md)；热点结果不能替代校园/多设备验收。下述未安装/后续调试说明为此前源码阶段记录。
 
 更新日期：2026-10-14。源码及编译/测试/打包完成，正式 APK 已安装；热点单手机自动连接与重连已有证据，校园网及完整场景待验收。
