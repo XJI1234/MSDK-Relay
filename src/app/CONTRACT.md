@@ -6,6 +6,8 @@
 版本：1.0.2
 Gradle 路径：`:app`
 
+2026-10-16 界面文案：状态行保留既有说明与独立状态，移除方括号中的 SDKManager、DJI Key 和组件位置名称；源码中的事实来源映射及原始诊断不变。
+
 2026-10-14 自动发现 graph 接线：create 使用 applicationContext，内部唯一 RelayConnectionControl 的稳定门禁注入初始 endpoint=null 的 gateway，bootstrap 只通过控制器 start/stop。null 地址默认 AUTO；非空地址先校验并选择 MANUAL，兼容当前手动界面。automaticConnection/manualConnection 只切换会话，保持设备/图传/任务对象。Android 来源延迟到控制器 start 才创建接收器；FAILED 撤销连接，WAITING_WIFI/RETRYING 保留接收器内部恢复；close 不等待回调，失败保留句柄供重试。status.connection 提供模式与发现状态。进程容器、自动授权/UI 和异步停止终态释放已接线并通过源码验证，实机待验收；本项不改变业务规则或证明后台验收。
 
 ## 唯一职责

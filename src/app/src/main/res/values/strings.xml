@@ -14,11 +14,11 @@
     <string name="message_stop_failed">停止请求失败</string>
     <string name="status_runtime">运行时：%1$s</string>
     <string name="status_gateway">电脑连接：%1$s</string>
-    <string name="status_msdk">MSDK 生命周期 [SDKManager]：%1$s</string>
-    <string name="status_remote_controller">遥控器连接 [RemoteControllerKey.KeyConnection]：%1$s</string>
-    <string name="status_pairing">对频状态 [RemoteControllerKey.KeyPairingStatus]：%1$s</string>
-    <string name="status_flight_controller">飞控连接 [FlightControllerKey.KeyConnection]：%1$s</string>
-    <string name="status_battery">主电池连接 [BatteryKey.KeyConnection, LEFT_OR_MAIN]：%1$s</string>
+    <string name="status_msdk">MSDK 生命周期：%1$s</string>
+    <string name="status_remote_controller">遥控器连接：%1$s</string>
+    <string name="status_pairing">对频状态：%1$s</string>
+    <string name="status_flight_controller">飞控连接：%1$s</string>
+    <string name="status_battery">主电池连接：%1$s</string>
     <string name="status_stream">图传：%1$s</string>
     <string name="status_mission">航线：%1$s</string>
 

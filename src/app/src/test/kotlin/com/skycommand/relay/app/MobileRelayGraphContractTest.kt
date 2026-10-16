@@ -268,7 +268,7 @@ class MainActivityRtmpBoundaryContractTest {
 
 class MainActivityMsdkFactContractTest {
     @Test
-    fun displaysEveryObservedMsdkFactOnItsOwnSourceNamedLine() {
+    fun displaysEveryObservedMsdkFactOnItsOwnOperatorLabelledLine() {
         val activity = listOf(
             Path("src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
             Path("src/app/src/main/kotlin/com/skycommand/relay/app/MainActivity.kt"),
@@ -280,11 +280,11 @@ class MainActivityMsdkFactContractTest {
 
         assertTrue(activity.contains("R.string.status_msdk"))
         assertTrue(activity.contains("R.string.status_flight_controller"))
-        assertTrue(strings.contains("MSDK 生命周期 [SDKManager]"))
-        assertTrue(strings.contains("遥控器连接 [RemoteControllerKey.KeyConnection]"))
-        assertTrue(strings.contains("对频状态 [RemoteControllerKey.KeyPairingStatus]"))
-        assertTrue(strings.contains("飞控连接 [FlightControllerKey.KeyConnection]"))
-        assertTrue(strings.contains("主电池连接 [BatteryKey.KeyConnection, LEFT_OR_MAIN]"))
-        assertFalse(strings.contains("DJI 硬件产品连接 [ProductKey.KeyConnection]"))
+        assertTrue(strings.contains("MSDK 生命周期："))
+        assertTrue(strings.contains("遥控器连接："))
+        assertTrue(strings.contains("对频状态："))
+        assertTrue(strings.contains("飞控连接："))
+        assertTrue(strings.contains("主电池连接："))
+        assertFalse(strings.contains("DJI 硬件产品连接"))
     }
 }
