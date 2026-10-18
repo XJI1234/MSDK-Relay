@@ -1,6 +1,9 @@
+import java.security.MessageDigest
+
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 
 val djiApiKey = providers.gradleProperty("DJI_API_KEY").orNull?.trim()
+val landingProbeEnabled = providers.gradleProperty("LANDING_PROBE").orNull == "true"
 
 android {
     namespace = "com.skycommand.relay.app"
@@ -15,6 +18,18 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
+    }
+    buildTypes {
+        if (landingProbeEnabled) {
+            create("landingDiagnostic") {
+                initWith(getByName("debug"))
+                matchingFallbacks += "debug"
+                versionNameSuffix = "-landing-probe"
+            }
+        }
+    }
+    if (landingProbeEnabled) {
+        sourceSets.getByName("landingDiagnostic").jniLibs.srcDir(layout.buildDirectory.dir("generated/landingProbe/jniLibs"))
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     packaging {
@@ -50,6 +65,7 @@ android {
                 "**/libmrtc_rtsp.so",
                 "**/libSdkyclx_clx.so",
                 "**/libdataclx.so",
+                "**/liblandingprobe*.so",
             )
             pickFirsts += setOf(
                 "lib/arm64-v8a/libc++_shared.so",
@@ -62,6 +78,39 @@ android {
     }
 }
 kotlin { jvmToolchain(17) }
+
+val testLandingProbe = tasks.register<Exec>("testLandingProbe") {
+    group = "verification"
+    commandLine(providers.gradleProperty("LANDING_PROBE_NODE").getOrElse("node"), "--test", rootProject.file("scripts/landing-probe.test.cjs"))
+}
+
+val prepareLandingProbe = tasks.register("prepareLandingProbe") {
+    dependsOn(testLandingProbe)
+    val gadget = providers.gradleProperty("LANDING_PROBE_GADGET").map(::file)
+        .getOrElse(layout.buildDirectory.file("landing-gadget/liblandingprobe.so").get().asFile)
+    val script = file("src/landingDiagnostic/probe/landing-probe.js")
+    val destination = layout.buildDirectory.dir("generated/landingProbe/jniLibs/arm64-v8a")
+    inputs.file(gadget)
+    inputs.file(script)
+    outputs.dir(destination)
+    doLast {
+        check(gadget.isFile) { "Supply Frida Gadget 17.24.0 android-arm64 with -PLANDING_PROBE_GADGET=<path>" }
+        // https://github.com/frida/frida/releases/download/17.24.0/frida-gadget-17.24.0-android-arm64.so.xz
+        val hash = MessageDigest.getInstance("SHA-256").digest(gadget.readBytes())
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        check(hash == "27e1a12a7b7284da0597485aeb8771cfac7ec3fac8bab63a6c0753a8a7235496") { "Unexpected Frida Gadget SHA-256" }
+        val target = destination.get().asFile.apply { mkdirs() }
+        gadget.copyTo(target.resolve("liblandingprobe.so"), overwrite = true)
+        script.copyTo(target.resolve("liblandingprobe.script.so"), overwrite = true)
+        target.resolve("liblandingprobe.config.so").writeText(
+            """{"interaction":{"type":"script","path":"liblandingprobe.script.so","on_change":"ignore"},"runtime":"qjs"}""",
+        )
+    }
+}
+
+tasks.configureEach {
+    if (name == "preLandingDiagnosticBuild") dependsOn(prepareLandingProbe)
+}
 
 val androidNamespace = "http://schemas.android.com/apk/res/android"
 val requiredRuntimePermissions = setOf(
@@ -140,7 +189,7 @@ tasks.register("verifyAndroidManifestContract") {
 tasks.named("check") { dependsOn("verifyAndroidManifestContract") }
 
 tasks.configureEach {
-    if (name == "packageDebug" || name == "packageRelease") {
+    if (name == "packageDebug" || name == "packageRelease" || name == "packageLandingDiagnostic") {
         doFirst {
             check(!djiApiKey.isNullOrBlank()) {
                 "DJI_API_KEY must be supplied with -PDJI_API_KEY=<registered-key> before packaging an APK"
