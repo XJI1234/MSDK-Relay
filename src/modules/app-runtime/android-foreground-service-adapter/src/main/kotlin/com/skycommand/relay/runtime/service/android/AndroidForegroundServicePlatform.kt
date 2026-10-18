@@ -7,8 +7,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -157,6 +160,8 @@ internal class AndroidForegroundServicePlatform private constructor(
 }
 
 class RelayForegroundService : Service() {
+    private var runtimePower: ForegroundServicePower? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.getStringExtra(EXTRA_OPERATION_ID) == null) {
             if (lifetime.activeStart == null) stopSelfResult(startId)
@@ -174,9 +179,12 @@ class RelayForegroundService : Service() {
                 intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0),
                 notification(intent),
             )
+            val power = runtimePower ?: createPowerLocks().also { runtimePower = it }
+            power.acquire()
             status(intent, ACTION_STARTED_SUFFIX)
             return START_STICKY
         } catch (_: Exception) {
+            releasePower()
             lifetime.startupFailed()?.let(::terminalStatus)
             stopSelfResult(startId)
             return START_NOT_STICKY
@@ -185,11 +193,37 @@ class RelayForegroundService : Service() {
 
     override fun onDestroy() {
         try {
+            releasePower()
             lifetime.destroyed()?.let(::terminalStatus)
         } finally { super.onDestroy() }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    @Suppress("DEPRECATION")
+    private fun createPowerLocks(): ForegroundServicePower {
+        val cpu = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SkyCommand:RelayCpu")
+            .apply { setReferenceCounted(false) }
+        val wifi = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager)
+            .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "SkyCommand:RelayWifi")
+            .apply { setReferenceCounted(false) }
+        return ForegroundServicePower(
+            object : ServicePowerLock {
+                override fun acquire() = cpu.acquire()
+                override fun release() { if (cpu.isHeld) cpu.release() }
+            },
+            object : ServicePowerLock {
+                override fun acquire() = wifi.acquire()
+                override fun release() { if (wifi.isHeld) wifi.release() }
+            },
+        )
+    }
+
+    private fun releasePower() {
+        try { runtimePower?.release() }
+        catch (_: Exception) { Log.e("RelayForegroundService", "Unable to release relay power resources") }
+    }
 
     private fun notification(intent: Intent): android.app.Notification {
         val channelId = intent.getStringExtra(EXTRA_CHANNEL_ID)
