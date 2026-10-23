@@ -136,6 +136,7 @@ class AndroidDjiWaylineAdapter internal constructor(
     private val liveProgressListeners = mutableSetOf<LiveProgressListenerSlot>()
     private var djiExecutionRegistration: DjiExecutionStateRegistration? = null
     private var djiLiveProgressRegistrations: List<DjiExecutionStateRegistration> = emptyList()
+    private var listenerGeneration = 0L
     private var startSignalsEnabled = false
     private var startInvocationArmed = false
     private val pendingStartStates = mutableListOf<DjiMissionExecutionState>()
@@ -198,15 +199,16 @@ class AndroidDjiWaylineAdapter internal constructor(
     }
 
     override fun start(completion: ControlCompletion) {
-        val subscribed = synchronized(submissionLock) { ensureExecutionStateSubscription() }
-        if (!subscribed) {
-            safeFail(completion)
-            return
+        synchronized(submissionLock) {
+            if (!renewExecutionStateSubscription()) {
+                safeFail(completion)
+                return
+            }
+            synchronized(lock) {
+                if (!closed) startInvocationArmed = true
+            }
+            withName(completion) { name, done -> dji.start(name, done) }
         }
-        synchronized(lock) {
-            if (!closed) startInvocationArmed = true
-        }
-        withName(completion) { name, done -> dji.start(name, done) }
     }
     override fun stop(completion: ControlCompletion) = withName(completion) { name, done -> dji.stop(name, done) }
     override fun pause(completion: ControlCompletion) = control(completion) { _, done -> dji.pause(done) }
@@ -258,6 +260,7 @@ class AndroidDjiWaylineAdapter internal constructor(
         val signals: List<SignalListenerSlot>
         val observations: List<ObservationListenerSlot>
         val liveListeners: List<LiveProgressListenerSlot>
+        val generation: Long
         synchronized(lock) {
             if (closed) return
             startSignalsEnabled = true
@@ -269,9 +272,10 @@ class AndroidDjiWaylineAdapter internal constructor(
             signals = signalListeners.toList()
             observations = observationListeners.toList()
             liveListeners = liveProgressListeners.toList()
+            generation = listenerGeneration
         }
-        replay.forEach { state -> deliverExecutionState(state, signals, observations) }
-        liveReplay.forEach { progress -> deliverLiveProgress(progress, liveListeners) }
+        replay.forEach { state -> deliverExecutionState(state, signals, observations, generation) }
+        liveReplay.forEach { progress -> deliverLiveProgress(progress, liveListeners, generation) }
     }
 
     override fun invalidateStartAttempt() {
@@ -288,6 +292,7 @@ class AndroidDjiWaylineAdapter internal constructor(
             val (files, registrations) = synchronized(lock) {
                 if (closed) return
                 closed = true
+                listenerGeneration++
                 startSignalsEnabled = false
                 startInvocationArmed = false
                 pendingStartStates.clear()
@@ -311,50 +316,69 @@ class AndroidDjiWaylineAdapter internal constructor(
         }
     }
 
-    private fun ensureExecutionStateSubscription(): Boolean {
-        synchronized(lock) {
+    private fun renewExecutionStateSubscription(): Boolean {
+        val (generation, previous) = synchronized(lock) {
             if (closed) return false
-            if (djiExecutionRegistration != null) return true
+            listenerGeneration++
+            startSignalsEnabled = false
+            startInvocationArmed = false
+            pendingStartStates.clear()
+            pendingLiveProgress.clear()
+            val registrations = listOfNotNull(djiExecutionRegistration) + djiLiveProgressRegistrations
+            djiExecutionRegistration = null
+            djiLiveProgressRegistrations = emptyList()
+            listenerGeneration to registrations
         }
-        val registration = runCatching { dji.onExecutionState(::dispatchExecutionState) }.getOrNull() ?: return false
-        val executingInfo = runCatching { dji.onExecutingInfo(::dispatchExecutingInfo, ::dispatchExecutingInterrupt) }.getOrNull()
-        val waypointAction = runCatching { dji.onWaypointAction(::dispatchWaypointAction) }.getOrNull()
+        // DJI can replace its operator without invalidating our old registration handles.
+        previous.forEach { runCatching { it.unregister() } }
+        val registrations = mutableListOf<DjiExecutionStateRegistration>()
+        try {
+            registrations += dji.onExecutionState { dispatchExecutionState(it, generation) }
+            registrations += dji.onExecutingInfo(
+                { dispatchExecutingInfo(it, generation) },
+                { code, description -> dispatchExecutingInterrupt(code, description, generation) },
+            )
+            registrations += dji.onWaypointAction { dispatchWaypointAction(it, generation) }
+        } catch (error: Throwable) {
+            synchronized(lock) { listenerGeneration++ }
+            registrations.forEach { runCatching { it.unregister() } }
+            record(WaylineAdapterDiagnosticKind.CONTROL_DJI_INVOCATION_FAILED, error = error)
+            return false
+        }
         val retained = synchronized(lock) {
-            if (closed || djiExecutionRegistration != null) false else {
-                djiExecutionRegistration = registration
-                djiLiveProgressRegistrations = listOfNotNull(executingInfo, waypointAction)
+            if (closed || listenerGeneration != generation) false else {
+                djiExecutionRegistration = registrations.first()
+                djiLiveProgressRegistrations = registrations.drop(1)
                 true
             }
         }
-        if (!retained) {
-            runCatching { registration.unregister() }
-            executingInfo?.let { runCatching { it.unregister() } }
-            waypointAction?.let { runCatching { it.unregister() } }
-        }
+        if (!retained) registrations.forEach { runCatching { it.unregister() } }
         return retained
     }
 
-    private fun dispatchExecutingInfo(info: DjiWaylineExecutingInfo) {
+    private fun dispatchExecutingInfo(info: DjiWaylineExecutingInfo, generation: Long) {
         dispatchLiveProgress(
             WaylineLiveProgress(
                 executingMissionFileName = info.missionFileName.safeExecutingName(),
                 waylineId = info.waylineId?.takeIf { it >= 0 },
                 currentWaypointIndex = info.currentWaypointIndex?.takeIf { it >= 0 },
             ),
+            generation,
         )
     }
 
-    private fun dispatchExecutingInterrupt(errorCode: String?, errorDescription: String?) {
+    private fun dispatchExecutingInterrupt(errorCode: String?, errorDescription: String?, generation: Long) {
         if (errorCode == null && errorDescription == null) return
         dispatchLiveProgress(
             WaylineLiveProgress(
                 interruptErrorCode = errorCode,
                 interruptErrorDescription = errorDescription,
             ),
+            generation,
         )
     }
 
-    private fun dispatchWaypointAction(event: DjiWaypointActionEvent) {
+    private fun dispatchWaypointAction(event: DjiWaypointActionEvent, generation: Long) {
         dispatchLiveProgress(
             WaylineLiveProgress(
                 waypointActionGroup = event.actionGroup?.takeIf { it >= 0 },
@@ -363,13 +387,15 @@ class AndroidDjiWaylineAdapter internal constructor(
                 waypointActionErrorCode = event.errorCode,
                 waypointActionErrorDescription = event.errorDescription,
             ),
+            generation,
         )
     }
 
-    private fun dispatchLiveProgress(progress: WaylineLiveProgress) {
+    private fun dispatchLiveProgress(progress: WaylineLiveProgress, generation: Long) {
         val (listeners, delivery, closedNow) = synchronized(lock) {
             when {
                 closed -> Triple(emptyList<LiveProgressListenerSlot>(), WaylineObservationDelivery.DROPPED, true)
+                listenerGeneration != generation -> Triple(emptyList(), WaylineObservationDelivery.DROPPED, false)
                 startSignalsEnabled -> Triple(liveProgressListeners.toList(), WaylineObservationDelivery.DELIVERED, false)
                 startInvocationArmed -> {
                     if (pendingLiveProgress.size < MAX_PENDING_START_STATES) pendingLiveProgress += progress
@@ -389,46 +415,61 @@ class AndroidDjiWaylineAdapter internal constructor(
                 waylineId = progress.waylineId,
             )
         }
-        deliverLiveProgress(progress, listeners)
+        deliverLiveProgress(progress, listeners, generation)
     }
 
-    private fun deliverLiveProgress(progress: WaylineLiveProgress, listeners: List<LiveProgressListenerSlot>) {
+    private fun deliverLiveProgress(progress: WaylineLiveProgress, listeners: List<LiveProgressListenerSlot>, generation: Long) {
         if (listeners.isEmpty()) return
-        listeners.forEach { runCatching { it.listener.onLiveProgress(progress) } }
+        listeners.forEach {
+            if (canDeliver(generation)) runCatching { it.listener.onLiveProgress(progress) }
+        }
     }
 
-    private fun dispatchExecutionState(state: DjiMissionExecutionState) {
-        val (signals, observations, delivery, closedNow) = synchronized(lock) {
+    private fun dispatchExecutionState(state: DjiMissionExecutionState, generation: Long) {
+        val dispatch = synchronized(lock) {
             when {
                 closed -> ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.DROPPED, true)
+                listenerGeneration != generation -> ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.DROPPED, false)
                 startSignalsEnabled -> ExecutionDispatch(signalListeners.toList(), observationListeners.toList(), WaylineObservationDelivery.DELIVERED, false)
                 startInvocationArmed -> {
                     if (pendingStartStates.size < MAX_PENDING_START_STATES) pendingStartStates += state
                     ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.PENDING, false)
                 }
+                state == DjiMissionExecutionState.FINISHED || state == DjiMissionExecutionState.READY ->
+                    ExecutionDispatch(signalListeners.toList(), observationListeners.toList(), WaylineObservationDelivery.DELIVERED, false, deliverWithoutStart = true)
                 else -> ExecutionDispatch(emptyList(), emptyList(), WaylineObservationDelivery.DROPPED, false)
             }
         }
-        if (!closedNow) {
+        if (!dispatch.closedNow) {
             record(
                 kind = WaylineAdapterDiagnosticKind.EXECUTION_STATE_OBSERVED,
                 observedRawState = state.name,
-                observationDelivery = delivery,
+                observationDelivery = dispatch.delivery,
             )
         }
-        deliverExecutionState(state, signals, observations)
+        deliverExecutionState(state, dispatch.signals, dispatch.observations, generation, dispatch.deliverWithoutStart)
     }
 
     private fun deliverExecutionState(
         state: DjiMissionExecutionState,
         signals: List<SignalListenerSlot>,
         observations: List<ObservationListenerSlot>,
+        generation: Long,
+        deliverWithoutStart: Boolean = false,
     ) {
         if (signals.isEmpty() && observations.isEmpty()) return
         val signal = state.toMissionExecutionSignal()
         val observation = MissionExecutionObservation(signal, state.toMissionExecutionRawState())
-        signals.forEach { runCatching { it.listener.onSignal(signal) } }
-        observations.forEach { runCatching { it.listener.onObservation(observation) } }
+        signals.forEach {
+            if (deliverWithoutStart || canDeliver(generation)) runCatching { it.listener.onSignal(signal) }
+        }
+        observations.forEach {
+            if (deliverWithoutStart || canDeliver(generation)) runCatching { it.listener.onObservation(observation) }
+        }
+    }
+
+    private fun canDeliver(generation: Long) = synchronized(lock) {
+        !closed && startSignalsEnabled && listenerGeneration == generation
     }
 
     private fun finishUpload(generation: Long, file: StoredMissionFile, completion: OnceUpload, success: Boolean, failure: MissionUploadFailure? = null) {
@@ -580,6 +621,7 @@ class AndroidDjiWaylineAdapter internal constructor(
         val observations: List<ObservationListenerSlot>,
         val delivery: WaylineObservationDelivery,
         val closedNow: Boolean,
+        val deliverWithoutStart: Boolean = false,
     )
 
     companion object {

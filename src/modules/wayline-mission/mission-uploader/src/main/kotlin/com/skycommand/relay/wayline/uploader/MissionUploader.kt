@@ -172,18 +172,22 @@ class MissionUploader private constructor(
         applyUploadState(activeUpload, UploadState.Uploading(0))
 
         val submission = operationCoordinator.submit(
-            action = DjiOperation { operationCompletion ->
-                prepared.start(
-                    progress = { value -> recordProgress(activeUpload, value) },
-                    completion = object : UploadCompletion {
-                        override fun succeed() = operationCompletion.succeed()
-                        override fun fail() = operationCompletion.fail()
-                        override fun fail(failure: MissionUploadFailure?) {
-                            activeUpload.installFailure(failure)
-                            operationCompletion.fail()
-                        }
-                    },
-                )
+            action = object : DjiOperation {
+                override fun releaseSlotOnUnconfirmedOutcome(): Boolean = true
+
+                override fun run(completion: OperationCompletion) {
+                    prepared.start(
+                        progress = { value -> recordProgress(activeUpload, value) },
+                        completion = object : UploadCompletion {
+                            override fun succeed() = completion.succeed()
+                            override fun fail() = completion.fail()
+                            override fun fail(failure: MissionUploadFailure?) {
+                                activeUpload.installFailure(failure)
+                                completion.fail()
+                            }
+                        },
+                    )
+                }
             },
             timeoutMillis = timeoutMillis,
             listener = OperationResultListener { outcome -> finish(activeUpload, outcome) },

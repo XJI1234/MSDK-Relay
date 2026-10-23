@@ -152,6 +152,7 @@ class MobileRelayGraphContractTest {
 
         assertTrue(streamWiring.contains("device.streamOperations()"))
         assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() }"))
+        assertFalse(streamWiring.contains("StreamStartGate { true }"))
     }
 
     @Test
@@ -168,7 +169,7 @@ class MobileRelayGraphContractTest {
         assertTrue(source.contains("CameraMediaReadiness(AndroidCameraMediaRecoveryPort.create())"))
         assertTrue(source.contains("AndroidCameraMediaRecoveryPort.create()"))
         assertTrue(deviceNotifications.contains("synchronizeCameraMediaReadiness()"))
-        assertTrue(streamWiring.contains("StreamStartGate { device.capabilities().canStreamVideo && cameraMediaReadiness.isReady() }"))
+        assertTrue(streamWiring.contains("canStreamVideo && cameraMediaReadiness.isReady()"))
     }
 
     @Test

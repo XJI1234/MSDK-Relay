@@ -1,13 +1,17 @@
 # android-dji-wayline-adapter 模块契约
 
 状态：原始航线状态适配已按此契约实现并验证
-版本：2.6.0
+版本：2.7.0
 所属一级模块：wayline-mission
 逻辑 Gradle 路径：`:wayline-mission:android-dji-wayline-adapter`
 
 ## 唯一职责
 
 本模块是 `MissionUploadPort`、`MissionControlPort` 与 `MissionExecutionSignalSource` 的唯一 DJI MSDK v5 Android 实现。一个进程级实例负责把已暂存 KMZ 输入流安全、分块写入应用缓存，上传给飞行器，保存本次成功上传的精确文件名，提交开始/暂停/继续/停止命令，并将 DJI 的原始航线状态归一化为不含 DJI 类型的信号。上传入口只委托 `SingleWaylineKmzGuard` 做最小的 WPML 航线基数检查；它不生成、修改或完整校验航线内容，不保存公开任务状态，不判断首点到达，不决定超时、取消或并发策略，不处理网关命令，不注册 SDK，不管理权限，也不渲染界面。
+
+## SDK 监听生命周期
+
+DJI 在产品类型改变时会销毁并替换内部任务操作者，已有监听句柄不代表新操作者仍有监听。因此每次开始任务必须在同一控制提交锁内，先使旧监听代次失效、取消旧监听，再重新注册执行状态、航点进度/中断和航点动作三组监听，全部成功后才能提交 `startMission`。任何一组注册抛错时必须清理本次已注册项，记录 `CONTROL_DJI_INVOCATION_FAILED` 受限诊断并返回失败，不能发送开始命令或静默降级为没有进度的任务。注册期间的回调仍不能提前打开启动窗口；旧监听的迟到状态、进度、动作和中断不得污染下一次任务。每次替换和关闭都必须释放全部监听；不得依靠启动成功回执或遥测伪造航点和执行态。
 
 ## 对外接口
 
@@ -27,11 +31,11 @@ adapter.close() -> Unit
 
 DJI 上传没有取消接口，因此新上传不得删除仍可能被旧上传读取的输入文件；每个上传终态只清理自己的目录，只有最新上传代次的成功终态可以替换当前文件名。上传进度 `Double` 四舍五入并限制到 `0..100`，非有限值忽略。控制提交、关闭和代次变更必须串行化；关闭后迟到控制回调不得完成上层。每个回调至多一次；`close()` 幂等，使全部迟到回调失效并清理所有剩余目录。
 
-上传失败的来源必须保留，不能把本地失败伪装成 DJI 拒绝。适配器必须经 `WaylineAdapterDiagnosticSink` 记录下列封闭事件：`UPLOAD_INPUT_REJECTED`（文件名或单航线 KMZ 检查未通过）、`UPLOAD_FILE_WRITE_FAILED`（应用缓存写入失败）、`UPLOAD_DJI_INVOCATION_FAILED`（`WaypointMissionManager.init()` 或 `pushKMZFileToAircraft(...)` 在回调前同步抛出）、`UPLOAD_DJI_REJECTED`（DJI 已调用 `onFailure(IDJIError)`）、`CONTROL_DJI_INVOCATION_FAILED`（`startMission`、`pauseMission`、`resumeMission` 或 `stopMission` 在回调前同步抛出）、`EXECUTION_STATE_OBSERVED`（DJI 航线执行态回调）、`WAYLINE_PROGRESS_OBSERVED`（现场航点/动作进度）和 `WAYLINE_INTERRUPT_OBSERVED`（DJI 中断原因）。观察类事件必须在启动隔离决定投递、暂存或丢弃之后、但仍在关闭前记录，且不得改变投递行为：`observationDelivery` 只能是 `DELIVERED`、`PENDING` 或 `DROPPED`。`EXECUTION_STATE_OBSERVED` 携带受限 `observedRawState`；进度与中断可携带受限 `currentWaypointIndex`、`waylineId`；中断还必须携带与公开现场进度相同、已经 Android 边界归一化的 `djiErrorCode` 与 `djiErrorDescription`。`create(context, diagnosticSink?)` 的外部 sink 只接收事件名和上述受限详情文本，不得泄露文件名、路径、KMZ 字节或 DJI 对象。`UPLOAD_INPUT_REJECTED` 必须携带受限原因码 `UNSAFE_FILE_NAME` 或 `KMZ_GUARD_REJECTED`，以区分传输元数据和本地 WPML 守卫，不得泄露文件名、路径或字节。`UPLOAD_DJI_REJECTED` 必须携带与公开命令结果完全相同、已经 Android 边界归一化的 `djiErrorCode`（最多 128 个 Unicode 码点）和 `djiErrorDescription`（最多 512 个 Unicode 码点）；二者均不得含控制字符、路径、KMZ 字节、堆栈或 DJI 异常对象。诊断只保留这些受限字段或受限的异常类型名和说明，不将异常对象、堆栈、KMZ 字节、绝对路径或 DJI 对象泄漏出模块。直接调用 `WaypointMissionManager` 时的同步异常必须先记录受限诊断、再原样向上抛出；不得调用上传或控制完成回调、不得改变控制代次，也不得删除本次上传文件，因为 DJI 可能已经接受了该调用。该文件只能在真实异步 DJI 回调结算，或在 `close()` 生命周期清理时删除。该诊断不改变公开命令结果：只有 `onFailure(IDJIError)` 才是带 DJI 错误码与说明的 `ACTION_REJECTED`；同步调用异常和其它没有 DJI 错误的失败均是“DJI 未报告结果”的调用失败，并由上层航线域协调器隔离未确认的写操作。
+上传失败的来源必须保留，不能把本地失败伪装成 DJI 拒绝。适配器必须经 `WaylineAdapterDiagnosticSink` 记录下列封闭事件：`UPLOAD_INPUT_REJECTED`（文件名或单航线 KMZ 检查未通过）、`UPLOAD_FILE_WRITE_FAILED`（应用缓存写入失败）、`UPLOAD_DJI_INVOCATION_FAILED`（`WaypointMissionManager.init()` 或 `pushKMZFileToAircraft(...)` 在回调前同步抛出）、`UPLOAD_DJI_REJECTED`（DJI 已调用 `onFailure(IDJIError)`）、`CONTROL_DJI_INVOCATION_FAILED`（`startMission`、`pauseMission`、`resumeMission` 或 `stopMission` 在回调前同步抛出）、`EXECUTION_STATE_OBSERVED`（DJI 航线执行态回调）、`WAYLINE_PROGRESS_OBSERVED`（现场航点/动作进度）和 `WAYLINE_INTERRUPT_OBSERVED`（DJI 中断原因）。观察类事件必须在启动隔离决定投递、暂存或丢弃之后、但仍在关闭前记录，且不得改变投递行为：`observationDelivery` 只能是 `DELIVERED`、`PENDING` 或 `DROPPED`。`EXECUTION_STATE_OBSERVED` 携带受限 `observedRawState`；进度与中断可携带受限 `currentWaypointIndex`、`waylineId`；中断还必须携带与公开现场进度相同、已经 Android 边界归一化的 `djiErrorCode` 与 `djiErrorDescription`。`create(context, diagnosticSink?)` 的外部 sink 只接收事件名和上述受限详情文本，不得泄露文件名、路径、KMZ 字节或 DJI 对象。`UPLOAD_INPUT_REJECTED` 必须携带受限原因码 `UNSAFE_FILE_NAME` 或 `KMZ_GUARD_REJECTED`，以区分传输元数据和本地 WPML 守卫，不得泄露文件名、路径或字节。`UPLOAD_DJI_REJECTED` 必须携带与公开命令结果完全相同、已经 Android 边界归一化的 `djiErrorCode`（最多 128 个 Unicode 码点）和 `djiErrorDescription`（最多 512 个 Unicode 码点）；二者均不得含控制字符、路径、KMZ 字节、堆栈或 DJI 异常对象。诊断只保留这些受限字段或受限的异常类型名和说明，不将异常对象、堆栈、KMZ 字节、绝对路径或 DJI 对象泄漏出模块。直接调用 `WaypointMissionManager` 时的同步异常必须先记录受限诊断、再原样向上抛出；不得调用上传或控制完成回调、不得改变控制代次，也不得删除本次上传文件，因为 DJI 可能已经接受了该调用。该文件只能在真实异步 DJI 回调结算，或在 `close()` 生命周期清理时删除。该诊断不改变公开命令结果：只有 `onFailure(IDJIError)` 才是带 DJI 错误码与说明的 `ACTION_REJECTED`；同步调用异常和其它没有 DJI 错误的失败均是“DJI 未报告结果”的调用失败，上层上传器结束本地等待后释放操作槽位，允许重新提交；未确认的控制写操作仍由航线域协调器按控制模块契约处理。适配器不能把新上传与旧上传的回调或文件混用。
 
 `MissionExecutionSignalSource` 同时发布归一化后的封闭信号集 `PREPARING|ENTER_WAYLINE|EXECUTING|PAUSED|COMPLETED|INTERRUPTED|IDLE|DISCONNECTED|UNKNOWN`、受限的原始观察 `MissionExecutionRawState`，以及只用于显示的现场进度 `WaylineLiveProgress`。原始观察一对一保存官方 `WaypointMissionExecuteStateListener` 的枚举名称：`IDLE|READY|UPLOADING|PREPARING|RECOVERING|ENTER_WAYLINE|EXECUTING|PAUSED|INTERRUPTED|FINISHED|RETURN_TO_START_POINT|DISCONNECTED|NOT_SUPPORTED|UNKNOWN`。现场进度一对一保存 `WaylineExecutingInfoListener`（执行文件名、航线 ID、当前航点，以及中断原因）和 `WaypointActionListener`（动作组、动作 ID、开始/结束）。它不泄露 DJI 枚举对象或异常，也不得压缩 `RETURN_TO_START_POINT`、`READY`、`UPLOADING`、`RECOVERING`、`PAUSED` 或 `NOT_SUPPORTED`。监听必须在 `startMission` 调用前完成注册，关闭时必须取消注册；关闭、任务替换或设备代际失效后的回调不得投递。适配器不得把 `startMission` 成功回调转换为 `ENTER_WAYLINE` 或 `EXECUTING`，也不得从遥测位置推测信号或发明“正在拍照”。
 
-DJI 原始状态不携带本项目任务身份，因此适配器必须实现 `beginStartAttempt`、`confirmStartAttempt` 和 `invalidateStartAttempt` 状态隔离：门面准备启动新任务时先关闭投递并丢弃尚未确认的缓存。`startMission` 调用前到达的状态仍必须丢弃，以免上一任务迟到回调归属给新任务。监听注册且本次 `startMission` 已经发出之后、成功回执到来之前的状态不得丢弃，必须按到达顺序暂存（最多 32 条）；同一启动请求收到 DJI 成功回执后，先按原顺序补发给当前监听者，再打开实时投递。回执失败、超时、取消、停止、任务替换、设备失效或关闭时再次关闭并清空暂存，不得把未确认启动窗口里的状态补发给后续任务。适配器不得把 `startMission` 成功回调本身转换成 `ENTER_WAYLINE` 或 `EXECUTING`。
+DJI 原始状态不携带本项目任务身份，因此适配器必须实现 `beginStartAttempt`、`confirmStartAttempt` 和 `invalidateStartAttempt` 状态隔离：门面准备启动新任务时先关闭投递并丢弃尚未确认的缓存。`startMission` 调用前到达的状态仍必须丢弃，以免上一任务迟到回调归属给新任务。监听注册且本次 `startMission` 已经发出之后、成功回执到来之前的状态不得丢弃，必须按到达顺序暂存（最多 32 条）；同一启动请求收到 DJI 成功回执后，先按原顺序补发给当前监听者，再打开实时投递。回执失败、超时、取消、停止、任务替换、设备失效或关闭时再次关闭并清空暂存，不得把未确认启动窗口里的状态补发给后续任务。适配器不得把 `startMission` 成功回调本身转换成 `ENTER_WAYLINE` 或 `EXECUTING`。停止或失效之后，DJI 随后的 `FINISHED` 与 `READY` 仍投递给当前监听者并记为 `DELIVERED`；其余迟到状态继续丢弃。
 
 原始 `RETURN_TO_START_POINT` 表示飞行器仍在执行返航动作，不是任务完成；它必须保持为非终态 `EXECUTING`，直到 DJI 后续明确报告 `FINISHED`。只有 `FINISHED` 可以映射为 `COMPLETED`。对于 `pushKMZFileToAircraft`、`startMission`、`pauseMission`、`resumeMission` 和 `stopMission`，DJI `onFailure(IDJIError)` 的 `errorCode()` 与 `description()` 必须在 Android 边界归一化为受限的错误码和描述，并经对应端口原样传回；同步异常、关闭和没有可用 `IDJIError` 的失败只产生无错误详情的失败。适配器绝不把 `IDJIError` 实例越过该模块边界。`close()` 必须最终调用 `WaypointMissionManager.destroy()`，以取消其产品类型监听并销毁内部任务操作者；上层适配器负责隔离该调用异常。
 

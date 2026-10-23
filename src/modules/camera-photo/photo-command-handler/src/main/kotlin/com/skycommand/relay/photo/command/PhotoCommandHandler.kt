@@ -75,6 +75,7 @@ sealed interface PhotoActionTerminalOutcome {
     data object TimedOut : PhotoActionTerminalOutcome
     data object Cancelled : PhotoActionTerminalOutcome
     data object None : PhotoActionTerminalOutcome
+    data object Stopped : PhotoActionTerminalOutcome
 }
 
 sealed interface PhotoActionResult {

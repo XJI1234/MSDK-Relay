@@ -44,6 +44,33 @@ import kotlin.test.assertIs
 
 class WaylineMissionContractTest {
     @Test
+    fun preservesRawObservationsReplayedByTheSourceAfterSuccessfulStart() {
+        val executing = MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.EXECUTING)
+        val cases = listOf(
+            listOf(MissionExecutionObservation(MissionExecutionSignal.ENTER_WAYLINE, MissionExecutionRawState.ENTER_WAYLINE)) to ExecutionState.STARTING,
+            listOf(executing) to ExecutionState.EXECUTING,
+            listOf(executing, MissionExecutionObservation(MissionExecutionSignal.PAUSED, MissionExecutionRawState.PAUSED)) to ExecutionState.PAUSED,
+            listOf(executing, MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.RETURN_TO_START_POINT)) to ExecutionState.EXECUTING,
+            listOf(executing, MissionExecutionObservation(MissionExecutionSignal.COMPLETED, MissionExecutionRawState.FINISHED)) to ExecutionState.FINISHED,
+        )
+        for ((observations, expected) in cases) {
+            val fixture = Fixture()
+            stageTransferred(fixture)
+            fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+            fixture.upload.completeSuccess()
+            fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+            fixture.signals.pendingObservations += observations
+            assertEquals(null, fixture.mission.snapshot().missionDjiExecutionState)
+            assertEquals(ExecutionState.STARTING, fixture.mission.snapshot().execution)
+
+            fixture.control.completeSuccess()
+
+            assertEquals(observations.last().rawState, fixture.mission.snapshot().missionDjiExecutionState)
+            assertEquals(expected, fixture.mission.snapshot().execution)
+        }
+    }
+
+    @Test
     fun recordsTheIdentityMatchedRawDjiObservationForTheCurrentMission() {
         val fixture = Fixture()
         stageTransferred(fixture)
@@ -146,6 +173,48 @@ class WaylineMissionContractTest {
 
         assertEquals(emptyList(), resume.events)
         assertEquals("resume", fixture.control.command)
+    }
+
+    @Test
+    fun djiInterruptedStateAfterPauseRemainsResumable() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+        fixture.mission.commandHandler().handle(confirm("wayline.pause"), Completion())
+        fixture.control.completeSuccess()
+        assertEquals(ExecutionState.PAUSED, fixture.mission.snapshot().execution)
+
+        fixture.signals.emit(MissionExecutionObservation(MissionExecutionSignal.INTERRUPTED, MissionExecutionRawState.INTERRUPTED))
+
+        assertEquals(ExecutionState.PAUSED, fixture.mission.snapshot().execution)
+        assertEquals(MissionExecutionRawState.INTERRUPTED, fixture.mission.snapshot().missionDjiExecutionState)
+        val resume = Completion()
+        fixture.mission.commandHandler().handle(confirm("wayline.resume"), resume)
+        assertEquals(emptyList(), resume.events)
+        assertEquals("resume", fixture.control.command)
+    }
+
+    @Test
+    fun djiExitAfterPauseEndsTheWayline() {
+        val fixture = Fixture()
+        stageTransferred(fixture)
+        fixture.mission.commandHandler().handle(confirm("wayline.upload"), Completion())
+        fixture.upload.completeSuccess()
+        fixture.mission.commandHandler().handle(confirm("wayline.start"), Completion())
+        fixture.control.completeSuccess()
+        fixture.signals.emit(MissionExecutionSignal.EXECUTING)
+        fixture.mission.commandHandler().handle(confirm("wayline.pause"), Completion())
+        fixture.control.completeSuccess()
+
+        fixture.signals.emit(MissionExecutionObservation(MissionExecutionSignal.COMPLETED, MissionExecutionRawState.FINISHED))
+        assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
+        fixture.signals.emit(MissionExecutionObservation(MissionExecutionSignal.IDLE, MissionExecutionRawState.READY))
+        assertEquals(ExecutionState.FINISHED, fixture.mission.snapshot().execution)
+        assertEquals(MissionExecutionRawState.READY, fixture.mission.snapshot().missionDjiExecutionState)
     }
 
     @Test
@@ -374,6 +443,35 @@ class WaylineMissionContractTest {
 
         fixture.upload.completeSuccess()
         assertEquals(listOf("ok:Mission uploaded"), completion.events)
+    }
+
+    @Test
+    fun missingUploadReceiptAllowsACommandRetryAndDoesNotAffectOtherRelays() {
+        val relays = List(4) { Fixture().also { stageTransferred(it) } }
+        val commands = relays.map { fixture ->
+            Completion().also { fixture.mission.commandHandler().handle(confirm("wayline.upload"), it) }
+        }
+        val first = relays.first()
+        val oldCompletion = first.upload.completions.single()
+
+        first.scheduler.fire()
+        relays.drop(1).forEach { it.upload.completeSuccess() }
+
+        assertEquals(listOf("reject:Mission operation result was not confirmed"), commands.first().events)
+        assertEquals(JsonString("RESULT_UNCONFIRMED"), commands.first().result?.get("outcome"))
+        relays.drop(1).forEach { assertEquals(UploadState.UPLOADED, it.mission.snapshot().upload) }
+        commands.drop(1).forEach { assertEquals(listOf("ok:Mission uploaded"), it.events) }
+        val retry = Completion()
+        first.mission.commandHandler().handle(confirm("wayline.upload"), retry)
+
+        assertEquals(2, first.upload.completions.size)
+        assertEquals(emptyList(), retry.events)
+        oldCompletion.succeed()
+        assertEquals(UploadState.Uploading(0), first.mission.snapshot().upload)
+        first.upload.completeSuccess()
+        assertEquals(listOf("ok:Mission uploaded"), retry.events)
+        assertEquals(UploadState.UPLOADED, first.mission.snapshot().upload)
+        assertEquals(1, commands.first().events.size)
     }
 
     @Test
@@ -648,6 +746,7 @@ class WaylineMissionContractTest {
 
     private class UploadPort : MissionUploadPort {
         private var completion: UploadCompletion? = null
+        val completions = mutableListOf<UploadCompletion>()
         override fun prepare(
             metadata: MissionMetadata,
             content: java.io.InputStream,
@@ -656,6 +755,7 @@ class WaylineMissionContractTest {
             return MissionUploadPreparation.Prepared(object : PreparedMissionUpload {
                 override fun start(progress: (Int) -> Unit, completion: UploadCompletion) {
                     this@UploadPort.completion = completion
+                    completions += completion
                 }
 
                 override fun discard() = Unit
@@ -679,6 +779,7 @@ class WaylineMissionContractTest {
     }
 
     private class SignalSource : MissionExecutionSignalSource {
+        val pendingObservations = mutableListOf<MissionExecutionObservation>()
         private var listener: MissionExecutionSignalListener? = null
         private var observationListener: MissionExecutionObservationListener? = null
         private var liveProgressListener: WaylineLiveProgressListener? = null
@@ -695,8 +796,12 @@ class WaylineMissionContractTest {
             return MissionExecutionSignalRegistration { liveProgressListener = null }
         }
         override fun beginStartAttempt() = Unit
-        override fun confirmStartAttempt() = Unit
-        override fun invalidateStartAttempt() = Unit
+        override fun confirmStartAttempt() {
+            val replay = pendingObservations.toList()
+            pendingObservations.clear()
+            replay.forEach(::emit)
+        }
+        override fun invalidateStartAttempt() { pendingObservations.clear() }
         fun emit(signal: MissionExecutionSignal) = emit(MissionExecutionObservation(signal, MissionExecutionRawState.UNKNOWN))
         fun emit(observation: MissionExecutionObservation) {
             listener?.onSignal(observation.signal)

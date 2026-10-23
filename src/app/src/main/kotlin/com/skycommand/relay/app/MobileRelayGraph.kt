@@ -976,7 +976,7 @@ class MobileRelayGraph private constructor(
             listOf("device.settings.camera.read", "device.settings.camera.write", "device.settings.transmission.read", "device.settings.transmission.write").forEach {
                 register(gateway, journal, it, deviceSettings.commandHandler())
             }
-            listOf("camera.photo.capture", "camera.photo.fetch").forEach {
+            listOf("camera.photo.capture", "camera.photo.fetch", "camera.photo.fetch.stop").forEach {
                 register(gateway, journal, it, cameraPhoto.commandHandler())
             }
             listOf(

@@ -163,6 +163,7 @@ class CommandDispatcherContractTest {
             "device.settings.transmission.write",
             "camera.photo.capture",
             "camera.photo.fetch",
+            "camera.photo.fetch.stop",
         )
 
         names.forEach { name ->

@@ -1,7 +1,7 @@
 # dji-operation-coordinator 二级模块契约
 
 状态：已实施
-版本：1.2.0
+版本：1.3.0
 所属一级模块：`device-connection`
 Gradle 路径：`:device-connection:dji-operation-coordinator`
 
@@ -21,6 +21,8 @@ cancellation.cancel() -> Cancelled | AlreadyFinished
 `action` 只能通过传入的 completion 报告 `success` 或 `failure`。每个已接受操作最终恰好得到一次 `SUCCEEDED`、`FAILED`、`TIMED_OUT` 或 `CANCELLED`；结果不携带 DJI 原始异常。
 
 `TIMED_OUT` 或运行中 `CANCELLED` 只表示本程序未能继续等待该操作，**不表示 DJI 已停止执行**。这种情况下协调器进入“硬件结果未确认”隔离：会立即把终态交给原调用方，但仍占用当前操作域的唯一 DJI 操作槽位，取消尚未开始的排队项并拒绝普通新提交。只有同一 action 之后的 `success` / `failure` 回调，或该 action 调用一次 `confirmHardwareSettled()`，才能解除隔离。
+
+上述隔离是默认策略。action 可通过 `releaseSlotOnUnconfirmedOutcome() == true` 明确选择只结束本地等待：超时、运行中取消或调用异常时释放本地槽位，保留尚未开始的排队项并继续串行调度，不等待旧 DJI 回调，不把本地释放解释为 DJI 已停止或已经失败。当前仅 KMZ 上传使用此策略，避免一次无回执永久阻塞之后的航线请求；不会自动重试上传。旧 action 保持独立身份，迟到回调仅至多一次进入它自己的 `onLateDjiCompletion`，不能完成原调用方、释放新槽位或更改新请求状态。上传文件是否仍可能被 DJI 读取由 Android 适配器管理，不能随本地等待结束而删除。
 
 替换隔离动作有三种严格受限的例外：一是声明了同一个非空 `unconfirmedRetryMarker()` 的等价收尾重试；二是 action 明确声明 `unconfirmedOutcomeAdmission() == CONTAINMENT` 的单向安全收尾命令；三是 action 明确声明 `unconfirmedOutcomeAdmission() == SUPERSEDE_UNCONFIRMED`，只允许替换**已经进入隔离**的槽位。三者都会把旧 action 标记为已被替换；迟到 DJI 回调只交给旧 action 的 `onLateDjiCompletion`，不能二次报告或污染替换操作。`CONTAINMENT` 只可用于不会起飞、恢复航线或扩大既有动作风险的 DJI 收尾调用，当前正式实现仅用于飞控的降落、确认降落、返航、停止起飞和停止自动降落，以及航线停止。`SUPERSEDE_UNCONFIRMED` 当前正式实现仅用于航线启动：它不得抢占仍在等待本次 DJI 回执的普通 action，只能在超时或取消隔离之后提交。
 
@@ -44,4 +46,4 @@ cancellation.cancel() -> Cancelled | AlreadyFinished
 
 ## 4. 测试要求
 
-纯 JVM 测试覆盖串行、成功、失败、异常、超时隔离、排队取消、运行中取消隔离、containment 抢占普通在途 action、超时后 `SUPERSEDE_UNCONFIRMED` 替换、迟到回调恢复、权威状态确认恢复、重复完成、执行器拒绝和计时器取消。
+纯 JVM 测试覆盖串行、成功、失败、异常、超时隔离、排队取消、运行中取消隔离、containment 抢占普通在途 action、超时后 `SUPERSEDE_UNCONFIRMED` 替换、迟到回调恢复、权威状态确认恢复、重复完成、执行器拒绝和计时器取消。上传器集成测试另外覆盖显式释放策略下的超时/取消/异常后重试、保留排队请求、终态监听器重入及迟到回调不得影响新槽位。

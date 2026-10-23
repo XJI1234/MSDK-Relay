@@ -1,7 +1,7 @@
 # wayline-mission 一级模块契约
 
 状态：航线入场阶段已实现并通过 JVM、Android 单元测试与全仓回归验证
-版本：2.1.0
+版本：2.1.2
 所属程序：MSDK Relay Android
 Gradle 路径：`:wayline-mission`
 
@@ -32,7 +32,7 @@ Gradle 路径：`:wayline-mission`
 - `startMission` 的成功回调只表示 DJI 接受了启动请求，绝不表示飞行器已到达首航点或已开始飞行航线。
 - 仅 DJI 的 `ENTER_WAYLINE` 原始状态可确认飞行器已进入首航点。收到该状态时只产生 `START_POINT_REACHED`，任务执行状态必须保持 `STARTING`，不得把入场当成已经开始执行航线。
 - 仅 DJI 的 `EXECUTING` 原始状态可确认航线开始执行。已见过首点后的首次 `EXECUTING` 产生 `ROUTE_EXECUTION_STARTED`，门面此时才把当前任务写成 `EXECUTING`。没有收到 `ENTER_WAYLINE` 而直接收到 `EXECUTING` 时，只能确认 `ROUTE_EXECUTION_STARTED`，不得补造 `START_POINT_REACHED`；必须记录不含敏感数据的 `ENTRY_STATE_MISSING` 诊断。两条事实可以紧挨着到达，但不得由一次 `ENTER_WAYLINE` 同时合成。
-- `COMPLETED` 是 DJI 确认的自然任务完成：仅对已经产生 `ROUTE_EXECUTION_STARTED` 的当前已武装任务将执行状态写为 `FINISHED`，随后使该任务的阶段跟踪器失效。`INTERRUPTED` 或 `DISCONNECTED` 仅对同样已确认进入执行的当前任务写为 `FAILED`，随后失效。任务尚未进入执行时的终态不能可靠归属，必须忽略并保持保守的 `STARTING`，只允许操作员停止。它们不产生伪造的首点或开始执行阶段事实。`PAUSED` 只能把当前 `EXECUTING` 任务同步为 `PAUSED`；重复或不匹配当前状态的信号必须无害。
+- `COMPLETED` 是 DJI 确认的自然任务完成：仅对已经产生 `ROUTE_EXECUTION_STARTED` 的当前已武装任务将执行状态写为 `FINISHED`，随后使该任务的阶段跟踪器失效。`INTERRUPTED` 是 DJI `pauseMission` 的执行态：当前为 `EXECUTING` 时写成 `PAUSED`，已经是 `PAUSED` 时保持 `PAUSED`，不得写成 `FAILED`，也不得因此失效阶段跟踪器，以便 `resumeMission` 从断点继续。`DISCONNECTED` 仅对同样已确认进入执行的当前任务写为 `FAILED`，随后失效。任务尚未进入执行时的终态不能可靠归属，必须忽略并保持保守的 `STARTING`，只允许操作员停止。它们不产生伪造的首点或开始执行阶段事实。`PAUSED` 只能把当前 `EXECUTING` 任务同步为 `PAUSED`；重复或不匹配当前状态的信号必须无害。
 - 任何基于时间、距离、手机定位或预估速度的首航点到达判断都是禁止的。设备断开、任务替换、停止、失败或过期回调后，旧任务不得产生阶段事实。
 - 同时只能存在一个活动暂存写入；失败、取消和重启必须清理半成品。
 - 所有对外结果不包含 Android 绝对路径、临时文件名、原始异常或文件全部内容。
@@ -63,7 +63,11 @@ mission.markDeviceUnavailable() -> MissionSnapshot
 
 依赖只包含 `StagingStorage`、当前文件内容读取器、上传端口、控制端口、原始 DJI 任务状态源、航线域 `DjiOperationCoordinator`、合法范围的超时和可选状态诊断接收器。门面不拥有或关闭注入的适配器与协调器。上传与航线控制共用该航线域，不得注入飞行、设置、配对或图传协调器。
 
+上传在超时、运行中取消或调用异常后必须释放本地航线操作槽位，允许新的上传实际送达 DJI，不因旧上传缺少回执而拒绝后续请求；不得自动重试，也不得把结束本地等待当作 SDK 已停止上传或已明确失败。迟到的旧上传进度和终态不影响重试或其他中继实例；每次命令仍只完成一次，只有本次 DJI 成功回调才能报告上传成功。
+
 `markDeviceUnavailable()` 是设备连接生命周期唯一调用的安全入口。它保留已安全暂存的 KMZ，取消全部已接受但尚未终态的上传和控制操作，并使当前设备侧上传与执行事实进入 `FAILED`；恢复连接后必须重新上传，不能把断开前的 `UPLOADED` 当作仍然有效。该动作建立新的设备运行代际，因此断开前的上传进度、DJI 成功、失败、超时或取消回调均不得改变当前快照，也不得将已拒绝的 relay 命令重新报告为成功。门面在同一生命周期锁内提交操作、追踪取消句柄和失效设备，避免断开与新命令交错时遗漏取消；重复调用幂等地维持安全状态。
+
+启动成功交接必须先确认 `mission-flight-phase`，再打开 Android 状态源的 `confirmStartAttempt` 补发窗口。状态源在回执前缓存的原始 DJI 状态应按原顺序经过已武装的阶段跟踪器并保存到快照，包括紧挨着到达的入场、执行、暂停和完成；不得仅补发归一化信号而丢失 `missionDjiExecutionState`。这一步本身不能产生任何未收到的首点或执行事实。
 
 ## 5. 验证要求
 

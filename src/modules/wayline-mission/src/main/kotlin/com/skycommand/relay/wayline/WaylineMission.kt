@@ -32,6 +32,7 @@ import com.skycommand.relay.wayline.phase.MissionExecutionSignal
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalRegistration
 import com.skycommand.relay.wayline.phase.MissionExecutionSignalSource
 import com.skycommand.relay.wayline.phase.MissionExecutionObservation
+import com.skycommand.relay.wayline.phase.MissionExecutionRawState
 import com.skycommand.relay.wayline.phase.MissionFlightPhase
 import com.skycommand.relay.wayline.phase.MissionPhase
 import com.skycommand.relay.wayline.phase.MissionPhaseFact
@@ -202,10 +203,10 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
 
             override fun onCompleted(outcome: ExecutionTerminalOutcome, failure: MissionControlFailure?) {
                 if (outcome == ExecutionTerminalOutcome.SUCCEEDED && missionRevision != null) {
-                    executionSignalSource.confirmStartAttempt()
                     flightPhase.confirmStart(missionRevision, snapshot.deviceGeneration).forEach { signal ->
                         applyAcceptedExecutionSignal(signal, missionRevision, snapshot.deviceGeneration)
                     }
+                    executionSignalSource.confirmStartAttempt()
                 } else if (missionRevision != null) {
                     executionSignalSource.invalidateStartAttempt()
                     flightPhase.invalidate(missionRevision, snapshot.deviceGeneration)
@@ -284,9 +285,6 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
     private fun acceptExecutionObservation(observation: MissionExecutionObservation) {
         val snapshot = state.snapshot()
         val missionRevision = snapshot.missionRevision ?: return
-        val accepted = flightPhase.accept(observation.signal, missionRevision, snapshot.deviceGeneration)
-        if (accepted !is com.skycommand.relay.wayline.phase.MissionSignalAcceptance.Accepted) return
-
         state.apply(
             MissionStateEvent.ExecutionObserved(
                 sourceRevision = executionStateRevision.incrementAndGet(),
@@ -295,14 +293,51 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
                 state = observation.rawState,
             ),
         )
-        applyAcceptedExecutionSignal(observation.signal, missionRevision, snapshot.deviceGeneration)
-        when (observation.signal) {
-            MissionExecutionSignal.PAUSED ->
-                executor.observeExecutionState(ExecutionState.PAUSED, missionRevision, snapshot.deviceGeneration)
-            MissionExecutionSignal.EXECUTING ->
-                executor.observeExecutionState(ExecutionState.EXECUTING, missionRevision, snapshot.deviceGeneration)
-            else -> Unit
+        val accepted = flightPhase.accept(observation.signal, missionRevision, snapshot.deviceGeneration)
+        if (accepted is com.skycommand.relay.wayline.phase.MissionSignalAcceptance.Accepted) {
+            applyAcceptedExecutionSignal(observation.signal, missionRevision, snapshot.deviceGeneration)
+            when (observation.signal) {
+                MissionExecutionSignal.PAUSED,
+                MissionExecutionSignal.INTERRUPTED,
+                -> executor.observeExecutionState(ExecutionState.PAUSED, missionRevision, snapshot.deviceGeneration)
+                MissionExecutionSignal.EXECUTING ->
+                    executor.observeExecutionState(ExecutionState.EXECUTING, missionRevision, snapshot.deviceGeneration)
+                else -> Unit
+            }
         }
+        settleExitedWayline(observation, missionRevision, snapshot.deviceGeneration)
+    }
+
+    private fun settleExitedWayline(
+        observation: MissionExecutionObservation,
+        missionRevision: Long,
+        deviceGeneration: Long,
+    ) {
+        val current = state.snapshot()
+        if (current.missionRevision != missionRevision || current.deviceGeneration != deviceGeneration) return
+        val exited = when (observation.rawState) {
+            MissionExecutionRawState.FINISHED -> current.execution in setOf(
+                ExecutionState.STARTING,
+                ExecutionState.EXECUTING,
+                ExecutionState.PAUSED,
+                ExecutionState.STOPPING,
+            )
+            MissionExecutionRawState.READY,
+            MissionExecutionRawState.IDLE,
+            -> current.execution in setOf(ExecutionState.EXECUTING, ExecutionState.PAUSED, ExecutionState.STOPPING)
+            else -> false
+        }
+        if (!exited) return
+        state.apply(
+            MissionStateEvent.ExecutionChanged(
+                sourceRevision = executionStateRevision.incrementAndGet(),
+                missionRevision = missionRevision,
+                deviceGeneration = deviceGeneration,
+                state = ExecutionState.FINISHED,
+            ),
+        )
+        executionSignalSource.invalidateStartAttempt()
+        flightPhase.invalidate(missionRevision, deviceGeneration)
     }
 
     private fun acceptLiveProgress(progress: WaylineLiveProgress) {
@@ -360,13 +395,14 @@ class WaylineMission private constructor(dependencies: WaylineMissionDependencie
                 } else {
                     null
                 }
-            MissionExecutionSignal.INTERRUPTED,
-            MissionExecutionSignal.DISCONNECTED,
-            -> if (current.execution in setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED)) {
-                ExecutionState.FAILED
-            } else {
-                null
-            }
+            MissionExecutionSignal.INTERRUPTED ->
+                if (current.execution == ExecutionState.EXECUTING) ExecutionState.PAUSED else null
+            MissionExecutionSignal.DISCONNECTED ->
+                if (current.execution in setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED)) {
+                    ExecutionState.FAILED
+                } else {
+                    null
+                }
             else -> null
         } ?: return
 

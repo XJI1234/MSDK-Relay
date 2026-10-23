@@ -172,7 +172,9 @@ class MissionExecutor private constructor(
             }
             active.also { active = operation }
         }
-        applyState(operation, command.pendingState)
+        // Pause must reach DJI during ENTER_WAYLINE. That phase is still STARTING,
+        // so the in-flight state stays STARTING until DJI accepts and it becomes PAUSED.
+        applyState(operation, if (command == Command.PAUSE) operation.previousState else command.pendingState)
 
         val submission = coordinator.submit(
             action = object : DjiOperation {
@@ -315,7 +317,7 @@ class MissionExecutor private constructor(
         val observedState: ExecutionState? = null,
     ) {
         START(ExecutionState.STARTING, ExecutionState.STARTING, ExecutionState.entries.toSet()),
-        PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.EXECUTING), ExecutionState.PAUSED),
+        PAUSE(ExecutionState.EXECUTING, ExecutionState.PAUSED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING), ExecutionState.PAUSED),
         RESUME(ExecutionState.PAUSED, ExecutionState.EXECUTING, setOf(ExecutionState.PAUSED), ExecutionState.EXECUTING),
         STOP(ExecutionState.STOPPING, ExecutionState.FINISHED, setOf(ExecutionState.STARTING, ExecutionState.EXECUTING, ExecutionState.PAUSED, ExecutionState.STOPPING));
 

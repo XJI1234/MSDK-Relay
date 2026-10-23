@@ -170,6 +170,105 @@ class MissionUploaderContractTest {
     }
 
     @Test
+    fun retriesAfterMissingDjiReceiptWithoutWaitingForTheOldCallback() {
+        val fixture = Fixture()
+        val firstOutcomes = mutableListOf<UploadTerminalOutcome>()
+        val retryOutcomes = mutableListOf<UploadTerminalOutcome>()
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener { firstOutcomes += it }))
+        val oldProgress = fixture.port.progress!!
+        val oldCompletion = fixture.port.completion!!
+
+        fixture.scheduler.fire()
+
+        assertEquals(listOf(UploadTerminalOutcome.TIMED_OUT), firstOutcomes)
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener { retryOutcomes += it }))
+        assertEquals(2, fixture.port.starts)
+        fixture.port.progress!!(45)
+        oldProgress(100)
+        oldCompletion.succeed()
+        oldCompletion.fail(MissionUploadFailure.fromDjiError("OLD_ERROR", "Old upload failed"))
+
+        assertEquals(UploadState.Uploading(45), fixture.store.snapshot().upload)
+        assertEquals(listOf(UploadTerminalOutcome.TIMED_OUT), firstOutcomes)
+        assertTrue(retryOutcomes.isEmpty())
+        fixture.port.completion!!.succeed()
+        assertEquals(UploadState.UPLOADED, fixture.store.snapshot().upload)
+        assertEquals(listOf(UploadTerminalOutcome.SUCCEEDED), retryOutcomes)
+    }
+
+    @Test
+    fun retriesAfterCancellationWithoutWaitingForADjiCallback() {
+        val fixture = Fixture()
+        val outcomes = mutableListOf<UploadTerminalOutcome>()
+        val first = assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener { outcomes += it }))
+        val oldCompletion = fixture.port.completion!!
+
+        first.cancellation.cancel()
+
+        assertEquals(listOf(UploadTerminalOutcome.CANCELLED), outcomes)
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start())
+        assertEquals(2, fixture.port.starts)
+        oldCompletion.succeed()
+        assertEquals(UploadState.Uploading(0), fixture.store.snapshot().upload)
+        fixture.port.completion!!.succeed()
+        assertEquals(UploadState.UPLOADED, fixture.store.snapshot().upload)
+    }
+
+    @Test
+    fun retriesAfterASynchronousUploadInvocationException() {
+        val fixture = Fixture().apply { port.failure = true }
+        val outcomes = mutableListOf<UploadTerminalOutcome>()
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener { outcomes += it }))
+        assertEquals(listOf(UploadTerminalOutcome.FAILED), outcomes)
+        fixture.port.failure = false
+
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start())
+
+        assertEquals(2, fixture.port.starts)
+        fixture.port.completion!!.succeed()
+        assertEquals(UploadState.UPLOADED, fixture.store.snapshot().upload)
+    }
+
+    @Test
+    fun missingUploadReceiptDoesNotCancelQueuedWorkOrBlockNewOperations() {
+        val fixture = Fixture()
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start())
+        val oldCompletion = fixture.port.completion!!
+        var nextCompletion: OperationCompletion? = null
+        var nextStarts = 0
+        assertIs<SubmissionResult.Accepted>(fixture.coordinator.submit({
+            nextStarts += 1
+            nextCompletion = it
+        }, 1_000) { })
+
+        fixture.scheduler.fire()
+
+        assertEquals(1, nextStarts)
+        oldCompletion.succeed()
+        var newStarts = 0
+        assertIs<SubmissionResult.Accepted>(fixture.coordinator.submit({ newStarts += 1 }, 1_000) { })
+        assertEquals(0, newStarts)
+        nextCompletion!!.succeed()
+        assertEquals(1, newStarts)
+    }
+
+    @Test
+    fun permitsARetryFromTheTimeoutListener() {
+        val fixture = Fixture()
+        var retry: UploadStartResult? = null
+        assertIs<UploadStartResult.Accepted>(fixture.uploader.start(UploadTerminalListener {
+            retry = fixture.uploader.start()
+        }))
+
+        fixture.scheduler.fire()
+
+        assertIs<UploadStartResult.Accepted>(retry)
+        assertEquals(2, fixture.port.starts)
+        fixture.port.completion!!.succeed()
+        assertEquals(UploadState.UPLOADED, fixture.store.snapshot().upload)
+    }
+
+    @Test
     fun ignoresCallbacksThatBelongToAReplacedMission() {
         val fixture = Fixture()
         assertIs<UploadStartResult.Accepted>(fixture.uploader.start())
@@ -216,7 +315,7 @@ class MissionUploaderContractTest {
         val reader = Reader()
         val port = Port()
         val scheduler = Scheduler()
-        private val coordinator = DjiOperationCoordinator.create(
+        val coordinator = DjiOperationCoordinator.create(
             executor = OperationExecutor { it() },
             scheduler = scheduler,
         )

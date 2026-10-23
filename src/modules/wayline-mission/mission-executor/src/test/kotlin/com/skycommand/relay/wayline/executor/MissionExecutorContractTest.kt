@@ -87,6 +87,28 @@ class MissionExecutorContractTest {
     }
 
     @Test
+    fun pauseWhileEnteringTheFirstWaypointReachesDji() {
+        val accepted = Fixture()
+        assertIs<ExecutionRequestResult.Accepted>(accepted.executor.start())
+        accepted.port.completeSuccess()
+        assertEquals(ExecutionState.STARTING, accepted.store.snapshot().execution)
+
+        assertIs<ExecutionRequestResult.Accepted>(accepted.executor.pause())
+        assertEquals(ExecutionState.STARTING, accepted.store.snapshot().execution)
+        accepted.port.completeSuccess()
+        assertEquals(ExecutionState.PAUSED, accepted.store.snapshot().execution)
+
+        val rejected = Fixture()
+        assertIs<ExecutionRequestResult.Accepted>(rejected.executor.start())
+        rejected.port.completeSuccess()
+        val outcomes = mutableListOf<ExecutionTerminalOutcome>()
+        assertIs<ExecutionRequestResult.Accepted>(rejected.executor.pause(ExecutionTerminalListener { outcomes += it }))
+        rejected.port.completeFailure(MissionControlFailure.fromDjiError("WAYPOINT_MISSION_BUSY", "The mission manager is busy"))
+        assertEquals(listOf(ExecutionTerminalOutcome.FAILED), outcomes)
+        assertEquals(ExecutionState.STARTING, rejected.store.snapshot().execution)
+    }
+
+    @Test
     fun leavesAStartedMissionUnconfirmedWhenTheDjiControlCallHasNoSuccessReceipt() {
         val failure = Fixture()
         failure.executor.start()

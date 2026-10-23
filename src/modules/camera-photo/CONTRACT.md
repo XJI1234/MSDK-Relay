@@ -14,6 +14,7 @@ Gradle 路径：`:camera-photo`
 ```text
 camera.photo.capture    fields: {}
 camera.photo.fetch      fields: { knownPhotos: [{ fileName, sha256 }] }
+camera.photo.fetch.stop fields: {}
 ```
 
 `capture` 不接受额外字段；`fetch` 只接受当前电脑的 `knownPhotos` 清单。`capture` 成功时 `command-result.result` 为：
@@ -66,7 +67,7 @@ camera.photo.fetch      fields: { knownPhotos: [{ fileName, sha256 }] }
 
 任何字段错误都在调用 DJI 或发送分块前拒绝。同一 `CameraPhoto` 门面最多保留一个已接受但未到终态的命令；第二个 `capture` 或 `fetch` 必须在触及拍照域协调器或媒体发送前以稳定的本地 `OPERATION_REJECTED` 拒绝。此规则只防止陈旧拍照意图排队，不检查硬件 Key，也不把 DJI 的异步拒绝改写为本地拒绝。
 
-`fetch` 按调用参数中的电脑清单扫描飞行器相册，不要求当前门面刚刚 `capture`。一次 `fetch` 只允许一个批量循环；每次只下载一张，必须在对应电脑 `media-result.ok=true` 后才选择下一张。传输失败、超时、取消或断线不得加入本次已确认集合，下一次显式 `fetch` 必须能重试。新的成功 `capture` 不会取消其它已在途批量；同一门面仍拒绝并发命令。
+`fetch` 按调用参数中的电脑清单扫描飞行器相册，不要求当前门面刚刚 `capture`。一次 `fetch` 只允许一个批量循环；每次只下载一张，必须在对应电脑 `media-result.ok=true` 后才选择下一张。`camera.photo.fetch.stop` 在准备、拉列表、下载和回传电脑的任一阶段都必须取消当前句柄并调用大疆停止；若停止正好发生在句柄刚返回、尚未登记完成时，必须立刻取消该句柄，不能等这一张结束。传输失败、超时、取消或断线不得加入本次已确认集合，下一次显式 `fetch` 必须能重试。新的成功 `capture` 不会取消其它已在途批量；同一门面仍拒绝并发命令。
 
 拍照域只串行本域的 DJI 写操作（模式切换、快门、媒体下载），不得因超时隔离拒绝飞行、航线、配对、设置或图传提交。下载完成后的 WebSocket 分块不属于 DJI 操作槽位。`capture` 超时 15_000 ms，`fetch` 的 DJI 下载超时 60_000 ms；均仍受协调器 `1_000..60_000` ms 限制。电脑确认分块的等待另计，由 `photo-media-publisher` 使用注入时钟，上限 120_000 ms。超时、取消后不得假装 DJI 已拍下或电脑已收到。
 

@@ -93,7 +93,7 @@ class RelayTestHarnessContractTest {
             "telemetry.read",
             "pairing.start", "pairing.stop", "pairing.status",
             "live-stream.start", "live-stream.stop",
-            "camera.photo.capture", "camera.photo.fetch",
+            "camera.photo.capture", "camera.photo.fetch", "camera.photo.fetch.stop",
             "flight.takeoff", "flight.land", "flight.confirm-landing", "flight.return-home", "flight.stop-takeoff", "flight.stop-auto-landing", "flight.stop-go-home",
             "device.settings.camera.read", "device.settings.camera.write",
             "device.settings.transmission.read", "device.settings.transmission.write",

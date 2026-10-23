@@ -13,6 +13,9 @@ enum class UnconfirmedOutcomeAdmission {
 fun interface DjiOperation {
     fun run(completion: OperationCompletion)
 
+    /** Releases the local wait after timeout, cancellation or invocation error, without asserting that DJI stopped. */
+    fun releaseSlotOnUnconfirmedOutcome(): Boolean = false
+
     /**
      * Containment may replace an unresolved earlier DJI call, including an in-flight wait.
      * SUPERSEDE_UNCONFIRMED may replace only an already-quarantined slot after timeout or
@@ -283,6 +286,7 @@ class DjiOperationCoordinator private constructor(
     }
 
     private fun reportUnconfirmedHardwareOutcome(entry: Entry, outcome: OperationOutcome) {
+        val releaseSlot = runCatching { entry.action.releaseSlotOnUnconfirmedOutcome() }.getOrDefault(false)
         var timeout: OperationCancellation? = null
         var listener: OperationResultListener? = null
         var action: DjiOperation? = null
@@ -292,14 +296,19 @@ class DjiOperationCoordinator private constructor(
             entry.terminalReported = true
             timeout = entry.timeout
             entry.timeout = null
-            hardwareOutcomeUnconfirmed = true
             listener = entry.listener
             action = entry.action
-            while (pending.isNotEmpty()) {
-                pending.removeFirst().also {
-                    it.terminalReported = true
-                    it.hardwareSettled = true
-                    cancelledPending += it
+            if (releaseSlot) {
+                entry.superseded = true
+                running = null
+            } else {
+                hardwareOutcomeUnconfirmed = true
+                while (pending.isNotEmpty()) {
+                    pending.removeFirst().also {
+                        it.terminalReported = true
+                        it.hardwareSettled = true
+                        cancelledPending += it
+                    }
                 }
             }
         }
@@ -309,6 +318,7 @@ class DjiOperationCoordinator private constructor(
             runCatching { pendingEntry.listener.onComplete(OperationOutcome.CANCELLED) }
         }
         action?.let { runCatching { it.onHardwareOutcomeUnconfirmed(outcome) } }
+        if (releaseSlot) startNext()
     }
 
     private fun finishFromDji(entry: Entry, outcome: OperationOutcome) {

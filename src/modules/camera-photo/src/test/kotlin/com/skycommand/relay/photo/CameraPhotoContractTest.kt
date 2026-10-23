@@ -34,6 +34,22 @@ import kotlin.test.assertTrue
 
 class CameraPhotoContractTest {
     @Test
+    fun fetchStopUsesTheDjiAbortPortAndEndsTheOriginalFetch() {
+        val port = Port()
+        val photo = photo(port)
+        val fetching = Completion()
+        photo.commandHandler().handle(fetch(), fetching)
+        val stopping = Completion()
+        photo.commandHandler().handle(CommandFrame("stop-1", "camera.photo.fetch.stop", JsonObject(emptyMap())), stopping)
+        assertTrue(port.aborted)
+        assertTrue(stopping.events.any { it == "ok:Photo fetch stopped" })
+        assertTrue(fetching.events.any { it == "ok:Photo fetch stopped" })
+        val idle = Completion()
+        photo.commandHandler().handle(CommandFrame("stop-2", "camera.photo.fetch.stop", JsonObject(emptyMap())), idle)
+        assertTrue(idle.events.any { it == "ok:No photo fetch is running" })
+    }
+
+    @Test
     fun fetchProgressKeepsCommandIdentityAndActualBytesUntilTheBatchFinishes() {
         val port = Port()
         val progress = mutableListOf<Pair<CommandFrame, PhotoProgressFrame>>()
@@ -287,8 +303,10 @@ class CameraPhotoContractTest {
         fun fail(failure: PhotoDjiFailure? = null) = checkNotNull(completion).fail(failure)
         fun progress(progress: PhotoDownloadProgress) = checkNotNull(completion).onProgress(progress)
         private var hardwareReleased: (() -> Unit)? = null
+        var aborted = false
         override fun abort(completion: PhotoDjiCompletion, onHardwareReleased: () -> Unit) {
             check(checkNotNull(this.completion) === completion)
+            aborted = true
             hardwareReleased = onHardwareReleased
         }
         fun releaseHardware() = checkNotNull(hardwareReleased).invoke()

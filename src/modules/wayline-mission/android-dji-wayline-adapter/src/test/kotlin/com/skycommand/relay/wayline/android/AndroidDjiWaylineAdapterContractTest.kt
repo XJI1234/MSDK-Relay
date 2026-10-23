@@ -37,6 +37,100 @@ private fun AndroidDjiWaylineAdapter.upload(
 }
 
 class AndroidDjiWaylineAdapterContractTest {
+    @Test fun dropsAnInFlightObservationIfTheMissionIsReplacedBeforeDelivery() {
+        val dji = FakeDji()
+        lateinit var adapter: AndroidDjiWaylineAdapter
+        var replaceBeforeDelivery = false
+        val observations = mutableListOf<MissionExecutionObservation>()
+        adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji, WaylineAdapterDiagnosticSink {
+            if (replaceBeforeDelivery) {
+                replaceBeforeDelivery = false
+                adapter.beginStartAttempt()
+                adapter.start(ControlDone())
+                requireNotNull(dji.controlCompletion).succeed()
+                adapter.confirmStartAttempt()
+            }
+        })
+        adapter.onObservation { observations += it }
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.beginStartAttempt()
+        adapter.start(ControlDone())
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+
+        replaceBeforeDelivery = true
+        dji.emit(DjiMissionExecutionState.FINISHED)
+
+        assertTrue(observations.isEmpty())
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        assertEquals(listOf(MissionExecutionRawState.EXECUTING), observations.map { it.rawState })
+        adapter.close()
+    }
+
+    @Test fun rebindsAllListenersBeforeStartingAfterDjiReplacesItsOperator() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        val observations = mutableListOf<MissionExecutionObservation>()
+        val progress = mutableListOf<WaylineLiveProgress>()
+        adapter.onObservation { observations += it }
+        adapter.onLiveProgress { progress += it }
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.beginStartAttempt()
+        adapter.start(ControlDone())
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        observations.clear()
+
+        val staleCallbacks = dji.replaceOperator()
+        adapter.beginStartAttempt()
+        adapter.start(ControlDone())
+        dji.emit(DjiMissionExecutionState.ENTER_WAYLINE)
+        dji.emitExecutingInfo(DjiWaylineExecutingInfo("route", 0, 4))
+        assertTrue(observations.isEmpty())
+        assertTrue(progress.isEmpty())
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        dji.emitWaypointAction(DjiWaypointActionEvent(1, 2, WaylineLiveActionPhase.START))
+
+        assertEquals(listOf(MissionExecutionRawState.ENTER_WAYLINE, MissionExecutionRawState.EXECUTING), observations.map { it.rawState })
+        assertEquals(4, progress.first().currentWaypointIndex)
+        assertEquals(WaylineLiveActionPhase.START, progress.last().waypointActionPhase)
+        val counts = observations.size to progress.size
+        staleCallbacks()
+        assertEquals(counts, observations.size to progress.size)
+        assertEquals(2, dji.executionListenerRegistrations)
+        assertEquals(3, dji.listenerUnregistrations)
+        adapter.close()
+        assertEquals(6, dji.listenerUnregistrations)
+    }
+
+    @Test fun doesNotStartWithPartiallyRegisteredListenersAndCanRetry() {
+        val dji = FakeDji()
+        val diagnostics = mutableListOf<WaylineAdapterDiagnostic>()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji, WaylineAdapterDiagnosticSink { diagnostics += it })
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        dji.executingInfoFailure = IllegalStateException("listener unavailable")
+        val failed = ControlDone()
+        adapter.beginStartAttempt()
+        adapter.start(failed)
+        assertEquals(listOf("failure"), failed.events)
+        assertFalse(dji.calls.contains("start"))
+        assertEquals(1, dji.listenerUnregistrations)
+        assertEquals(WaylineAdapterDiagnosticKind.CONTROL_DJI_INVOCATION_FAILED, diagnostics.single().kind)
+
+        dji.executingInfoFailure = null
+        adapter.beginStartAttempt()
+        adapter.start(ControlDone())
+        assertEquals("start", dji.calls.last())
+        adapter.close()
+        assertEquals(4, dji.listenerUnregistrations)
+    }
+
     @Test fun preparesThePrivateUploadFileBeforeCallingDji() {
         val files = FakeFiles()
         val dji = FakeDji()
@@ -497,6 +591,34 @@ class AndroidDjiWaylineAdapterContractTest {
         assertEquals(emptyList(), signals)
     }
 
+    @Test fun deliversFinishedAndReadyAfterStopInvalidatesTheStartAttempt() {
+        val dji = FakeDji()
+        val adapter = AndroidDjiWaylineAdapter(FakeFiles(), dji)
+        val observations = mutableListOf<MissionExecutionObservation>()
+        adapter.onObservation { observations += it }
+        adapter.beginStartAttempt()
+        adapter.upload(metadata("route.kmz"), singleWaylineKmz(), {}, UploadDone())
+        requireNotNull(dji.uploadCompletion).succeed()
+        adapter.start(ControlDone())
+        requireNotNull(dji.controlCompletion).succeed()
+        adapter.confirmStartAttempt()
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        adapter.invalidateStartAttempt()
+
+        dji.emit(DjiMissionExecutionState.EXECUTING)
+        dji.emit(DjiMissionExecutionState.FINISHED)
+        dji.emit(DjiMissionExecutionState.READY)
+
+        assertEquals(
+            listOf(
+                MissionExecutionObservation(MissionExecutionSignal.EXECUTING, MissionExecutionRawState.EXECUTING),
+                MissionExecutionObservation(MissionExecutionSignal.COMPLETED, MissionExecutionRawState.FINISHED),
+                MissionExecutionObservation(MissionExecutionSignal.IDLE, MissionExecutionRawState.READY),
+            ),
+            observations,
+        )
+    }
+
     @Test fun failedUploadDoesNotReplacePriorSuccessfulMission() {
         val dji=FakeDji(); val adapter=AndroidDjiWaylineAdapter(FakeFiles(),dji)
         adapter.upload(metadata("good.kmz"), singleWaylineKmz(), {}, UploadDone()); requireNotNull(dji.uploadCompletion).succeed()
@@ -652,9 +774,27 @@ class AndroidDjiWaylineAdapterContractTest {
         override fun pause(completion:DjiControlCompletion){controlFailure?.let { throw it };command="pause";controlCompletion=completion}
         override fun resume(completion:DjiControlCompletion){controlFailure?.let { throw it };command="resume";controlCompletion=completion}
         override fun stop(name:String,completion:DjiControlCompletion){controlFailure?.let { throw it };command="stop";controlName=name;controlCompletion=completion}
-        override fun onExecutionState(listener:(DjiMissionExecutionState)->Unit):DjiExecutionStateRegistration { calls+="listener"; executionListenerRegistrations++; executionListener=listener; return DjiExecutionStateRegistration { executionListener=null } }
-        override fun onExecutingInfo(onInfo:(DjiWaylineExecutingInfo)->Unit,onInterrupt:(String?,String?)->Unit):DjiExecutionStateRegistration { executingInfoListener=onInfo; executingInterruptListener=onInterrupt; return DjiExecutionStateRegistration { executingInfoListener=null; executingInterruptListener=null } }
-        override fun onWaypointAction(listener:(DjiWaypointActionEvent)->Unit):DjiExecutionStateRegistration { waypointActionListener=listener; return DjiExecutionStateRegistration { waypointActionListener=null } }
+        var listenerUnregistrations = 0
+        var executingInfoFailure: Throwable? = null
+        override fun onExecutionState(listener:(DjiMissionExecutionState)->Unit):DjiExecutionStateRegistration { calls+="listener"; executionListenerRegistrations++; executionListener=listener; return DjiExecutionStateRegistration { listenerUnregistrations++; if (executionListener === listener) executionListener=null } }
+        override fun onExecutingInfo(onInfo:(DjiWaylineExecutingInfo)->Unit,onInterrupt:(String?,String?)->Unit):DjiExecutionStateRegistration { executingInfoFailure?.let { throw it }; executingInfoListener=onInfo; executingInterruptListener=onInterrupt; return DjiExecutionStateRegistration { listenerUnregistrations++; if (executingInfoListener === onInfo) { executingInfoListener=null; executingInterruptListener=null } } }
+        override fun onWaypointAction(listener:(DjiWaypointActionEvent)->Unit):DjiExecutionStateRegistration { waypointActionListener=listener; return DjiExecutionStateRegistration { listenerUnregistrations++; if (waypointActionListener === listener) waypointActionListener=null } }
+        fun replaceOperator(): () -> Unit {
+            val state = executionListener
+            val info = executingInfoListener
+            val interrupt = executingInterruptListener
+            val action = waypointActionListener
+            executionListener = null
+            executingInfoListener = null
+            executingInterruptListener = null
+            waypointActionListener = null
+            return {
+                state?.invoke(DjiMissionExecutionState.FINISHED)
+                info?.invoke(DjiWaylineExecutingInfo("old", 0, 99))
+                interrupt?.invoke("OLD_INTERRUPT", "old mission")
+                action?.invoke(DjiWaypointActionEvent(9, 9, WaylineLiveActionPhase.FINISH))
+            }
+        }
         fun emit(state:DjiMissionExecutionState) { executionListener?.invoke(state) }
         fun emitExecutingInfo(info:DjiWaylineExecutingInfo) { executingInfoListener?.invoke(info) }
         fun emitInterrupt(errorCode: String?, errorDescription: String?) { executingInterruptListener?.invoke(errorCode, errorDescription) }

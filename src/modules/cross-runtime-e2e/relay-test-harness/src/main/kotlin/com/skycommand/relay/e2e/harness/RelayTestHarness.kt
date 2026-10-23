@@ -410,7 +410,7 @@ class RelayTestHarness private constructor(
             val pairing = pairingHandler(device, telemetry)
             listOf("pairing.start", "pairing.stop", "pairing.status").forEach { handlers[it] = pairing }
             listOf("live-stream.start", "live-stream.stop").forEach { handlers[it] = stream.commandHandler() }
-            listOf("camera.photo.capture", "camera.photo.fetch").forEach { name ->
+            listOf("camera.photo.capture", "camera.photo.fetch", "camera.photo.fetch.stop").forEach { name ->
                 handlers[name] = CommandHandler { command, completion ->
                     if (command.fields.fields.isNotEmpty()) completion.reject("Photo command fields are invalid")
                     else completion.reject("Photo hardware is unavailable")

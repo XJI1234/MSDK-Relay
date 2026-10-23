@@ -56,6 +56,7 @@ class CameraPhoto private constructor(
     private val lock = Any()
     private val active = mutableSetOf<OperationCancellationHandle>()
     private var requestInFlight = false
+    private var fetchStopRequested = false
     private var activeProgress: BatchProgress? = null
     private var lastIdentity: PhotoCaptureIdentity? = null
     private val executor = PhotoExecutor.create(dependencies.djiPort, dependencies.operationCoordinator)
@@ -86,6 +87,14 @@ class CameraPhoto private constructor(
     }
 
     private fun handle(command: CommandFrame, completion: CommandCompletion) {
+        if (command.name == "camera.photo.fetch.stop") {
+            if (command.fields.fields.isNotEmpty()) {
+                completion.reject("Photo command fields are invalid")
+                return
+            }
+            stopActiveFetch(completion)
+            return
+        }
         val progress = command.takeIf { it.name == "camera.photo.fetch" }?.let(::BatchProgress)
         val commands = PhotoCommandHandler.create(Actions(progress))
         when (val result = commands.handle(command, object : PhotoActionCompletion {
@@ -136,6 +145,10 @@ class CameraPhoto private constructor(
                         "No unsent photos",
                         terminalResult("NONE", count = 0),
                     )
+                    PhotoActionTerminalOutcome.Stopped -> completion.succeed(
+                        "Photo fetch stopped",
+                        terminalResult("STOPPED", count = progress?.completedCount),
+                    )
                 }
             }
         })) {
@@ -165,7 +178,15 @@ class CameraPhoto private constructor(
             val mediaReleased = AtomicBoolean(false)
             val releaseMedia = { if (mediaReleased.compareAndSet(false, true)) dependencies.onCameraMediaReleased() }
             lateinit var submitNext: () -> PhotoActionResult
-            submitNext = {
+            val stopped = {
+                synchronized(lock) { fetchStopRequested = false }
+                releaseMedia()
+                finishRequest(null, AtomicBoolean(true))
+                completion.complete(PhotoActionTerminalOutcome.Stopped)
+                PhotoActionResult.Rejected
+            }
+            submitNext = submit@{
+                if (synchronized(lock) { fetchStopRequested }) return@submit stopped()
                 progress?.listing()
                 val hardware = if (fetch === null) PhotoHardwareRequest.Capture else PhotoHardwareRequest.DownloadUnsent(excluded.toSet())
                 var cancellation: OperationCancellationHandle? = null
@@ -200,9 +221,13 @@ class CameraPhoto private constructor(
                                                 }
                                             }
                                             PhotoMediaOutcome.Failed -> {
-                                                releaseMedia()
-                                                finishRequest(null, operationCompleted)
-                                                completion.complete(PhotoActionTerminalOutcome.TransferFailed)
+                                                if (synchronized(lock) { fetchStopRequested }) {
+                                                    stopped()
+                                                } else {
+                                                    releaseMedia()
+                                                    finishRequest(null, operationCompleted)
+                                                    completion.complete(PhotoActionTerminalOutcome.TransferFailed)
+                                                }
                                             }
                                         }
                                     },
@@ -226,11 +251,16 @@ class CameraPhoto private constructor(
                                     }
                                     PhotoExecutionOutcome.Failed -> PhotoActionTerminalOutcome.Failed
                                     PhotoExecutionOutcome.TimedOut -> PhotoActionTerminalOutcome.TimedOut
-                                    PhotoExecutionOutcome.Cancelled -> PhotoActionTerminalOutcome.Cancelled
+                                    PhotoExecutionOutcome.Cancelled -> if (synchronized(lock) { fetchStopRequested }) {
+                                        synchronized(lock) { fetchStopRequested = false }
+                                        PhotoActionTerminalOutcome.Stopped
+                                    } else {
+                                        PhotoActionTerminalOutcome.Cancelled
+                                    }
                                     is PhotoExecutionOutcome.Delivered -> error("delivered is handled above")
                                     PhotoExecutionOutcome.None -> error("none is handled above")
                                 }
-                                if (outcome !is PhotoExecutionOutcome.TimedOut && outcome !is PhotoExecutionOutcome.Cancelled) {
+                                if (terminal is PhotoActionTerminalOutcome.Stopped || (outcome !is PhotoExecutionOutcome.TimedOut && outcome !is PhotoExecutionOutcome.Cancelled)) {
                                     releaseMedia()
                                 }
                                 finishRequest(null, operationCompleted)
@@ -244,7 +274,11 @@ class CameraPhoto private constructor(
                 when (result) {
                     is PhotoSubmissionResult.Accepted -> {
                         cancellation = result.cancellation
-                        synchronized(lock) { if (!operationCompleted.get()) active += result.cancellation }
+                        val stopNow = synchronized(lock) {
+                            if (!operationCompleted.get()) active += result.cancellation
+                            fetchStopRequested
+                        }
+                        if (stopNow) runCatching { result.cancellation.cancel() }
                         PhotoActionResult.Accepted
                     }
                     PhotoSubmissionResult.Rejected -> {
@@ -282,6 +316,22 @@ class CameraPhoto private constructor(
         synchronized(lock) {
             cancellation?.let(active::remove)
         }
+    }
+
+    private fun stopActiveFetch(completion: CommandCompletion) {
+        val pending = synchronized(lock) {
+            if (!requestInFlight) {
+                completion.succeed("No photo fetch is running", terminalResult("NOT_RUNNING"))
+                return
+            }
+            fetchStopRequested = true
+            activeProgress?.finish()
+            val stopping = active.toList() to activeProgress?.completedCount
+            stopping
+        }
+        dependencies.mediaPublisher.abort()
+        pending.first.forEach { runCatching { it.cancel() } }
+        completion.succeed("Photo fetch stopped", terminalResult("STOPPED", count = pending.second))
     }
 
     private fun finishRequest(cancellation: OperationCancellationHandle?, completed: AtomicBoolean) {
