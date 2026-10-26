@@ -10,6 +10,49 @@ import kotlin.test.assertTrue
 
 class AndroidFlightTelemetrySourceContractTest {
     @Test
+    fun positionAgeContinuesAcrossBatteryChangesAndResetsOnlyForANewLocationSample() {
+        var nanos = 1_000_000_000L
+        val platform = FakePlatform()
+        val source = AndroidFlightTelemetrySource(platform) { nanos }
+        source.onChanged { }
+        val position = FlightTelemetryFact(latitude = 31.2, longitude = 121.5,
+            positionSampleId = "observer:1", positionObservedAtNanos = nanos, compassHeadingDegrees = -90.0)
+        platform.publish(position)
+        assertEquals(270.0, source.snapshot().headingDegrees)
+        assertEquals(0L, source.snapshot().positionAgeMillis)
+        nanos += 6_000_000_000L
+        platform.publish(position.copy(batteryPercent = 70, battery = LinkState.CONNECTED))
+        assertEquals("observer:1", source.snapshot().positionSampleId)
+        assertEquals(6_000L, source.snapshot().positionAgeMillis)
+        platform.publish(position.copy(positionSampleId = "observer:2", positionObservedAtNanos = nanos))
+        assertEquals(0L, source.snapshot().positionAgeMillis)
+        source.invalidateFlightControllerFacts()
+        assertEquals(null, source.snapshot().positionSampleId)
+        assertEquals(null, source.snapshot().positionAgeMillis)
+        assertEquals(null, source.snapshot().headingDegrees)
+    }
+
+    @Test
+    fun missingOrInvalidCompassAndPositionNeverBecomeNorthOrANewLocation() {
+        val platform = FakePlatform()
+        val source = AndroidFlightTelemetrySource(platform) { 10_000_000L }
+        source.onChanged { }
+        val fact = FlightTelemetryFact(latitude = 31.2, longitude = 121.5,
+            positionSampleId = "observer:1", positionObservedAtNanos = 1_000_000L,
+            compassHeadingDegrees = 90.0, compassHasError = true, gpsIsValid = false)
+        platform.publish(fact)
+        assertEquals(null, source.snapshot().headingDegrees)
+        assertEquals(null, source.snapshot().positionSampleId)
+        assertEquals(null, source.snapshot().positionAgeMillis)
+        platform.publish(fact.copy(compassHasError = false, compassHeadingDegrees = Double.NaN, gpsIsValid = true))
+        assertEquals(null, source.snapshot().headingDegrees)
+        platform.publish(fact.copy(compassHasError = false, compassHeadingDegrees = 0.0, gpsIsValid = true))
+        assertEquals(0.0, source.snapshot().headingDegrees)
+        assertEquals("observer:1", source.snapshot().positionSampleId)
+        assertEquals(9L, source.snapshot().positionAgeMillis)
+    }
+
+    @Test
     fun exposesSeparateRawGpsVisionAndTakeoffDiagnosticFacts() {
         val names = FlightTelemetrySnapshot::class.java.declaredFields.map { it.name }.toSet()
 

@@ -32,3 +32,9 @@ SnapshotAssembler.assemble(TelemetryInputs) -> TelemetrySnapshot
 ## 4. 测试要求
 
 覆盖初始状态、完整连接状态、配对状态、飞行/电量/位置、直播状态与指标、航线状态/进度/文件名、内部能力到公开能力的转换、全部可选值为空、非法位置拒绝、结果不可变和纯函数重复调用。
+
+## 2026-10-26 飞机位置显示扩展
+
+可选遥测字段为 headingDegrees、gpsIsValid、positionSampleId、positionAgeMillis、locationAltitudeMeters、takeoffAltitudeMeters。headingDegrees 只来自 KeyCompassHeading，有限原值 [-180,180] 归一化为 [0,360)，KeyCompassHasError 明确报错时清空。GPSIsValid 为 false 时位置不作为当前有效位置。新增键失败不得中断原有遥测。
+
+positionSampleId 只随位置键回调/有效初读推进（来源唯一标识 + 序号），positionAgeMillis 是手机单调时钟下距该位置样本的年龄；其它字段变化不刷新它。失效、关闭、飞控断连清空新增字段，旧观察代次不得恢复它们。两个新增高度只保留有限原值，垂直基准未知，不得相加冒充 WGS84 椭球高度。兼容旧协议 v1，不改变命令门禁。

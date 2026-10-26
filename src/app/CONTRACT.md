@@ -82,3 +82,7 @@ Android 进程必须使用 `android-dji-sdk-adapter` 提供的 `DjiSdkApplicatio
 2026-10-14 graph close 为异步终态释放：先禁用连接控制，再等待在途调用、AppRuntime 与前台服务终态，最后解绑注册及关闭端口/执行器；重复 close 幂等，停止过程中禁止新启动/模式变更。组装失败按已创建资源逆序清理，状态注册失败也解绑；共 11 项新增行为测试。当前 UI/进程容器尚待接线。
 
 进程容器已接线：RelayProcessRuntime 唯一持有 graph/权限，不持有 UI 订阅；Activity onResume 在 STARTED 后请求启动，onDestroy 按宿主身份 detach。首次启动可请求权限，拒绝后的可见恢复不循环弹窗；显式重试或系统设置授权后继续。默认 AUTO 不读取历史 endpoint 作为目标；长按标题的调试区可切 MANUAL/返回 AUTO，仅控制 session，主界面无停止按钮。前台服务失败禁止连接来源；模块启动中的服务失败等启动返回后清理，终态释放后在主线程关闭权限并按实例身份清空进程槽。无开机自启，空 intent 不建图，系统强制停止后恢复不作承诺。源码验证与实机限制见 docs/auto-discovery/README.md。
+
+## 定位元数据（2026-10-26）
+
+生产与跨端测试遥测统一映射 headingDegrees、positionSampleId、positionAgeMillis、gpsIsValid、locationAltitudeMeters、takeoffAltitudeMeters，可选值缺失为 JSON null。采样身份只由定位回调或初始定位读取生成，其他遥测不刷新位置年龄；高度原始值不宣称海拔或椭球高。

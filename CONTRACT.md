@@ -993,3 +993,9 @@ mission-begin
 ```
 
 其中任何一步失败，都必须能明确知道失败发生在：网络连接、文件传输、设备前置条件、DJI 操作，还是电脑端媒体服务。只有这样，两个项目才能独立重构而不互相猜测。
+
+## 2026-10-26 飞机位置显示扩展
+
+可选遥测字段为 headingDegrees、gpsIsValid、positionSampleId、positionAgeMillis、locationAltitudeMeters、takeoffAltitudeMeters。headingDegrees 只来自 KeyCompassHeading，有限原值 [-180,180] 归一化为 [0,360)，KeyCompassHasError 明确报错时清空。GPSIsValid 为 false 时位置不作为当前有效位置。新增键失败不得中断原有遥测。
+
+positionSampleId 只随位置键回调/有效初读推进（来源唯一标识 + 序号），positionAgeMillis 是手机单调时钟下距该位置样本的年龄；其它字段变化不刷新它。失效、关闭、飞控断连清空新增字段，旧观察代次不得恢复它们。两个新增高度只保留有限原值，垂直基准未知，不得相加冒充 WGS84 椭球高度。兼容旧协议 v1，不改变命令门禁。

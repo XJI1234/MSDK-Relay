@@ -51,6 +51,8 @@ private class KeyManagerFlightTelemetryObservation(
     private val remainingFlightTimeKey = KeyTools.createKey(FlightControllerKey.KeyLowBatteryRTHInfo)
     private val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
     private val locationKey = KeyTools.createKey(FlightControllerKey.KeyAircraftLocation)
+    private val positionSourceId = java.util.UUID.randomUUID().toString()
+    private var positionSampleSequence = 0L
     private val gpsSignalLevelKey = KeyTools.createKey(FlightControllerKey.KeyGPSSignalLevel)
     private val gpsSatelliteCountKey = KeyTools.createKey(FlightControllerKey.KeyGPSSatelliteCount)
     private val visionSensorUsedKey = KeyTools.createKey(FlightControllerKey.KeyIsVisionSensorUsed)
@@ -232,6 +234,21 @@ private class KeyManagerFlightTelemetryObservation(
             requestInitialValue(locationKey, ObservedKey.LOCATION, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.withLocation(value)
             }
+            observeOptional(FlightControllerKey.KeyCompassHeading, ObservedKey.HEADING, generation) { value ->
+                copy(compassHeadingDegrees = value)
+            }
+            observeOptional(FlightControllerKey.KeyCompassHasError, ObservedKey.COMPASS_ERROR, generation) { value ->
+                copy(compassHasError = value)
+            }
+            observeOptional(FlightControllerKey.KeyGPSIsValid, ObservedKey.GPS_VALID, generation) { value ->
+                copy(gpsIsValid = value)
+            }
+            observeOptional(FlightControllerKey.KeyAircraftLocation3D, ObservedKey.LOCATION_ALTITUDE, generation) { value ->
+                copy(locationAltitudeMeters = value?.altitude)
+            }
+            observeOptional(FlightControllerKey.KeyTakeoffLocationAltitude, ObservedKey.TAKEOFF_ALTITUDE, generation) { value ->
+                copy(takeoffAltitudeMeters = value)
+            }
             requestInitialValue(gpsSignalLevelKey, ObservedKey.GPS_SIGNAL_LEVEL, isCurrent = { flightControllerGeneration == generation }) { current, value ->
                 current.copy(gpsSignalLevel = value?.name)
             }
@@ -300,6 +317,26 @@ private class KeyManagerFlightTelemetryObservation(
         }.onFailure { probe.unavailable() }
     }
 
+    /** Optional keys on consumer aircraft must not interrupt existing flight telemetry. */
+    private fun <T> observeOptional(
+        keyInfo: DJIKeyInfo<T>,
+        observedKey: ObservedKey,
+        generation: Long,
+        transform: FlightTelemetryFact.(T?) -> FlightTelemetryFact,
+    ) {
+        runCatching {
+            val key = KeyTools.createKey(keyInfo)
+            manager.listen(key, flightControllerOwner) { _, value ->
+                publishEvent(observedKey, generation) { transform(value) }
+            }
+            requestInitialValue(key, observedKey, isCurrent = { flightControllerGeneration == generation }) { current, value ->
+                current.transform(value)
+            }
+        }.onFailure {
+            runCatching { diagnosticSink("FLIGHT_POSITION_KEY_UNAVAILABLE", observedKey.name) }
+        }
+    }
+
     private fun publishEvent(
         observedKey: ObservedKey,
         flightGeneration: Long? = null,
@@ -350,6 +387,8 @@ private class KeyManagerFlightTelemetryObservation(
     private fun FlightTelemetryFact.withLocation(location: LocationCoordinate2D?): FlightTelemetryFact = copy(
         latitude = location?.latitude,
         longitude = location?.longitude,
+        positionSampleId = "$positionSourceId:${++positionSampleSequence}",
+        positionObservedAtNanos = System.nanoTime(),
     )
 
     private fun FlightTelemetryFact.withoutFlightControllerFacts(): FlightTelemetryFact = copy(
@@ -360,6 +399,13 @@ private class KeyManagerFlightTelemetryObservation(
         altitudeMeters = null,
         latitude = null,
         longitude = null,
+        compassHeadingDegrees = null,
+        compassHasError = null,
+        positionSampleId = null,
+        positionObservedAtNanos = null,
+        gpsIsValid = null,
+        locationAltitudeMeters = null,
+        takeoffAltitudeMeters = null,
         lowBatteryRthState = null,
         gpsSignalLevel = null,
         gpsSatelliteCount = null,
@@ -413,6 +459,11 @@ private class KeyManagerFlightTelemetryObservation(
         LOW_BATTERY_RTH,
         ALTITUDE,
         LOCATION,
+        HEADING,
+        COMPASS_ERROR,
+        GPS_VALID,
+        LOCATION_ALTITUDE,
+        TAKEOFF_ALTITUDE,
         GPS_SIGNAL_LEVEL,
         GPS_SATELLITE_COUNT,
         VISION_SENSOR_USED,

@@ -26,6 +26,13 @@ internal data class FlightTelemetryFact(
     val landingConfirmationNeeded: Boolean? = null,
     val takeoffFailureError: String? = null,
     val motorStartFailureError: String? = null,
+    val compassHeadingDegrees: Double? = null,
+    val compassHasError: Boolean? = null,
+    val positionSampleId: String? = null,
+    val positionObservedAtNanos: Long? = null,
+    val gpsIsValid: Boolean? = null,
+    val locationAltitudeMeters: Double? = null,
+    val takeoffAltitudeMeters: Double? = null,
 )
 
 internal fun interface DjiFlightTelemetryListener {
@@ -44,6 +51,7 @@ internal interface DjiFlightTelemetryApi {
 
 class AndroidFlightTelemetrySource internal constructor(
     private val platform: DjiFlightTelemetryApi,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) : FlightTelemetrySource {
     private val lock = Any()
     private var generation = 0L
@@ -51,8 +59,15 @@ class AndroidFlightTelemetrySource internal constructor(
     private var sourceRevision = 0L
     private var current = FlightTelemetrySnapshot()
     private var active: Active? = null
+    private var positionObservedAtNanos: Long? = null
 
-    override fun snapshot(): FlightTelemetrySnapshot = synchronized(lock) { current }
+    override fun snapshot(): FlightTelemetrySnapshot = synchronized(lock) {
+        current.copy(positionAgeMillis = if (current.positionSampleId != null) positionAge(positionObservedAtNanos) else null)
+    }
+
+    private fun positionAge(observedAt: Long?): Long? = observedAt?.let {
+        ((nanoTime() - it).coerceAtLeast(0L)) / 1_000_000L
+    }
 
     override fun onChanged(listener: () -> Unit): FlightTelemetryRegistration {
         val operation = synchronized(lock) {
@@ -103,6 +118,7 @@ class AndroidFlightTelemetrySource internal constructor(
             ) {
                 null
             } else {
+                positionObservedAtNanos = fact.positionObservedAtNanos
                 current = advanceRevision(fact.toSnapshot())
                 operation.listener
             }
@@ -165,6 +181,7 @@ class AndroidFlightTelemetrySource internal constructor(
             ?.trim()
             ?.takeIf { it.isNotEmpty() && it.none(Char::isISOControl) && it.codePointCount(0, it.length) <= 128 }
         val rthState = lowBatteryRthState
+        val sampleId = positionSampleId?.takeIf { validCoordinates && gpsIsValid != false && it.isNotBlank() && it.length <= 128 && it.none(Char::isISOControl) && positionObservedAtNanos != null }
         return FlightTelemetrySnapshot(
             isFlying = isFlying,
             motorsOn = motorsOn,
@@ -175,6 +192,13 @@ class AndroidFlightTelemetrySource internal constructor(
             altitudeMeters = altitudeMeters?.takeIf(Double::isFinite),
             latitude = latitude?.takeIf { validCoordinates },
             longitude = longitude?.takeIf { validCoordinates },
+            headingDegrees = compassHeadingDegrees?.takeIf { compassHasError != true && it.isFinite() && it in -180.0..180.0 }
+                ?.let { (it + 360.0) % 360.0 },
+            positionSampleId = sampleId,
+            positionAgeMillis = positionAge(positionObservedAtNanos)?.takeIf { sampleId != null },
+            gpsIsValid = gpsIsValid,
+            locationAltitudeMeters = locationAltitudeMeters?.takeIf(Double::isFinite),
+            takeoffAltitudeMeters = takeoffAltitudeMeters?.takeIf(Double::isFinite),
             lowBatteryRthState = rthState,
             gpsSignalLevel = gpsSignalLevel?.takeIf(::validEnumName),
             gpsSatelliteCount = gpsSatelliteCount?.takeIf { it >= 0 },
@@ -210,6 +234,12 @@ class AndroidFlightTelemetrySource internal constructor(
         altitudeMeters = null,
         latitude = null,
         longitude = null,
+        headingDegrees = null,
+        positionSampleId = null,
+        positionAgeMillis = null,
+        gpsIsValid = null,
+        locationAltitudeMeters = null,
+        takeoffAltitudeMeters = null,
         lowBatteryRthState = null,
         gpsSignalLevel = null,
         gpsSatelliteCount = null,

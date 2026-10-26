@@ -63,6 +63,12 @@ class TelemetryFrameMapperTest {
                 altitudeMeters = 52.25,
                 latitude = 31.2,
                 longitude = 121.5,
+                headingDegrees = 270.0,
+                positionSampleId = "observer:7",
+                positionAgeMillis = 350,
+                gpsIsValid = true,
+                locationAltitudeMeters = 52.25,
+                takeoffAltitudeMeters = 80.0,
                 liveStreaming = true,
                 flightControllerHasConnectedOnce = true,
                 liveStreamNotice = "Streaming",
@@ -110,6 +116,12 @@ class TelemetryFrameMapperTest {
         assertEquals(JsonNumber("52.25"), frame.payload["altitudeMeters"])
         assertEquals(JsonNumber("31.2"), frame.payload["latitude"])
         assertEquals(JsonNumber("121.5"), frame.payload["longitude"])
+        assertEquals(JsonNumber("270.0"), frame.payload["headingDegrees"])
+        assertEquals(JsonString("observer:7"), frame.payload["positionSampleId"])
+        assertEquals(JsonNumber("350"), frame.payload["positionAgeMillis"])
+        assertEquals(JsonBoolean(true), frame.payload["gpsIsValid"])
+        assertEquals(JsonNumber("52.25"), frame.payload["locationAltitudeMeters"])
+        assertEquals(JsonNumber("80.0"), frame.payload["takeoffAltitudeMeters"])
         assertEquals(JsonBoolean(true), frame.payload["liveStreaming"])
         assertEquals(JsonBoolean(true), frame.payload["flightControllerHasConnectedOnce"])
         assertEquals(JsonString("Streaming"), frame.payload["liveStreamNotice"])
@@ -204,6 +216,7 @@ class TelemetryFrameMapperTest {
         listOf(
             "remoteControllerModel", "aircraftModel", "isFlying", "motorsOn", "flightMode",
             "batteryPercent", "lowBatteryRthState", "remainingFlightTimeSeconds", "altitudeMeters", "latitude", "longitude",
+            "headingDegrees", "positionSampleId", "positionAgeMillis", "gpsIsValid", "locationAltitudeMeters", "takeoffAltitudeMeters",
             "liveStreaming", "liveStreamNotice", "liveStreamRuntimeErrorCode", "liveStreamRuntimeErrorDescription", "liveResolution", "liveFps", "liveVideoBitrateKbps", "liveRttMillis",
             "missionRevision", "missionDeviceGeneration", "missionDjiExecutionState", "missionUploadProgress", "missionFileName",
             "waylineExecutingMissionFileName", "waylineId", "currentWaypointIndex", "waypointActionGroup", "waypointActionId",
