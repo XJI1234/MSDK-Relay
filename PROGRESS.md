@@ -12,4 +12,4 @@
 
 网站端到端浏览器模拟通过（09-48-58-e64fc76e），验证真实网关传递导航字段、只读地图、过期/断连/重连；这不是 DJI 硬件验证。
 
-最终 APK：相邻 交付/aircraft-map-20261026/MSDK-Relay-aircraft-debug.apk，296679565 字节，SHA-256 b50d6964f94c7754784082557f232cf79fcf8738860597d744514ffac12ff5e4。本地 Gradle 已配置 DJI_API_KEY，但没有验证手机安装、签名与 DJI 注册结果。完整 Gradle 已生成 202 份 XML、1510 个用例、0 失败（本次完整执行归档 197 份，其余为 UP-TO-DATE），不提交 APK/密钥。待推送新分支，真机验收保持待办。
+最终 APK：相邻 交付/aircraft-map-20261026/MSDK-Relay-aircraft-debug.apk，296679565 字节，SHA-256 b50d6964f94c7754784082557f232cf79fcf8738860597d744514ffac12ff5e4。本地 Gradle 已配置 DJI_API_KEY，但没有验证手机安装、签名与 DJI 注册结果。完整 Gradle 已生成 202 份 XML、1510 个用例、0 失败（本次完整执行归档 197 份，其余为 UP-TO-DATE），不提交 APK/密钥。新分支已推送至 XJI1234/MSDK-Relay，原 main 未修改；真机验收保持待办。
