@@ -24,3 +24,9 @@ FlightTelemetrySource.close() -> Unit
 电池是独立状态域：`battery` 只投影 `BatteryKey.KeyConnection` 的 `CONNECTED`、`DISCONNECTED`、`UNKNOWN`；`batteryPercent` 只有在 `battery == CONNECTED` 且来自同一主电池索引的有效读数时才能公开。飞控断连不得改变这两个字段；电池 Key 明确断连或值未知时，电量必须立即变为未知。
 
 快照必须不可变；`sourceGeneration` 标识当前飞控事实观察代次，`sourceRevision` 是该来源内严格单调的状态修订。飞控连接失效、重建观察或关闭时必须推进观察代次；任何监听回调造成的快照更新必须推进状态修订。这两个字段仅用于同一手机进程内关联连续 MSDK 监听事实，不映射到电脑协议，也不得被解释为 DJI Key 值。注销和关闭必须幂等。Android 适配器与跨进程验证模拟器都是该端口的实现，业务调用方不得感知实现来源。
+
+## 2026-10-26 飞机位置显示扩展
+
+可选遥测字段为 headingDegrees、gpsIsValid、positionSampleId、positionAgeMillis、locationAltitudeMeters、takeoffAltitudeMeters。headingDegrees 只来自 KeyCompassHeading，有限原值 [-180,180] 归一化为 [0,360)，KeyCompassHasError 明确报错时清空。GPSIsValid 为 false 时位置不作为当前有效位置。新增键失败不得中断原有遥测。
+
+positionSampleId 只随位置键回调/有效初读推进（来源唯一标识 + 序号），positionAgeMillis 是手机单调时钟下距该位置样本的年龄；其它字段变化不刷新它。失效、关闭、飞控断连清空新增字段，旧观察代次不得恢复它们。两个新增高度只保留有限原值，垂直基准未知，不得相加冒充 WGS84 椭球高度。兼容旧协议 v1，不改变命令门禁。

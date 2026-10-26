@@ -48,6 +48,12 @@ data class FlightTelemetrySnapshot(
     val sourceGeneration: Long = 0,
     /** Strictly monotonic local revision for continuous MSDK facts in this process. */
     val sourceRevision: Long = 0,
+    val headingDegrees: Double? = null,
+    val positionSampleId: String? = null,
+    val positionAgeMillis: Long? = null,
+    val gpsIsValid: Boolean? = null,
+    val locationAltitudeMeters: Double? = null,
+    val takeoffAltitudeMeters: Double? = null,
 ) {
     init {
         flightMode?.let { require(it.isNotBlank() && it.codePointCount(0, it.length) <= 128 && it.none(Char::isISOControl)) }
@@ -55,6 +61,11 @@ data class FlightTelemetrySnapshot(
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
         if (remainingFlightTimeSeconds != null) require(lowBatteryRthState != null)
         altitudeMeters?.let { require(it.isFinite()) }
+        headingDegrees?.let { require(it.isFinite() && it >= 0.0 && it < 360.0) }
+        positionSampleId?.let { require(it.isNotBlank() && it.length <= 128 && it.none(Char::isISOControl)) }
+        positionAgeMillis?.let { require(it >= 0) }
+        locationAltitudeMeters?.let { require(it.isFinite()) }
+        takeoffAltitudeMeters?.let { require(it.isFinite()) }
         require((latitude == null) == (longitude == null)) { "Latitude and longitude must be provided together" }
         latitude?.let { require(it.isFinite() && it in -90.0..90.0) }
         longitude?.let { require(it.isFinite() && it in -180.0..180.0) }
@@ -156,6 +167,12 @@ data class TelemetrySnapshot(
     val takeoffFailureError: String? = null,
     val motorStartFailureError: String? = null,
     val flightControllerHasConnectedOnce: Boolean = false,
+    val headingDegrees: Double? = null,
+    val positionSampleId: String? = null,
+    val positionAgeMillis: Long? = null,
+    val gpsIsValid: Boolean? = null,
+    val locationAltitudeMeters: Double? = null,
+    val takeoffAltitudeMeters: Double? = null,
 ) {
     init {
         remainingFlightTimeSeconds?.let { require(it in 1..86_400) }
@@ -203,6 +220,12 @@ object SnapshotAssembler {
         altitudeMeters = flightControllerFacts.altitudeMeters,
         latitude = flightControllerFacts.latitude,
         longitude = flightControllerFacts.longitude,
+        headingDegrees = flightControllerFacts.headingDegrees,
+        positionSampleId = flightControllerFacts.positionSampleId,
+        positionAgeMillis = flightControllerFacts.positionAgeMillis,
+        gpsIsValid = flightControllerFacts.gpsIsValid,
+        locationAltitudeMeters = flightControllerFacts.locationAltitudeMeters,
+        takeoffAltitudeMeters = flightControllerFacts.takeoffAltitudeMeters,
         gpsSignalLevel = flightControllerFacts.gpsSignalLevel,
         gpsSatelliteCount = flightControllerFacts.gpsSatelliteCount,
         visionSensorUsed = flightControllerFacts.visionSensorUsed,

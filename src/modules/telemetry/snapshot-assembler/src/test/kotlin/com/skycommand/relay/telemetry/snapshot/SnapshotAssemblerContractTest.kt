@@ -23,6 +23,29 @@ import kotlin.test.assertIs
 
 class SnapshotAssemblerContractTest {
     @Test
+    fun carriesPositionMetadataAndClearsItWhenFlightControllerDisconnects() {
+        val device = DeviceSnapshot(revision = 1, sdkAvailability = SdkAvailability.READY,
+            remoteController = LinkState.CONNECTED, aircraft = LinkState.CONNECTED,
+            flightController = LinkState.CONNECTED, pairing = PairingState.PAIRED,
+            remoteControllerModel = "RC-N2", aircraftModel = "Mini 4 Pro")
+        val flight = FlightTelemetrySnapshot(latitude = 31.2, longitude = 121.5,
+            altitudeMeters = 30.0, headingDegrees = 270.0, positionSampleId = "observer:1",
+            positionAgeMillis = 200, gpsIsValid = true, locationAltitudeMeters = 30.0, takeoffAltitudeMeters = 80.0)
+        val connected = SnapshotAssembler.assemble(inputs(device = device, flight = flight))
+        assertEquals(270.0, connected.headingDegrees)
+        assertEquals("observer:1", connected.positionSampleId)
+        assertEquals(200L, connected.positionAgeMillis)
+        assertEquals(80.0, connected.takeoffAltitudeMeters)
+        val disconnected = SnapshotAssembler.assemble(inputs(device = device.copy(flightController = LinkState.DISCONNECTED), flight = flight))
+        assertEquals(null, disconnected.headingDegrees)
+        assertEquals(null, disconnected.positionSampleId)
+        assertEquals(null, disconnected.positionAgeMillis)
+        assertEquals(null, disconnected.gpsIsValid)
+        assertEquals(null, disconnected.locationAltitudeMeters)
+        assertEquals(null, disconnected.takeoffAltitudeMeters)
+    }
+
+    @Test
     fun assemblesAStableSafeSnapshotFromOneDeviceSnapshot() {
         val input = DeviceSnapshot(
             revision = 7,

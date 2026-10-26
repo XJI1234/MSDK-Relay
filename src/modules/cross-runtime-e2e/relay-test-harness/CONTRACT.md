@@ -23,3 +23,7 @@ harness.close() -> Unit
 测试遥测帧必须与手机生产遥测的航线事实一致：保留 `missionRevision`、`missionDeviceGeneration`、归一化 `missionExecution`、`missionUploadProgress`、`missionFileName` 与原始 `missionDjiExecutionState`。原始状态为 `null` 时必须写 JSON `null`，不得伪造 `UNKNOWN`；它仅供桌面验证展示，不能改变仿真命令、工作流或门禁。
 
 它不证明 Android 权限、USB、Activity、真实 DJI SDK 或媒体数据流；这些由真机验收。
+
+## 定位元数据（2026-10-26）
+
+生产与跨端测试遥测统一映射 headingDegrees、positionSampleId、positionAgeMillis、gpsIsValid、locationAltitudeMeters、takeoffAltitudeMeters，可选值缺失为 JSON null。采样身份只由定位回调或初始定位读取生成，其他遥测不刷新位置年龄；高度原始值不宣称海拔或椭球高。
